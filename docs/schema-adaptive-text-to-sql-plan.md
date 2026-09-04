@@ -558,10 +558,10 @@ class TextToSQLModel:
 
 ### Phase 3. Catalog와 Schema Alignment
 
-- [ ] `DatabaseAdapter` 인터페이스 정의
-- [ ] `SQLiteAdapter` 구현
-- [ ] `DatabaseCatalog` 모델 정의
-- [ ] Schema Inspector 구현
+- [x] `DatabaseAdapter` 인터페이스 정의
+- [x] `SQLiteAdapter` 구현
+- [x] `DatabaseCatalog` 모델 정의
+- [x] Schema Inspector 구현
 - [ ] course-domain ontology YAML 작성
 - [ ] 규칙 기반 mapping baseline 구현
 - [ ] 매핑 confidence와 evidence 생성
@@ -647,6 +647,12 @@ HarnessRequest
 ```
 
 현재 하네스는 Ollama와 PostgreSQL 없이 실행 가능하다. SQL 안전성은 compiler-owned SQL, parameter binding, `mode=ro`, `PRAGMA query_only`, SQLite authorizer, timeout, 행 제한을 겹쳐 적용한다. JOIN, 자동 repair, 실제 모델 provider, AST 기반 SQL 검사는 후속 단계다.
+
+### SQLite Schema Inspector 구현 상태
+
+`backend/adaptive/catalog`에 DB 종류와 독립적인 `DatabaseAdapter` 계약과 SQLite 구현을 추가했다. SQLite 파일을 read-only로 열어 사용자 테이블, 컬럼 선언 타입과 affinity, nullable/default/generated 상태, 복합 PK 순서, FK 관계를 `DatabaseCatalog`로 변환한다.
+
+샘플값 수집은 개인정보 노출을 줄이기 위해 기본적으로 비활성화한다. 명시적으로 활성화할 때만 컬럼별 개수와 문자열 길이를 제한한다. 스키마 fingerprint는 샘플값을 제외한 구조만으로 계산하여 데이터 변경과 스키마 변경을 구별한다.
 
 ## 14. 첫 구현 단위
 
@@ -857,6 +863,13 @@ SQLite DB 입력
 - 결정: 첫 하네스는 외부 모델과 PostgreSQL 없이 `FakeModel → Query IR → single-table SQLite SQL → read-only 실행` 경로를 고정한다. SQL은 하네스 compiler가 생성한 parameterized `SELECT`만 허용한다.
 - 이유: 현재 노트북에서도 반복 가능한 실행 기준선을 먼저 확보하고, 미설치된 `sqlglot`에 의존하지 않으면서 SQL 정책과 DB read-only 경계를 함께 검증하기 위해서다.
 
+### ADR-008: 스키마 샘플값은 opt-in이며 fingerprint에서 제외
+
+- 날짜: 2026-09-04
+- 상태: 채택
+- 결정: Schema Inspector는 기본적으로 메타데이터만 수집한다. 샘플값은 호출자가 명시한 경우에만 제한적으로 수집하며 스키마 fingerprint 계산에는 포함하지 않는다.
+- 이유: 불필요한 개인정보 노출을 줄이고, 행 데이터 변경 때문에 mapping을 `STALE`로 잘못 판단하는 일을 방지하기 위해서다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -868,3 +881,5 @@ SQLite DB 입력
 - `feat/schema-adaptive-agent` 브랜치 생성
 - Query IR 계약, FakeModel, validator, single-table compiler, read-only SQLite executor, trace/error 결과를 포함한 최소 실행 하네스 구현
 - 정상·실패·SQL 쓰기 차단을 검증하는 단위 테스트 9개 추가
+- `DatabaseAdapter`, `DatabaseCatalog`, read-only `SQLiteAdapter` 기반 Schema Inspector 구현
+- PK·FK·타입 affinity·선택적 샘플·스키마 fingerprint 테스트 4개 추가
