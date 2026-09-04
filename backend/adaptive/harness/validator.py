@@ -35,8 +35,12 @@ def _validate_value_type(field: OntologyField, value: object) -> None:
         valid = isinstance(value, str)
     elif field.data_type is DataType.NUMBER:
         valid = isinstance(value, (int, float)) and not isinstance(value, bool)
+    elif field.data_type is DataType.INTEGER:
+        valid = isinstance(value, int) and not isinstance(value, bool)
     elif field.data_type is DataType.BOOLEAN:
         valid = isinstance(value, bool)
+    elif field.data_type in {DataType.DATE, DataType.TIME}:
+        valid = isinstance(value, str)
 
     if not valid:
         raise HarnessFailure(
