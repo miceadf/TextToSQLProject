@@ -70,4 +70,3 @@ class SingleTableSQLiteCompiler:
             parameters=parameters,
             expected_columns=query_ir.select,
         )
-

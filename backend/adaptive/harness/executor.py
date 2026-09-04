@@ -121,4 +121,3 @@ class SQLiteReadOnlyExecutor:
         if action_code in DENIED_SQLITE_ACTIONS:
             return sqlite3.SQLITE_DENY
         return sqlite3.SQLITE_OK
-

@@ -15,4 +15,3 @@ class HarnessFailure(Exception):
         self.code = code
         self.message = message
         self.stage = stage
-

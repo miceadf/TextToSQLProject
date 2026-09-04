@@ -200,4 +200,3 @@ class ExecutionHarness:
             ),
             trace=trace,
         )
-

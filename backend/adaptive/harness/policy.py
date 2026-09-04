@@ -51,4 +51,3 @@ class ConservativeSqlPolicy:
             message,
             stage=HarnessStage.SQL_VALIDATED,
         )
-

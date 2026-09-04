@@ -151,4 +151,3 @@ class CompiledQuery(BaseModel):
     sql: str
     parameters: list[str | int | float | bool]
     expected_columns: list[str]
-

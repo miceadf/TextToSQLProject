@@ -31,4 +31,3 @@ class FakeModel:
         if request.question not in self._responses:
             return {}
         return self._responses[request.question]
-

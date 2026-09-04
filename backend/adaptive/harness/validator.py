@@ -89,4 +89,3 @@ def validate_query_ir(
                 stage=HarnessStage.IR_VALIDATED,
             )
         _validate_value_type(field, item.value)
-
