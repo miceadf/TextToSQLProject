@@ -562,9 +562,9 @@ class TextToSQLModel:
 - [x] `SQLiteAdapter` 구현
 - [x] `DatabaseCatalog` 모델 정의
 - [x] Schema Inspector 구현
-- [ ] course-domain ontology YAML 작성
-- [ ] 규칙 기반 mapping baseline 구현
-- [ ] 매핑 confidence와 evidence 생성
+- [x] course-domain ontology YAML 작성
+- [x] 규칙 기반 mapping baseline 구현
+- [x] 매핑 confidence와 evidence 생성
 - [ ] 관리자 교정 CLI 구현
 - [ ] mapping version 저장 및 publish 구현
 
@@ -653,6 +653,30 @@ HarnessRequest
 `backend/adaptive/catalog`에 DB 종류와 독립적인 `DatabaseAdapter` 계약과 SQLite 구현을 추가했다. SQLite 파일을 read-only로 열어 사용자 테이블, 컬럼 선언 타입과 affinity, nullable/default/generated 상태, 복합 PK 순서, FK 관계를 `DatabaseCatalog`로 변환한다.
 
 샘플값 수집은 개인정보 노출을 줄이기 위해 기본적으로 비활성화한다. 명시적으로 활성화할 때만 컬럼별 개수와 문자열 길이를 제한한다. 스키마 fingerprint는 샘플값을 제외한 구조만으로 계산하여 데이터 변경과 스키마 변경을 구별한다.
+
+### Course Ontology와 규칙 기반 Schema Aligner 구현 상태
+
+`backend/adaptive/ontology/course-domain.yaml`에 1차 ontology를 정의했다. 현재 entity는 `Course`, `Department`, `Instructor`, `CourseOffering`, `Schedule`이며, 각 semantic field에 한국어 별칭, 물리 컬럼명 힌트, 자료형, 허용 연산자를 기록한다.
+
+`backend/adaptive/mapping`의 baseline aligner는 컬럼명 0.70, 자료형 호환성 0.20, 테이블명 0.10의 결정적 점수로 후보를 정렬한다. 각 후보는 구성 점수와 매칭 근거를 보존한다. 기본 상태 구분은 다음과 같다.
+
+- 0.90 이상: `AUTO_APPROVE_CANDIDATE`
+- 0.60 이상 0.90 미만: `NEEDS_REVIEW`
+- 0.60 미만: `UNCERTAIN`; 해당 semantic field는 unmapped 목록에도 포함
+
+`AUTO_APPROVE_CANDIDATE`는 자동 publish를 뜻하지 않는다. 관리자 검토·수정과 명시적인 publish gate는 다음 개발 단계다. threshold와 가중치는 향후 여러 스키마 평가에서 조정할 실험 변수다.
+
+### 현재 개발 체크포인트와 다음 시작점
+
+2026-09-04 기준 여기서 개발을 중단한다. 다음 작업은 **관리자 교정 CLI와 Mapping Profile publish**다. 다음 개발 요청 시 아래 순서로 재개한다.
+
+1. Mapping Proposal JSON 저장·불러오기
+2. 후보 승인·변경·거절·ignore를 지원하는 관리자 CLI
+3. required field, 실제 테이블·컬럼 존재 여부, 중복 매핑 검증
+4. 검토 결과를 versioned Mapping Profile로 저장
+5. 명시적으로 publish된 version만 기존 실행 하네스에 전달
+
+다중 스키마 fixture, JOIN path, 모델 연결, repair loop는 위 단계가 끝나기 전에는 진행하지 않는다.
 
 ## 14. 첫 구현 단위
 
@@ -870,6 +894,13 @@ SQLite DB 입력
 - 결정: Schema Inspector는 기본적으로 메타데이터만 수집한다. 샘플값은 호출자가 명시한 경우에만 제한적으로 수집하며 스키마 fingerprint 계산에는 포함하지 않는다.
 - 이유: 불필요한 개인정보 노출을 줄이고, 행 데이터 변경 때문에 mapping을 `STALE`로 잘못 판단하는 일을 방지하기 위해서다.
 
+### ADR-009: 규칙 기반 점수는 설명 가능한 baseline이며 자동 publish하지 않음
+
+- 날짜: 2026-09-04
+- 상태: 채택, 가중치 실험 예정
+- 결정: 첫 Schema Aligner는 컬럼명·자료형·테이블명의 결정적 가중합으로 confidence와 evidence를 생성한다. 높은 점수도 승인 후보일 뿐이며 관리자 review gate 전에는 운영 Mapping으로 publish하지 않는다.
+- 이유: LLM 없이 반복 가능한 비교 기준을 확보하면서 이름이 비슷하지만 업무 의미가 다른 컬럼의 오매핑을 관리자가 차단할 수 있어야 하기 때문이다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -883,3 +914,7 @@ SQLite DB 입력
 - 정상·실패·SQL 쓰기 차단을 검증하는 단위 테스트 9개 추가
 - `DatabaseAdapter`, `DatabaseCatalog`, read-only `SQLiteAdapter` 기반 Schema Inspector 구현
 - PK·FK·타입 affinity·선택적 샘플·스키마 fingerprint 테스트 4개 추가
+- versioned course-domain ontology YAML과 안전한 loader 구현
+- 컬럼명·자료형·테이블명 근거를 제공하는 규칙 기반 Schema Aligner 구현
+- flat 및 abbreviated SQLite 스키마의 mapping baseline 테스트 4개 추가
+- 다음 개발 시작점을 관리자 교정 CLI와 versioned Mapping Profile publish로 고정
