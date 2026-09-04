@@ -15,15 +15,17 @@ from backend.adaptive.harness import (
     HarnessErrorCode,
     HarnessStage,
     HarnessStatus,
+    MappingProfile,
     MappingStatus,
     Ontology,
-    Operator,
-    MappingProfile,
     OntologyField,
+    Operator,
+    QueryIR,
     SingleTableSQLiteCompiler,
     SQLiteReadOnlyExecutor,
 )
 from backend.adaptive.harness.errors import HarnessFailure
+from backend.adaptive.harness.validator import validate_query_ir
 
 
 class ExecutionHarnessTest(unittest.TestCase):
@@ -226,6 +228,51 @@ class ExecutionHarnessTest(unittest.TestCase):
             )
 
         self.assertEqual(raised.exception.code, HarnessErrorCode.UNSAFE_SQL)
+
+    def test_extended_ontology_value_types_are_validated(self) -> None:
+        ontology = Ontology(
+            entities={"CourseOffering", "Schedule"},
+            fields={
+                "CourseOffering.year": OntologyField(
+                    name="CourseOffering.year",
+                    data_type=DataType.INTEGER,
+                    allowed_operators={Operator.EQUALS},
+                ),
+                "Schedule.start_time": OntologyField(
+                    name="Schedule.start_time",
+                    data_type=DataType.TIME,
+                    allowed_operators={Operator.EQUALS},
+                ),
+            },
+        )
+        mapping = MappingProfile(
+            database_id="test-db",
+            version=1,
+            status=MappingStatus.PUBLISHED,
+            fields={
+                "CourseOffering.year": FieldMapping(table="courses", column="credit_hours"),
+                "Schedule.start_time": FieldMapping(table="courses", column="subject_name"),
+            },
+        )
+        valid_ir = QueryIR(
+            entity="CourseOffering",
+            select=["CourseOffering.year"],
+            filters=[
+                {"field": "CourseOffering.year", "operator": "equals", "value": 2026}
+            ],
+        )
+        validate_query_ir(valid_ir, ontology, mapping)
+
+        invalid_ir = QueryIR(
+            entity="Schedule",
+            select=["Schedule.start_time"],
+            filters=[
+                {"field": "Schedule.start_time", "operator": "equals", "value": 900}
+            ],
+        )
+        with self.assertRaises(HarnessFailure) as raised:
+            validate_query_ir(invalid_ir, ontology, mapping)
+        self.assertEqual(raised.exception.code, HarnessErrorCode.INVALID_VALUE_TYPE)
 
 
 if __name__ == "__main__":
