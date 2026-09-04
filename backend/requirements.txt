@@ -1,6 +1,7 @@
 fastapi
 uvicorn[standard]
 python-dotenv
+PyYAML>=6.0,<7.0
 psycopg2-binary
 redis
 rapidfuzz

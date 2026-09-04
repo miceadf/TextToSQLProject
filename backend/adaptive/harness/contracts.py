@@ -6,21 +6,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field, field_validator
 
-
-class Operator(str, Enum):
-    EQUALS = "equals"
-    NOT_EQUALS = "not_equals"
-    GREATER_THAN = "greater_than"
-    GREATER_THAN_OR_EQUAL = "greater_than_or_equal"
-    LESS_THAN = "less_than"
-    LESS_THAN_OR_EQUAL = "less_than_or_equal"
-    CONTAINS = "contains"
-
-
-class DataType(str, Enum):
-    STRING = "string"
-    NUMBER = "number"
-    BOOLEAN = "boolean"
+from ..ontology.contracts import DataType, Operator
 
 
 class MappingStatus(str, Enum):
@@ -93,6 +79,8 @@ class OntologyField(BaseModel):
 
 
 class Ontology(BaseModel):
+    """Minimal runtime view derived from the richer domain ontology."""
+
     entities: set[str]
     fields: dict[str, OntologyField]
 

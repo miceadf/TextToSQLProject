@@ -1,0 +1,157 @@
+version: 1
+domain: university-course
+entities:
+  - name: Course
+    label: 과목
+    description: 학교가 개설·관리하는 교과목의 기본 정보
+    aliases: [강의, 교과목, 수업]
+    table_name_hints: [course, courses, subject, subjects, sbjt, sbj, gwamok]
+    fields:
+      - name: Course.code
+        label: 과목 코드
+        description: 학교가 과목에 부여한 식별 코드
+        data_type: string
+        aliases: [과목번호, 교과목번호, 학수번호]
+        physical_name_hints: [course_code, subject_code, sbjt_cd, sbj_no, gwamok_code]
+        allowed_operators: [equals, contains]
+        required: true
+      - name: Course.name
+        label: 과목명
+        description: 학생에게 표시되는 교과목 이름
+        data_type: string
+        aliases: [강의명, 교과목명, 수업명]
+        physical_name_hints: [course_name, subject_name, title, sbjt_nm, sbj_nm, gwamok_name]
+        allowed_operators: [equals, contains]
+        required: true
+      - name: Course.credits
+        label: 학점
+        description: 과목 이수 시 부여되는 학점 수
+        data_type: number
+        aliases: [이수학점, 학점수]
+        physical_name_hints: [credits, credit_hours, credit, pnt, hakjum]
+        allowed_operators: [equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal]
+        required: true
+      - name: Course.category
+        label: 이수 구분
+        description: 전공·교양·일반선택 등의 이수 영역
+        data_type: string
+        aliases: [과목구분, 교과구분, 영역]
+        physical_name_hints: [category, course_type, subject_type, isu_gb, completion_type]
+        allowed_operators: [equals, contains]
+        required: false
+
+  - name: Department
+    label: 학과
+    description: 과목과 교원을 관리하는 대학 조직
+    aliases: [학부, 전공, 개설학과]
+    table_name_hints: [department, departments, dept, hakgwa, major]
+    fields:
+      - name: Department.code
+        label: 학과 코드
+        description: 학교가 학과에 부여한 식별 코드
+        data_type: string
+        aliases: [학부코드, 전공코드]
+        physical_name_hints: [department_code, dept_code, dept_cd, hakgwa_cd, major_code]
+        allowed_operators: [equals, contains]
+        required: false
+      - name: Department.name
+        label: 학과명
+        description: 학생에게 표시되는 학과 또는 학부 이름
+        data_type: string
+        aliases: [학부명, 전공명, 개설학과명]
+        physical_name_hints: [department_name, dept_name, dept_nm, hakgwa_nm, major_name]
+        allowed_operators: [equals, contains]
+        required: true
+
+  - name: Instructor
+    label: 담당 교원
+    description: 과목 또는 분반을 담당하는 교원
+    aliases: [교수, 강사, 담당교수]
+    table_name_hints: [instructor, instructors, professor, faculty, teacher]
+    fields:
+      - name: Instructor.name
+        label: 교원명
+        description: 담당 교수 또는 강사의 이름
+        data_type: string
+        aliases: [교수명, 강사명, 담당교수명]
+        physical_name_hints: [instructor_name, professor_name, prof_name, faculty_name, teacher_nm]
+        allowed_operators: [equals, contains]
+        required: true
+
+  - name: CourseOffering
+    label: 개설 강좌
+    description: 특정 학기와 분반에 실제로 개설된 강좌
+    aliases: [개설과목, 분반, 강좌]
+    table_name_hints: [course_offering, offering, class, section, lecture]
+    fields:
+      - name: CourseOffering.year
+        label: 개설 연도
+        description: 강좌가 개설된 연도
+        data_type: integer
+        aliases: [년도, 학년도]
+        physical_name_hints: [year, academic_year, open_year, yyyy]
+        allowed_operators: [equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal]
+        required: true
+      - name: CourseOffering.semester
+        label: 학기
+        description: 강좌가 개설된 학기
+        data_type: string
+        aliases: [개설학기]
+        physical_name_hints: [semester, term, open_semester, sem_cd, hakgi]
+        allowed_operators: [equals, contains]
+        required: true
+      - name: CourseOffering.section
+        label: 분반
+        description: 같은 과목과 학기의 강좌 구분 번호
+        data_type: string
+        aliases: [분반번호, 반]
+        physical_name_hints: [section, section_no, class_no, bunban]
+        allowed_operators: [equals, contains]
+        required: false
+      - name: CourseOffering.capacity
+        label: 수강 정원
+        description: 강좌에 등록할 수 있는 최대 학생 수
+        data_type: integer
+        aliases: [정원, 제한인원]
+        physical_name_hints: [capacity, max_students, enrollment_limit, limit_count]
+        allowed_operators: [equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal]
+        required: false
+      - name: CourseOffering.enrolled
+        label: 수강 인원
+        description: 강좌에 현재 등록한 학생 수
+        data_type: integer
+        aliases: [수강생수, 신청인원, 현재인원]
+        physical_name_hints: [enrolled, enrolled_count, current_students, applicant_count]
+        allowed_operators: [equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal]
+        required: false
+
+  - name: Schedule
+    label: 강의 시간
+    description: 개설 강좌의 요일과 시작·종료 시간
+    aliases: [시간표, 수업시간]
+    table_name_hints: [schedule, timetable, class_time, lecture_time]
+    fields:
+      - name: Schedule.day
+        label: 강의 요일
+        description: 강의가 진행되는 요일
+        data_type: string
+        aliases: [요일, 수업요일]
+        physical_name_hints: [day, day_of_week, weekday, lecture_day]
+        allowed_operators: [equals, contains]
+        required: true
+      - name: Schedule.start_time
+        label: 시작 시간
+        description: 강의가 시작되는 시각
+        data_type: time
+        aliases: [수업시작, 강의시작시간]
+        physical_name_hints: [start_time, begin_time, lecture_start, from_time]
+        allowed_operators: [equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal]
+        required: true
+      - name: Schedule.end_time
+        label: 종료 시간
+        description: 강의가 끝나는 시각
+        data_type: time
+        aliases: [수업종료, 강의종료시간]
+        physical_name_hints: [end_time, finish_time, lecture_end, to_time]
+        allowed_operators: [equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal]
+        required: true
