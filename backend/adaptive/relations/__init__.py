@@ -13,6 +13,7 @@ from .contracts import (
 from .errors import RelationErrorCode, RelationGraphError, RelationIssue
 from .ontology import build_ontology_relation_graph
 from .physical import build_physical_relation_graph
+from .planner import plan_join_path
 
 __all__ = [
     "JoinColumnPair",
@@ -28,4 +29,5 @@ __all__ = [
     "RelationIssue",
     "build_ontology_relation_graph",
     "build_physical_relation_graph",
+    "plan_join_path",
 ]
