@@ -24,6 +24,20 @@ class DataType(str, Enum):
     TIME = "time"
 
 
+class OntologyCardinality(str, Enum):
+    ONE_TO_ONE = "one_to_one"
+    ONE_TO_MANY = "one_to_many"
+    MANY_TO_ONE = "many_to_one"
+    MANY_TO_MANY = "many_to_many"
+
+
+class OntologyRelation(BaseModel):
+    name: str = Field(min_length=1)
+    source_entity: str = Field(min_length=1)
+    target_entity: str = Field(min_length=1)
+    cardinality: OntologyCardinality
+
+
 class OntologyField(BaseModel):
     name: str = Field(min_length=1)
     label: str = Field(min_length=1)
@@ -60,6 +74,7 @@ class DomainOntology(BaseModel):
     version: int = Field(ge=1)
     domain: str = Field(min_length=1)
     entities: list[EntityDefinition] = Field(min_length=1)
+    relations: list[OntologyRelation] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_unique_names(self) -> "DomainOntology":
@@ -69,6 +84,21 @@ class DomainOntology(BaseModel):
         field_names = [field.name for entity in self.entities for field in entity.fields]
         if len(field_names) != len(set(field_names)):
             raise ValueError("ontology field names must be unique")
+        relation_names = [relation.name for relation in self.relations]
+        if len(relation_names) != len(set(relation_names)):
+            raise ValueError("ontology relation names must be unique")
+        known_entities = set(entity_names)
+        for relation in self.relations:
+            if relation.source_entity not in known_entities:
+                raise ValueError(
+                    f"relation '{relation.name}' has unknown source entity "
+                    f"'{relation.source_entity}'"
+                )
+            if relation.target_entity not in known_entities:
+                raise ValueError(
+                    f"relation '{relation.name}' has unknown target entity "
+                    f"'{relation.target_entity}'"
+                )
         return self
 
     @property

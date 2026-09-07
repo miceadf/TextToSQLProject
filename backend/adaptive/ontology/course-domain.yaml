@@ -155,3 +155,21 @@ entities:
         physical_name_hints: [end_time, finish_time, lecture_end, to_time]
         allowed_operators: [equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal]
         required: true
+
+relations:
+  - name: Course.department
+    source_entity: Course
+    target_entity: Department
+    cardinality: many_to_one
+  - name: CourseOffering.course
+    source_entity: CourseOffering
+    target_entity: Course
+    cardinality: many_to_one
+  - name: CourseOffering.instructor
+    source_entity: CourseOffering
+    target_entity: Instructor
+    cardinality: many_to_one
+  - name: CourseOffering.schedule
+    source_entity: CourseOffering
+    target_entity: Schedule
+    cardinality: one_to_one
