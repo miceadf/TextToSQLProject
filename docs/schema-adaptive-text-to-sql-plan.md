@@ -571,8 +571,8 @@ class TextToSQLModel:
 ### Phase 4. Query Compiler와 안전성
 
 - [x] Query IR validator 구현
-- [ ] ontology relation graph 구현
-- [ ] 학교별 JOIN path 계산
+- [x] ontology relation graph 구현
+- [x] 학교별 JOIN path 계산
 - [x] Query IR → SQLite SQL compiler 구현(현재 single-table 한정)
 - [ ] AST 기반 read-only policy 구현
 - [x] LIMIT, timeout, 최대 결과 행 정책 구현
@@ -702,15 +702,32 @@ FixtureSeed v1 (6개 개설강좌, 15개 논리 필드)
 
 세 DB는 같은 canonical logical row 집합으로 역변환되는지 비교한다. normalized fixture는 PK·FK·1:1 schedule 관계까지 검사한다. Schema Aligner는 세 구조 모두에서 15개 semantic field의 예상 `(table, column)`을 confidence 0.90 이상 top candidate로 선택해야 한다.
 
-다음 개발 요청 시 **ontology relation graph와 학교별 JOIN path 계산**부터 시작한다.
+ontology relation graph와 학교별 JOIN path 계산을 완료했다.
 
-1. ontology entity relation 계약 정의
-2. Catalog FK를 physical relation graph로 변환
-3. Published Mapping을 이용해 semantic field와 physical table 연결
-4. 두 개 이상 table이 필요한 Query IR의 최소 JOIN path 계산
-5. 단절·복수 경로·순환 관계 테스트
+```text
+Published Mapping의 semantic fields
+→ 실제 physical table 집합 해석
+→ Catalog FK 기반 무방향 탐색
+→ 최소 relation-edge tree 계산
+→ RESOLVED JoinPlan 또는 AMBIGUOUS alternatives
+```
 
-다음 단계에서는 JOIN SQL compiler를 아직 구현하지 않는다. relation path가 안정된 뒤 compiler 확장을 별도 단위로 진행한다. 모델 연결과 repair loop도 제외한다.
+`backend/adaptive/relations`는 ontology entity relation, physical FK relation, JOIN step과 planning result를 Pydantic 계약으로 제공한다. composite FK의 여러 컬럼은 sequence 순서가 보존된 relation edge 하나로 묶는다. 탐색은 FK를 양방향으로 사용할 수 있지만, edge에는 항상 원래 child table → referenced parent table 방향과 컬럼 predicate를 남긴다.
+
+비용은 서로 다른 physical relation edge 수다. 필요한 테이블을 연결하는 최소 edge set이 둘 이상이면 하나를 임의 선택하지 않고 `AMBIGUOUS`와 정렬된 대안들을 반환한다. 단절 여부는 search limit 적용 전에 확인한다. cycle은 이미 연결된 테이블을 다시 확장하지 않으며, 비정상 composite FK, stale profile, 없는 semantic field/table, search limit 초과는 구조화된 오류 코드로 실패한다.
+
+normalized fixture는 Catalog의 FK 4개와 직접·다단계·역방향 경로를 검증한다. flat과 legacy fixture는 여러 semantic field를 요청해도 required table이 하나이므로 빈 JOIN path를 반환한다. synthetic graph로 composite FK, cycle, disconnected graph, 동률 최단 경로를 별도 검증한다.
+
+다음 개발 요청 시 **JOIN-capable SQL compiler**부터 시작한다.
+
+1. 기존 Query IR을 변경하지 않고 compiler 입력에 `JoinPlan`을 결합
+2. anchor table과 결정적 table alias 정의
+3. 모든 composite column pair를 포함하는 `JOIN ... ON` 생성
+4. select/filter/order 식별자를 table-qualified 형태로 컴파일
+5. flat·normalized·legacy에서 같은 Query IR의 결과 동등성 검증
+6. 기존 single-table compiler와 legacy 실행 경로 회귀 검증
+
+다음 단계에도 모델 연결, PostgreSQL, 관리자 UI, repair loop는 포함하지 않는다. ambiguity 결과의 관리자 해소 정책은 compiler가 임의 경로를 선택하지 않도록 별도 단계로 남긴다.
 
 ## 14. 첫 구현 단위
 
@@ -949,6 +966,13 @@ SQLite DB 입력
 - 결정: flat, normalized, legacy/abbreviated fixture는 하나의 versioned `FixtureSeed`에서 생성한다. build마다 불변 generation 디렉터리를 만들고 모든 DB·Catalog·Proposal 생성 후 `bundle.json`을 원자 교체한다.
 - 이유: 스키마 구조만 실험 변수로 유지하고, 반복 생성 중 실패해 서로 다른 generation의 artifact가 섞이는 일을 막기 위해서다.
 
+### ADR-012: JOIN path는 Catalog FK 기반 최소 edge tree로 계산
+
+- 날짜: 2026-09-07
+- 상태: 채택
+- 결정: Published Mapping으로 semantic field를 physical table에 연결한 뒤, Catalog FK를 무방향으로 탐색하여 필요한 table들을 잇는 최소 relation-edge tree를 계산한다. FK의 원래 child→parent 방향과 composite column pair 순서는 edge에 보존한다. 최소 edge set이 둘 이상이면 하나를 선택하지 않고 `AMBIGUOUS`로 반환한다.
+- 이유: 이름 추측이나 모델 판단 없이 실제 DB 제약을 JOIN 근거로 사용하고, 역방향 탐색을 지원하면서도 SQL predicate를 손실하지 않으며, 모호한 경로를 숨기지 않기 위해서다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -981,3 +1005,9 @@ SQLite DB 입력
 - 세 Catalog의 테이블·PK·FK·schedule cardinality와 15개 mapping top candidate 검증
 - legacy `prof_nm` ontology hint 추가
 - 다음 개발 시작점을 ontology relation graph와 JOIN path 계산으로 이동
+- ontology entity relation과 physical FK relation Pydantic 계약 추가
+- Catalog FK를 결정적 graph로 변환하고 composite FK를 단일 edge로 보존
+- Published Mapping 기반 최소 JOIN path planner와 명시적 ambiguity 결과 구현
+- normalized fixture의 직접·다단계·역방향 JOIN path와 flat·legacy 빈 path 검증
+- malformed composite FK, cycle, disconnected graph, 동률 최단 경로, profile/search-limit 오류 회귀 테스트 추가
+- 다음 개발 시작점을 JOIN-capable SQL compiler로 이동
