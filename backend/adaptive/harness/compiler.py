@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Protocol
+
 from .contracts import (
     CompiledQuery,
     HarnessErrorCode,
@@ -24,6 +26,12 @@ SQL_OPERATORS = {
 
 def quote_identifier(identifier: str) -> str:
     return '"' + identifier.replace('"', '""') + '"'
+
+
+class SQLiteQueryCompiler(Protocol):
+    def compile(self, query_ir: QueryIR, mapping: MappingProfile) -> CompiledQuery:
+        """Compile a validated query for the execution harness."""
+        ...
 
 
 class SingleTableSQLiteCompiler:

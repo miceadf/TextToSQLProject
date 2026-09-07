@@ -6,7 +6,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from .compiler import SingleTableSQLiteCompiler
+from .compiler import SQLiteQueryCompiler, SingleTableSQLiteCompiler
 from .contracts import (
     CompiledQuery,
     HarnessError,
@@ -33,7 +33,7 @@ class ExecutionHarness:
         model: QueryModel,
         executor: SQLiteReadOnlyExecutor,
         *,
-        compiler: SingleTableSQLiteCompiler | None = None,
+        compiler: SQLiteQueryCompiler | None = None,
         sql_policy: ConservativeSqlPolicy | None = None,
     ) -> None:
         self._model = model
