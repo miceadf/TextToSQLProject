@@ -548,13 +548,13 @@ class TextToSQLModel:
 
 ### Phase 2. 다중 스키마 경량 실험 환경
 
-- [ ] 동일 seed 데이터를 가진 SQLite DB 3개 작성
-- [ ] flat schema 작성
-- [ ] normalized schema 작성
-- [ ] legacy/abbreviated schema 작성
+- [x] 동일 seed 데이터를 가진 SQLite DB 3개 작성
+- [x] flat schema 작성
+- [x] normalized schema 작성
+- [x] legacy/abbreviated schema 작성
 - [ ] 공통 평가 질문 30~50개 선정
 - [ ] 기대 결과 집합 작성
-- [ ] cross-schema result comparison 구현
+- [x] cross-schema result comparison 구현(fixture canonical row 기준)
 
 ### Phase 3. Catalog와 Schema Alignment
 
@@ -689,15 +689,28 @@ python -m backend.adaptive.mapping --store .schema-adaptive <command>
 
 publish는 모든 ontology field의 검토 완료, 활성 entity의 required field, 물리 컬럼 존재, 중복 매핑 부재, database/schema fingerprint/ontology version 일치를 요구한다. `init` 재실행은 기존 draft를 덮어쓰지 않는다.
 
-다음 개발 요청 시 **동일 seed 기반 SQLite 스키마 3개 fixture**부터 시작한다.
+동일 seed 기반 SQLite 스키마 3개 fixture를 완료했다.
 
-1. 공통 논리 seed 데이터 정의
-2. flat schema fixture 작성
-3. normalized schema fixture 작성
-4. legacy/abbreviated schema fixture 작성
-5. 세 Catalog와 Mapping Proposal 회귀 테스트
+```text
+FixtureSeed v1 (6개 개설강좌, 15개 논리 필드)
+├─ flat: course_offerings 단일 테이블
+├─ normalized: departments/instructors/courses/course_offerings/schedules
+└─ legacy: lecture_info + 약어 컬럼
+```
 
-이 fixture 단계에서는 JOIN compiler, 모델 연결, repair loop를 아직 구현하지 않는다. fixture 검증 후 ontology relation graph와 JOIN path를 다음 단위로 진행한다.
+`python -m backend.adaptive.fixtures --output <directory>` 명령은 세 SQLite DB, Catalog JSON, Mapping Proposal JSON을 생성한다. 각 실행은 새 generation 디렉터리를 사용하며, 모든 artifact 생성 후 `bundle.json`을 원자적으로 갱신한다. 중간 실패 시 기존 manifest가 부분 생성 artifact를 가리키지 않는다.
+
+세 DB는 같은 canonical logical row 집합으로 역변환되는지 비교한다. normalized fixture는 PK·FK·1:1 schedule 관계까지 검사한다. Schema Aligner는 세 구조 모두에서 15개 semantic field의 예상 `(table, column)`을 confidence 0.90 이상 top candidate로 선택해야 한다.
+
+다음 개발 요청 시 **ontology relation graph와 학교별 JOIN path 계산**부터 시작한다.
+
+1. ontology entity relation 계약 정의
+2. Catalog FK를 physical relation graph로 변환
+3. Published Mapping을 이용해 semantic field와 physical table 연결
+4. 두 개 이상 table이 필요한 Query IR의 최소 JOIN path 계산
+5. 단절·복수 경로·순환 관계 테스트
+
+다음 단계에서는 JOIN SQL compiler를 아직 구현하지 않는다. relation path가 안정된 뒤 compiler 확장을 별도 단위로 진행한다. 모델 연결과 repair loop도 제외한다.
 
 ## 14. 첫 구현 단위
 
@@ -929,6 +942,13 @@ SQLite DB 입력
 - 결정: 모든 ontology field를 관리자가 `APPROVED`, `REMAPPED`, `REJECTED`, `IGNORED` 중 하나로 결정해야 publish할 수 있다. 활성 entity의 required field는 반드시 물리 컬럼에 매핑한다. publish 결과는 `mapping-vNNNN.json`으로 보존하고 `published.json`은 최신 version을 가리킨다.
 - 이유: 높은 confidence를 운영 승인으로 오해하지 않게 하고, 관리자 개입량·수정 이유·version 이력을 논문 평가와 회귀 테스트에 사용할 수 있어야 하기 때문이다.
 
+### ADR-011: 다중 스키마 fixture는 동일 논리 seed와 원자 manifest를 사용
+
+- 날짜: 2026-09-07
+- 상태: 채택
+- 결정: flat, normalized, legacy/abbreviated fixture는 하나의 versioned `FixtureSeed`에서 생성한다. build마다 불변 generation 디렉터리를 만들고 모든 DB·Catalog·Proposal 생성 후 `bundle.json`을 원자 교체한다.
+- 이유: 스키마 구조만 실험 변수로 유지하고, 반복 생성 중 실패해 서로 다른 generation의 artifact가 섞이는 일을 막기 위해서다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -955,3 +975,9 @@ SQLite DB 입력
 - 불변 `mapping-vNNNN.json`, 최신 `published.json`, 실행 하네스 변환 구현
 - 기존 draft를 `init`으로 덮어쓰는 동작 차단
 - 다음 개발 시작점을 동일 seed 기반 SQLite 스키마 3개 fixture로 이동
+- 가명화된 공통 `FixtureSeed v1`과 flat·normalized·legacy SQLite builder 구현
+- 세 DB의 15개 논리 필드와 6개 개설강좌 동등성 검증
+- generation별 DB·Catalog·Mapping Proposal 생성 및 원자 `bundle.json` commit 구현
+- 세 Catalog의 테이블·PK·FK·schedule cardinality와 15개 mapping top candidate 검증
+- legacy `prof_nm` ontology hint 추가
+- 다음 개발 시작점을 ontology relation graph와 JOIN path 계산으로 이동
