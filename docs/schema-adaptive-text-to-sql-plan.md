@@ -573,7 +573,7 @@ class TextToSQLModel:
 - [x] Query IR validator 구현
 - [x] ontology relation graph 구현
 - [x] 학교별 JOIN path 계산
-- [x] Query IR → SQLite SQL compiler 구현(현재 single-table 한정)
+- [x] Query IR → SQLite SQL compiler 구현(single-table 및 Catalog FK JOIN)
 - [ ] AST 기반 read-only policy 구현
 - [x] LIMIT, timeout, 최대 결과 행 정책 구현
 - [x] Published Mapping만 사용하는 규칙 구현
@@ -640,13 +640,13 @@ HarnessRequest
 → Published Mapping 확인
 → FakeModel의 Query IR 생성
 → Pydantic 구조 검증 및 ontology/mapping 의미 검증
-→ single-table parameterized SQLite SQL 컴파일
+→ Published Mapping과 JoinPlan 기반 parameterized SQLite SQL 컴파일
 → SQL 정책 검사
 → read-only SQLite 실행
 → 결과 컬럼 검증 및 단계별 trace 반환
 ```
 
-현재 하네스는 Ollama와 PostgreSQL 없이 실행 가능하다. SQL 안전성은 compiler-owned SQL, parameter binding, `mode=ro`, `PRAGMA query_only`, SQLite authorizer, timeout, 행 제한을 겹쳐 적용한다. JOIN, 자동 repair, 실제 모델 provider, AST 기반 SQL 검사는 후속 단계다.
+현재 하네스는 Ollama와 PostgreSQL 없이 실행 가능하다. SQL 안전성은 compiler-owned SQL, parameter binding, `mode=ro`, `PRAGMA query_only`, SQLite authorizer, timeout, 행 제한을 겹쳐 적용한다. 기존 single-table compiler는 baseline으로 유지하며, schema-adaptive compiler를 명시적으로 주입한 경우에만 Published Mapping과 Catalog FK 기반 JOIN을 사용한다. 자동 repair, 실제 모델 provider, AST 기반 SQL 검사는 후속 단계다.
 
 ### SQLite Schema Inspector 구현 상태
 
@@ -718,16 +718,33 @@ Published Mapping의 semantic fields
 
 normalized fixture는 Catalog의 FK 4개와 직접·다단계·역방향 경로를 검증한다. flat과 legacy fixture는 여러 semantic field를 요청해도 required table이 하나이므로 빈 JOIN path를 반환한다. synthetic graph로 composite FK, cycle, disconnected graph, 동률 최단 경로를 별도 검증한다.
 
-다음 개발 요청 시 **JOIN-capable SQL compiler**부터 시작한다.
+JOIN-capable SQLite SQL compiler를 완료했다.
 
-1. 기존 Query IR을 변경하지 않고 compiler 입력에 `JoinPlan`을 결합
-2. anchor table과 결정적 table alias 정의
-3. 모든 composite column pair를 포함하는 `JOIN ... ON` 생성
-4. select/filter/order 식별자를 table-qualified 형태로 컴파일
-5. flat·normalized·legacy에서 같은 Query IR의 결과 동등성 검증
-6. 기존 single-table compiler와 legacy 실행 경로 회귀 검증
+```text
+Query IR + Published Mapping + RESOLVED JoinPlan
+→ anchor table AS t0
+→ JoinPlan step 순서대로 t1, t2, ... 할당
+→ Catalog FK의 원래 source = target predicate 생성
+→ qualified SELECT/WHERE + parameterized LIMIT
+→ read-only SQLite 실행
+```
 
-다음 단계에도 모델 연결, PostgreSQL, 관리자 UI, repair loop는 포함하지 않는다. ambiguity 결과의 관리자 해소 정책은 compiler가 임의 경로를 선택하지 않도록 별도 단계로 남긴다.
+`backend/adaptive/compiler`의 core compiler는 `JoinCompilationRequest`만 입력받는다. table alias는 anchor와 traversal 순서로 `t0`, `t1`, ...을 할당한다. 역방향으로 탐색한 edge도 ON predicate는 FK 원래 child column과 parent column 방향을 사용하며 composite FK의 모든 column pair를 순서대로 `AND` 연결한다. 모든 table·column identifier는 double quote escaping하고, filter 값과 LIMIT는 기존 순서대로 parameter binding한다.
+
+`SchemaAdaptiveSQLiteCompiler`는 기존 `ExecutionHarness` compiler protocol에 연결되는 adapter다. 생성 시 받은 Published Mapping과 실행 시 runtime mapping의 database, version, field 전체가 같아야 한다. path가 `AMBIGUOUS`이거나 plan이 mapping과 불일치하거나 self JOIN이면 SQL을 생성하지 않는다. 기존 `SingleTableSQLiteCompiler`는 기본값으로 남겨 legacy baseline 동작을 보존한다.
+
+동일 Query IR을 flat·normalized·legacy fixture에서 실행하여 semantic result row가 같은지 검증했다. flat과 legacy는 JOIN 0개, normalized는 필요한 FK JOIN 4개를 생성한다. 현재 Query IR에는 정렬 표현이 없으므로 `ORDER BY`를 임의 생성하지 않았다. 정렬 지원은 Query IR 연산 범위를 명시적으로 확장할 때 함께 구현한다.
+
+다음 개발 요청 시 **sqlglot 기반 AST read-only policy**부터 시작한다.
+
+1. 현재 정규식 정책을 보존한 채 AST validator를 별도 구현
+2. 단일 SELECT와 허용된 JOIN/identifier만 통과
+3. Published Mapping과 JoinPlan 밖의 table·column 참조 차단
+4. subquery, CTE, set operation의 초기 허용 범위를 명시
+5. 주석·quoted identifier·우회형 DML/DDL 안전성 테스트
+6. 기존 SQLite authorizer와 read-only 실행 방어 계층 회귀 검증
+
+다음 단계에도 Query IR 확장, 모델 연결, PostgreSQL, 관리자 UI, repair loop는 포함하지 않는다.
 
 ## 14. 첫 구현 단위
 
@@ -973,6 +990,13 @@ SQLite DB 입력
 - 결정: Published Mapping으로 semantic field를 physical table에 연결한 뒤, Catalog FK를 무방향으로 탐색하여 필요한 table들을 잇는 최소 relation-edge tree를 계산한다. FK의 원래 child→parent 방향과 composite column pair 순서는 edge에 보존한다. 최소 edge set이 둘 이상이면 하나를 선택하지 않고 `AMBIGUOUS`로 반환한다.
 - 이유: 이름 추측이나 모델 판단 없이 실제 DB 제약을 JOIN 근거로 사용하고, 역방향 탐색을 지원하면서도 SQL predicate를 손실하지 않으며, 모호한 경로를 숨기지 않기 위해서다.
 
+### ADR-013: JOIN SQL alias는 JoinPlan traversal 순서로 할당
+
+- 날짜: 2026-09-07
+- 상태: 채택
+- 결정: anchor table을 `t0`으로 두고 JoinPlan step의 `traversal_to` 순서대로 `t1`, `t2`, ...을 할당한다. ON predicate는 traversal 방향이 아니라 relation에 보존된 FK source·target 방향으로 생성한다. `AMBIGUOUS` path와 self JOIN은 현재 compiler가 명시적으로 거부한다.
+- 이유: 학교별 table 이름과 관계없이 SQL 출력을 결정적으로 유지하고, 역방향 탐색이 FK predicate 의미를 뒤집지 않도록 하며, 지원하지 않는 모호성이나 동일 table 재등장을 조용히 잘못 컴파일하지 않기 위해서다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -1011,3 +1035,10 @@ SQLite DB 입력
 - normalized fixture의 직접·다단계·역방향 JOIN path와 flat·legacy 빈 path 검증
 - malformed composite FK, cycle, disconnected graph, 동률 최단 경로, profile/search-limit 오류 회귀 테스트 추가
 - 다음 개발 시작점을 JOIN-capable SQL compiler로 이동
+- Published Mapping과 RESOLVED JoinPlan을 입력으로 받는 JOIN-capable SQLite compiler 구현
+- JoinPlan traversal 순서의 결정적 `t0...tn` alias와 qualified SELECT/WHERE 생성
+- 역방향 traversal에서도 FK 원래 방향을 보존하고 composite predicate 전체를 `AND`로 컴파일
+- schema-adaptive compiler adapter를 기존 ExecutionHarness protocol에 연결하고 single-table baseline 보존
+- flat·normalized·legacy에서 동일 Query IR의 실행 결과 동등성 검증
+- ambiguity, invalid/disconnected plan, self JOIN, runtime mapping drift, identifier escaping 차단 테스트 추가
+- 현재 Query IR에 없는 ORDER BY 생성을 보류하고 다음 개발 시작점을 AST read-only policy로 이동
