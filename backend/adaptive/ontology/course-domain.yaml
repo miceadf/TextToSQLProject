@@ -74,7 +74,7 @@ entities:
         description: 담당 교수 또는 강사의 이름
         data_type: string
         aliases: [교수명, 강사명, 담당교수명]
-        physical_name_hints: [instructor_name, professor_name, prof_name, faculty_name, teacher_nm]
+        physical_name_hints: [instructor_name, professor_name, prof_name, prof_nm, faculty_name, teacher_nm]
         allowed_operators: [equals, contains]
         required: true
 
