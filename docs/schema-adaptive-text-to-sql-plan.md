@@ -565,8 +565,8 @@ class TextToSQLModel:
 - [x] course-domain ontology YAML 작성
 - [x] 규칙 기반 mapping baseline 구현
 - [x] 매핑 confidence와 evidence 생성
-- [ ] 관리자 교정 CLI 구현
-- [ ] mapping version 저장 및 publish 구현
+- [x] 관리자 교정 CLI 구현
+- [x] mapping version 저장 및 publish 구현
 
 ### Phase 4. Query Compiler와 안전성
 
@@ -668,15 +668,36 @@ HarnessRequest
 
 ### 현재 개발 체크포인트와 다음 시작점
 
-2026-09-04 기준 여기서 개발을 중단한다. 다음 작업은 **관리자 교정 CLI와 Mapping Profile publish**다. 다음 개발 요청 시 아래 순서로 재개한다.
+2026-09-07 기준 관리자 교정과 publish gate까지 완료했다.
 
-1. Mapping Proposal JSON 저장·불러오기
-2. 후보 승인·변경·거절·ignore를 지원하는 관리자 CLI
-3. required field, 실제 테이블·컬럼 존재 여부, 중복 매핑 검증
-4. 검토 결과를 versioned Mapping Profile로 저장
-5. 명시적으로 publish된 version만 기존 실행 하네스에 전달
+구현된 흐름:
 
-다중 스키마 fixture, JOIN path, 모델 연결, repair loop는 위 단계가 끝나기 전에는 진행하지 않는다.
+```text
+Mapping Proposal JSON
+→ review draft 생성
+→ list/show/approve/remap/reject/ignore
+→ publish validation
+→ immutable mapping-vNNNN.json + published.json
+→ 실행 하네스 MappingProfile 변환
+```
+
+CLI 진입점:
+
+```bash
+python -m backend.adaptive.mapping --store .schema-adaptive <command>
+```
+
+publish는 모든 ontology field의 검토 완료, 활성 entity의 required field, 물리 컬럼 존재, 중복 매핑 부재, database/schema fingerprint/ontology version 일치를 요구한다. `init` 재실행은 기존 draft를 덮어쓰지 않는다.
+
+다음 개발 요청 시 **동일 seed 기반 SQLite 스키마 3개 fixture**부터 시작한다.
+
+1. 공통 논리 seed 데이터 정의
+2. flat schema fixture 작성
+3. normalized schema fixture 작성
+4. legacy/abbreviated schema fixture 작성
+5. 세 Catalog와 Mapping Proposal 회귀 테스트
+
+이 fixture 단계에서는 JOIN compiler, 모델 연결, repair loop를 아직 구현하지 않는다. fixture 검증 후 ontology relation graph와 JOIN path를 다음 단위로 진행한다.
 
 ## 14. 첫 구현 단위
 
@@ -901,6 +922,13 @@ SQLite DB 입력
 - 결정: 첫 Schema Aligner는 컬럼명·자료형·테이블명의 결정적 가중합으로 confidence와 evidence를 생성한다. 높은 점수도 승인 후보일 뿐이며 관리자 review gate 전에는 운영 Mapping으로 publish하지 않는다.
 - 이유: LLM 없이 반복 가능한 비교 기준을 확보하면서 이름이 비슷하지만 업무 의미가 다른 컬럼의 오매핑을 관리자가 차단할 수 있어야 하기 때문이다.
 
+### ADR-010: Mapping publish는 명시적 검토와 불변 version을 요구
+
+- 날짜: 2026-09-07
+- 상태: 채택
+- 결정: 모든 ontology field를 관리자가 `APPROVED`, `REMAPPED`, `REJECTED`, `IGNORED` 중 하나로 결정해야 publish할 수 있다. 활성 entity의 required field는 반드시 물리 컬럼에 매핑한다. publish 결과는 `mapping-vNNNN.json`으로 보존하고 `published.json`은 최신 version을 가리킨다.
+- 이유: 높은 confidence를 운영 승인으로 오해하지 않게 하고, 관리자 개입량·수정 이유·version 이력을 논문 평가와 회귀 테스트에 사용할 수 있어야 하기 때문이다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -918,3 +946,12 @@ SQLite DB 입력
 - 컬럼명·자료형·테이블명 근거를 제공하는 규칙 기반 Schema Aligner 구현
 - flat 및 abbreviated SQLite 스키마의 mapping baseline 테스트 4개 추가
 - 다음 개발 시작점을 관리자 교정 CLI와 versioned Mapping Profile publish로 고정
+
+### 2026-09-07
+
+- Mapping Proposal과 review draft의 원자적 JSON 저장·불러오기 구현
+- 후보 승인·수동 remap·거절·ignore·조회 관리자 CLI 구현
+- 미검토 field, required field 누락, 존재하지 않는 컬럼, 중복 컬럼, fingerprint/version 불일치 publish 차단
+- 불변 `mapping-vNNNN.json`, 최신 `published.json`, 실행 하네스 변환 구현
+- 기존 draft를 `init`으로 덮어쓰는 동작 차단
+- 다음 개발 시작점을 동일 seed 기반 SQLite 스키마 3개 fixture로 이동
