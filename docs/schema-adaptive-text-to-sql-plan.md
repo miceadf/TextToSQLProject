@@ -574,7 +574,7 @@ class TextToSQLModel:
 - [x] ontology relation graph 구현
 - [x] 학교별 JOIN path 계산
 - [x] Query IR → SQLite SQL compiler 구현(single-table 및 Catalog FK JOIN)
-- [ ] AST 기반 read-only policy 구현
+- [x] AST 기반 read-only policy 구현
 - [x] LIMIT, timeout, 최대 결과 행 정책 구현
 - [x] Published Mapping만 사용하는 규칙 구현
 
@@ -646,7 +646,7 @@ HarnessRequest
 → 결과 컬럼 검증 및 단계별 trace 반환
 ```
 
-현재 하네스는 Ollama와 PostgreSQL 없이 실행 가능하다. SQL 안전성은 compiler-owned SQL, parameter binding, `mode=ro`, `PRAGMA query_only`, SQLite authorizer, timeout, 행 제한을 겹쳐 적용한다. 기존 single-table compiler는 baseline으로 유지하며, schema-adaptive compiler를 명시적으로 주입한 경우에만 Published Mapping과 Catalog FK 기반 JOIN을 사용한다. 자동 repair, 실제 모델 provider, AST 기반 SQL 검사는 후속 단계다.
+현재 하네스는 Ollama와 PostgreSQL 없이 실행 가능하다. SQL 안전성은 compiler-owned SQL, parameter binding, sqlglot AST allowlist, `mode=ro`, `PRAGMA query_only`, SQLite authorizer, timeout, 행 제한을 겹쳐 적용한다. 기존 single-table compiler와 정규식 `ConservativeSqlPolicy`는 baseline으로 유지하며, schema-adaptive compiler와 AST policy는 명시적으로 주입한다. 자동 repair와 실제 모델 provider는 후속 단계다.
 
 ### SQLite Schema Inspector 구현 상태
 
@@ -735,16 +735,39 @@ Query IR + Published Mapping + RESOLVED JoinPlan
 
 동일 Query IR을 flat·normalized·legacy fixture에서 실행하여 semantic result row가 같은지 검증했다. flat과 legacy는 JOIN 0개, normalized는 필요한 FK JOIN 4개를 생성한다. 현재 Query IR에는 정렬 표현이 없으므로 `ORDER BY`를 임의 생성하지 않았다. 정렬 지원은 Query IR 연산 범위를 명시적으로 확장할 때 함께 구현한다.
 
-다음 개발 요청 시 **sqlglot 기반 AST read-only policy**부터 시작한다.
+sqlglot 기반 AST read-only policy를 완료했다.
 
-1. 현재 정규식 정책을 보존한 채 AST validator를 별도 구현
-2. 단일 SELECT와 허용된 JOIN/identifier만 통과
-3. Published Mapping과 JoinPlan 밖의 table·column 참조 차단
-4. subquery, CTE, set operation의 초기 허용 범위를 명시
-5. 주석·quoted identifier·우회형 DML/DDL 안전성 테스트
-6. 기존 SQLite authorizer와 read-only 실행 방어 계층 회귀 검증
+```text
+CompiledQuery + Query IR + Published Mapping + RESOLVED JoinPlan
+→ SQLite dialect parse
+→ 단일 SELECT와 compiler AST shape 확인
+→ projection/filter/table/column/JOIN allowlist 검증
+→ placeholder 값·순서·타입과 parameterized LIMIT 검증
+→ SQLite read-only executor
+```
 
-다음 단계에도 Query IR 확장, 모델 연결, PostgreSQL, 관리자 UI, repair loop는 포함하지 않는다.
+`backend/adaptive/policy`의 `AstPolicyContext`는 원본 계약만 저장한다. 허용 table과 column은 Published Mapping 및 JoinPlan에서 계산해 중복 설정 drift를 막는다. `AstReadOnlyPolicy`는 sqlglot 30.18.0에서 검증한 AST 구조를 default-deny로 검사한다. DML/DDL, 다중·빈 statement, CTE, subquery, set operation, ORDER BY, GROUP BY, HAVING, DISTINCT, 함수·산술·CASE, OR/NOT, 주석, table modifier를 현재 범위에서 거부한다.
+
+JOIN table·순서·alias와 ON predicate는 JoinPlan과 정확히 같아야 한다. composite FK predicate는 원래 방향과 순서대로 정확히 한 번씩 있어야 한다. filter placeholder는 Query IR 순서와 값·타입이 일치해야 하고 마지막 parameter는 Query IR LIMIT여야 한다. 기존 single-table compiler의 unqualified column은 JOIN이 없는 legacy compatibility 경로에서만 허용한다.
+
+안전성 계층의 책임은 다음과 같다.
+
+- `ConservativeSqlPolicy`: sqlglot 없이 쓸 수 있는 정규식 baseline
+- `AstReadOnlyPolicy`: Query IR·Published Mapping·JoinPlan 기반 구조 및 의미 allowlist
+- `SQLiteReadOnlyExecutor`: AST 우회 여부와 무관한 read-only DB 권한, authorizer, timeout, row limit
+
+flat·normalized·legacy fixture의 compiler SQL이 모두 AST policy를 통과하고 같은 semantic result를 반환하는지 검증했다. parse/token 오류는 `SQL_PARSE_ERROR`로 변환되어 harness 밖으로 빠져나가지 않는다.
+
+다음 개발 요청 시 **cross-schema evaluation runner**부터 시작한다.
+
+1. versioned evaluation case와 suite Pydantic 계약 정의
+2. 질문, 기대 Query IR, 기대 semantic result를 분리 저장
+3. flat·normalized·legacy에 같은 case를 반복 실행
+4. execution accuracy, valid SQL rate, cross-schema consistency 계산
+5. 실패 stage와 error taxonomy 집계
+6. JSON report와 재현 가능한 실행 metadata 저장
+
+다음 단계에도 Query IR 확장, 실제 평가 질문 작성, 모델 연결, PostgreSQL, 관리자 UI, repair loop는 포함하지 않는다.
 
 ## 14. 첫 구현 단위
 
@@ -997,6 +1020,13 @@ SQLite DB 입력
 - 결정: anchor table을 `t0`으로 두고 JoinPlan step의 `traversal_to` 순서대로 `t1`, `t2`, ...을 할당한다. ON predicate는 traversal 방향이 아니라 relation에 보존된 FK source·target 방향으로 생성한다. `AMBIGUOUS` path와 self JOIN은 현재 compiler가 명시적으로 거부한다.
 - 이유: 학교별 table 이름과 관계없이 SQL 출력을 결정적으로 유지하고, 역방향 탐색이 FK predicate 의미를 뒤집지 않도록 하며, 지원하지 않는 모호성이나 동일 table 재등장을 조용히 잘못 컴파일하지 않기 위해서다.
 
+### ADR-014: AST policy는 compiler 출력 shape를 default-deny로 검증
+
+- 날짜: 2026-09-08
+- 상태: 채택
+- 결정: sqlglot 30.18.0과 SQLite dialect를 사용해 Query IR, Published Mapping, JoinPlan에서 허용되는 정확한 SELECT AST shape만 통과시킨다. 허용되지 않은 node, clause, table modifier, 주석은 기본 거부한다. 정규식 policy와 SQLite executor 방어 계층은 유지한다.
+- 이유: compiler 소유 SQL도 변조나 구현 오류를 독립적으로 탐지하고, table·column·JOIN predicate와 parameter 의미를 실행 전에 검증하면서 parser 변화에 따른 보안 회귀를 version pin과 테스트로 통제하기 위해서다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -1042,3 +1072,14 @@ SQLite DB 입력
 - flat·normalized·legacy에서 동일 Query IR의 실행 결과 동등성 검증
 - ambiguity, invalid/disconnected plan, self JOIN, runtime mapping drift, identifier escaping 차단 테스트 추가
 - 현재 Query IR에 없는 ORDER BY 생성을 보류하고 다음 개발 시작점을 AST read-only policy로 이동
+
+### 2026-09-08
+
+- sqlglot 30.18.0 기반 SQLite AST read-only policy와 Pydantic context 구현
+- Published Mapping과 JoinPlan에서 table·column allowlist를 파생해 중복 설정 제거
+- projection, WHERE, JOIN 순서·방향·composite predicate, placeholder와 LIMIT 의미 검증
+- DML/DDL, 다중 statement, CTE, subquery, set operation, 미지원 clause와 주석 차단
+- parse/token 오류의 구조화된 실패와 table modifier default-deny 추가
+- 기존 정규식 policy와 SQLite read-only authorizer·timeout 방어 계층 보존
+- flat·normalized·legacy compiler SQL의 AST 검증 및 결과 동등성 확인
+- 다음 개발 시작점을 cross-schema evaluation runner로 이동
