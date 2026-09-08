@@ -13,6 +13,7 @@ from backend.adaptive.harness.contracts import FilterIR, QueryIR
 from backend.adaptive.harness.executor import SQLiteReadOnlyExecutor
 from backend.adaptive.mapping import PublishedFieldMapping, PublishedMappingProfile
 from backend.adaptive.ontology import Operator
+from backend.adaptive.policy import AstPolicyContext, AstReadOnlyPolicy
 from backend.adaptive.relations.physical import build_physical_relation_graph
 from backend.adaptive.relations.planner import plan_join_path
 
@@ -61,6 +62,7 @@ class JoinCompilerCrossSchemaTest(unittest.TestCase):
             }
         )
         self.compiler = JoinCapableSQLiteCompiler()
+        self.ast_policy = AstReadOnlyPolicy()
         self.query_ir = QueryIR(
             entity="CourseOffering",
             select=SELECT_FIELDS,
@@ -91,6 +93,14 @@ class JoinCompilerCrossSchemaTest(unittest.TestCase):
                 join_result = plan_join_path(graph, profile, SELECT_FIELDS)
                 compiled = self.compiler.compile(
                     JoinCompilationRequest(
+                        query_ir=self.query_ir,
+                        mapping=profile,
+                        join_result=join_result,
+                    )
+                )
+                self.ast_policy.validate(
+                    AstPolicyContext(
+                        query=compiled,
                         query_ir=self.query_ir,
                         mapping=profile,
                         join_result=join_result,

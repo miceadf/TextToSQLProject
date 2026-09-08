@@ -24,6 +24,7 @@ from backend.adaptive.mapping import (
     PublishedMappingProfile,
     to_harness_mapping,
 )
+from backend.adaptive.policy import SchemaAdaptiveAstPolicy
 from backend.adaptive.relations import build_physical_relation_graph
 
 
@@ -109,6 +110,7 @@ class SchemaAdaptiveHarnessTest(unittest.TestCase):
         harness = ExecutionHarness(
             model=FakeModel({"질문": response}),
             compiler=SchemaAdaptiveSQLiteCompiler(self.graph, self.published),
+            sql_policy=SchemaAdaptiveAstPolicy(self.graph, self.published),
             executor=SQLiteReadOnlyExecutor(
                 {self.artifact.database_id: self.artifact.database_path}
             ),
