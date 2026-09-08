@@ -6,6 +6,6 @@ psycopg2-binary
 redis
 rapidfuzz
 transformers==4.46.3
-sqlglot
+sqlglot==30.18.0
 numpy
 safetensors

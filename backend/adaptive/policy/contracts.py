@@ -1,0 +1,48 @@
+from __future__ import annotations
+
+from typing import Literal
+
+from pydantic import BaseModel, computed_field
+
+from backend.adaptive.harness.contracts import CompiledQuery, QueryIR
+from backend.adaptive.mapping.contracts import PublishedMappingProfile
+from backend.adaptive.relations.contracts import JoinPlanningResult
+
+
+class AstPolicyContext(BaseModel):
+    """Source-of-truth inputs for strict compiler-output validation."""
+
+    query: CompiledQuery
+    query_ir: QueryIR
+    mapping: PublishedMappingProfile
+    join_result: JoinPlanningResult
+    dialect: Literal["sqlite"] = "sqlite"
+
+    @computed_field
+    @property
+    def allowed_tables(self) -> list[str]:
+        plan = self.join_result.plan
+        if plan is None:
+            return []
+        return [plan.anchor_table, *(step.traversal_to for step in plan.steps)]
+
+    @computed_field
+    @property
+    def allowed_columns(self) -> dict[str, list[str]]:
+        columns: dict[str, set[str]] = {
+            table: set() for table in self.allowed_tables
+        }
+        for field in self.mapping.fields.values():
+            if field.table in columns:
+                columns[field.table].add(field.column)
+        plan = self.join_result.plan
+        if plan is not None:
+            for step in plan.steps:
+                relation = step.relation
+                for pair in relation.column_pairs:
+                    columns[relation.source_table].add(pair.source_column)
+                    columns[relation.target_table].add(pair.target_column)
+        return {
+            table: sorted(table_columns)
+            for table, table_columns in columns.items()
+        }
