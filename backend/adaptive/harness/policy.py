@@ -1,8 +1,15 @@
 from __future__ import annotations
 
 import re
+from typing import Protocol
 
-from .contracts import CompiledQuery, HarnessErrorCode, HarnessStage
+from .contracts import (
+    CompiledQuery,
+    HarnessErrorCode,
+    HarnessStage,
+    MappingProfile,
+    QueryIR,
+)
 from .errors import HarnessFailure
 
 
@@ -22,6 +29,18 @@ BLOCKED_KEYWORDS = (
 )
 
 
+class SqlPolicy(Protocol):
+    def validate(
+        self,
+        query: CompiledQuery,
+        *,
+        query_ir: QueryIR | None = None,
+        mapping: MappingProfile | None = None,
+    ) -> None:
+        """Validate compiler output with optional semantic context."""
+        ...
+
+
 class ConservativeSqlPolicy:
     """Small dependency-free gate for compiler-owned SQL.
 
@@ -30,7 +49,14 @@ class ConservativeSqlPolicy:
     the development environment.
     """
 
-    def validate(self, query: CompiledQuery) -> None:
+    def validate(
+        self,
+        query: CompiledQuery,
+        *,
+        query_ir: QueryIR | None = None,
+        mapping: MappingProfile | None = None,
+    ) -> None:
+        del query_ir, mapping
         normalized = query.sql.strip()
         if not re.match(r"^select\b", normalized, flags=re.IGNORECASE):
             self._reject("only SELECT statements are allowed")

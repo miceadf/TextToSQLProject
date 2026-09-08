@@ -2,5 +2,6 @@
 
 from .ast import AstReadOnlyPolicy
 from .contracts import AstPolicyContext
+from .harness import SchemaAdaptiveAstPolicy
 
-__all__ = ["AstPolicyContext", "AstReadOnlyPolicy"]
+__all__ = ["AstPolicyContext", "AstReadOnlyPolicy", "SchemaAdaptiveAstPolicy"]

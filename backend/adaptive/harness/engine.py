@@ -23,7 +23,7 @@ from .contracts import (
 from .errors import HarnessFailure
 from .executor import SQLiteReadOnlyExecutor
 from .model import QueryModel
-from .policy import ConservativeSqlPolicy
+from .policy import ConservativeSqlPolicy, SqlPolicy
 from .validator import validate_mapping_ready, validate_query_ir
 
 
@@ -34,7 +34,7 @@ class ExecutionHarness:
         executor: SQLiteReadOnlyExecutor,
         *,
         compiler: SQLiteQueryCompiler | None = None,
-        sql_policy: ConservativeSqlPolicy | None = None,
+        sql_policy: SqlPolicy | None = None,
     ) -> None:
         self._model = model
         self._executor = executor
@@ -94,7 +94,11 @@ class ExecutionHarness:
             self._stage(
                 trace,
                 HarnessStage.SQL_VALIDATED,
-                lambda: self._sql_policy.validate(compiled),
+                lambda: self._sql_policy.validate(
+                    compiled,
+                    query_ir=query_ir,
+                    mapping=mapping,
+                ),
             )
             columns, rows = self._stage(
                 trace,
