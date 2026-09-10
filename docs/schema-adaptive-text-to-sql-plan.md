@@ -528,6 +528,12 @@ class TextToSQLModel:
 
 ## 13. 개발 로드맵
 
+### 로드맵 실행 원칙
+
+Phase 번호는 기본적으로 선행 산출물의 의존 순서를 뜻한다. 지금까지는 노트북에서 검증 가능한 schema-adaptive vertical slice를 먼저 확보하기 위해 Phase 3~4의 Catalog, Mapping, JOIN, compiler, policy를 앞당겨 구현했다. 이후에는 뒤 Phase의 기능을 새로 시작하기 전에 앞 Phase의 미완료 항목을 작은 구현 단위로 닫는다.
+
+Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요한 항목은 완료로 표시하지 않는다. 노트북에서는 재현 가능한 입력·측정 계약과 fixture까지만 준비하고, 실제 수치 측정은 데스크톱 체크포인트로 명시적으로 남긴다. Phase 5 evaluation runner는 Phase 1 데이터 품질 기반과 Phase 2 공통 평가 질문·기대 결과가 준비된 뒤 시작한다.
+
 ### Phase 0. 기준선 보존 및 설계
 
 - [x] 새 개발 브랜치 `feat/schema-adaptive-agent` 생성
@@ -537,8 +543,8 @@ class TextToSQLModel:
 
 ### Phase 1. 데이터셋 정제와 Query IR
 
-- [ ] JSONL loader 구현
-- [ ] 중복·충돌 탐지 report 구현
+- [x] JSONL loader 구현
+- [x] 중복·충돌 탐지 report 구현
 - [ ] SQL 정규화 규칙 정의
 - [ ] sqlglot 기반 기존 SQL AST 분석
 - [x] 공통 Query IR Pydantic model 정의
@@ -758,16 +764,45 @@ JOIN table·순서·alias와 ON predicate는 JoinPlan과 정확히 같아야 한
 
 flat·normalized·legacy fixture의 compiler SQL이 모두 AST policy를 통과하고 같은 semantic result를 반환하는지 검증했다. parse/token 오류는 `SQL_PARSE_ERROR`로 변환되어 harness 밖으로 빠져나가지 않는다.
 
-다음 개발 요청 시 **cross-schema evaluation runner**부터 시작한다.
+기존 학습 데이터셋 JSONL loader와 데이터 품질 report를 완료했다.
 
-1. versioned evaluation case와 suite Pydantic 계약 정의
-2. 질문, 기대 Query IR, 기대 semantic result를 분리 저장
-3. flat·normalized·legacy에 같은 case를 반복 실행
-4. execution accuracy, valid SQL rate, cross-schema consistency 계산
-5. 실패 stage와 error taxonomy 집계
-6. JSON report와 재현 가능한 실행 metadata 저장
+```text
+dataset.csv(JSONL bytes)
+→ line-by-line UTF-8 decode + SHA-256
+→ instruction/input/output record validation
+→ valid record와 structured issue 분리
+→ narrow identity normalization
+→ duplicate/conflict 집계
+→ versioned privacy-preserving JSON report
+```
 
-다음 단계에도 Query IR 확장, 실제 평가 질문 작성, 모델 연결, PostgreSQL, 관리자 UI, repair loop는 포함하지 않는다.
+`backend.adaptive.dataset`은 `.csv` 확장자에 의존하지 않고 실제 JSONL 내용을 binary streaming으로 읽는다. 첫 행 UTF-8 BOM을 허용하고 빈 행, 잘못된 UTF-8·Unicode scalar·JSON, 객체가 아닌 값, 필수 field 누락과 타입 오류를 줄 번호가 포함된 issue로 남긴 뒤 다음 행 분석을 계속한다. 원본 instruction·질문·SQL은 변경하지 않는다.
+
+중복 식별 key는 Unicode NFC, CRLF/CR 줄바꿈 통일, 앞뒤 공백 제거만 적용한다. SQL 대소문자, 내부 공백, quote와 literal은 합치지 않는다. 기본 report는 원문 대신 domain-separated SHA-256과 source line 목록을 저장하고, 제한된 preview는 명시적 CLI 옵션에서만 생성한다. conflict의 SQL variant preview에도 별도 상한을 적용한다. report에는 입력 절대 경로와 실행 시각을 넣지 않아 같은 입력과 설정에서 같은 core가 생성된다. 기존 report는 기본적으로 덮어쓰지 않으며 `--force`에서만 원자 교체한다. input과 output이 같은 경로나 hardlink를 가리키면 `--force`와 관계없이 거부한다.
+
+실제 `dataset.csv`를 read-only로 분석한 결과는 다음과 같다.
+
+- 파일 SHA-256: `66e6f2ed2e19cc09e702d0a4f0e696881b25d236deafcfea1d98bbe58221b8b1`
+- 전체·유효 레코드: 5,385개·5,385개, issue 0개
+- 고유 instruction·질문·SQL: 1개·5,354개·5,124개
+- 반복 질문 그룹: 19개
+- 동일 질문·동일 SQL duplicate group: 16개
+- 동일 원문 record duplicate group: 16개
+- 동일 질문·서로 다른 SQL conflict group: 3개
+- identity normalization으로 key가 달라진 record: 0개
+
+문서의 기존 “중복 질문 그룹 19개”는 반복된 질문 전체를 뜻한다. 그중 16개는 같은 SQL이 반복되고 3개는 서로 다른 SQL이 연결된 충돌이다.
+
+CLI 진입점:
+
+```powershell
+python -m backend.adaptive.dataset inspect `
+  --input "C:\path\to\dataset.csv" `
+  --dataset-id cnu-original-v1 `
+  --output ".schema-adaptive\reports\dataset-quality.json"
+```
+
+다음 개발 요청 시 **Phase 1의 SQL 정규화 규칙과 sqlglot 기반 기존 SQL AST 분석**부터 시작한다. 이번 단계에서 생성한 loader record를 입력으로 사용하되 SQL을 아직 Query IR로 변환하지 않고, 지원 구문 분포와 변환 가능성·수동 검토 사유를 먼저 구조화한다. 이후 SQL→Query IR 변환, 가명화, Phase 2 공통 평가 질문·기대 결과, Phase 5 evaluation runner 순서로 진행한다. 기존 시스템 baseline 실제 정확도·응답시간은 동일한 공통 질문 집합을 사용해 데스크톱에서 측정한다.
 
 ## 14. 첫 구현 단위
 
@@ -1027,6 +1062,20 @@ SQLite DB 입력
 - 결정: sqlglot 30.18.0과 SQLite dialect를 사용해 Query IR, Published Mapping, JoinPlan에서 허용되는 정확한 SELECT AST shape만 통과시킨다. 허용되지 않은 node, clause, table modifier, 주석은 기본 거부한다. 정규식 policy와 SQLite executor 방어 계층은 유지한다.
 - 이유: compiler 소유 SQL도 변조나 구현 오류를 독립적으로 탐지하고, table·column·JOIN predicate와 parameter 의미를 실행 전에 검증하면서 parser 변화에 따른 보안 회귀를 version pin과 테스트로 통제하기 위해서다.
 
+### ADR-015: 미완료 선행 Phase를 평가 runner보다 먼저 닫음
+
+- 날짜: 2026-09-08
+- 상태: 채택
+- 결정: Phase 3~4의 schema-adaptive vertical slice를 확보한 이후에는 Phase 5 evaluation runner를 바로 구현하지 않는다. Phase 1의 데이터 loader·품질 report·SQL 변환 기반과 Phase 2의 공통 평가 질문·기대 결과를 먼저 준비한다. 노트북에서 실행할 수 없는 기존 모델 baseline 수치 측정은 동일 평가 자료와 측정 계약을 준비한 뒤 데스크톱 체크포인트에서 수행하며, 실행 전까지 완료로 표시하지 않는다.
+- 이유: 평가 입력과 정답 기준이 없는 runner는 의미 있는 성능 비교를 만들지 못하고, 기존 데이터의 중복·충돌·누수가 정리되지 않으면 논문의 baseline과 제안 시스템 비교가 왜곡될 수 있기 때문이다.
+
+### ADR-016: 품질 report는 좁은 identity 정규화와 비공개 원문을 기본으로 함
+
+- 날짜: 2026-09-10
+- 상태: 채택
+- 결정: loader는 원본 문자열을 보존하고, 중복·충돌 식별 key에만 Unicode NFC, 줄바꿈 통일, 앞뒤 공백 제거를 적용한다. SQL 의미, 대소문자, 내부 공백은 다음 AST 분석 전까지 정규화하지 않는다. 기본 report는 질문·SQL 원문과 입력 절대 경로 대신 hash와 source line을 저장하며, preview는 명시적인 개수·길이 제한에서만 허용한다.
+- 이유: 초기 품질 분석이 SQL 의미가 다른 사례를 잘못 병합하지 않게 하고, 실제 대학 데이터를 분석한 report 자체가 원문 데이터 복제본이 되는 것을 방지하면서도 문제 행을 재현 가능하게 찾아야 하기 때문이다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -1082,4 +1131,16 @@ SQLite DB 입력
 - parse/token 오류의 구조화된 실패와 table modifier default-deny 추가
 - 기존 정규식 policy와 SQLite read-only authorizer·timeout 방어 계층 보존
 - flat·normalized·legacy compiler SQL의 AST 검증 및 결과 동등성 확인
-- 다음 개발 시작점을 cross-schema evaluation runner로 이동
+- Phase 순서를 의존성 기준으로 적용하고 하드웨어 의존 항목은 별도 데스크톱 체크포인트로 유지하도록 로드맵 실행 원칙 명시
+- 다음 개발 시작점을 Phase 1의 JSONL loader와 데이터 품질 report로 수정
+- 다음 개발용 범위와 완료 기준을 `docs/prompts/phase1-jsonl-loader-quality-report.md`에 기록
+
+### 2026-09-10
+
+- versioned dataset record·issue·quality report Pydantic 계약 구현
+- `.csv` 확장자의 JSONL을 binary streaming으로 읽는 UTF-8/BOM loader와 content fingerprint 구현
+- malformed line 이후 분석 지속과 line-level 오류 taxonomy 구현
+- exact record, 반복 질문, 동일 질문·SQL duplicate, 질문별 SQL conflict를 구분하는 결정적 report 구현
+- 원문 비공개 기본값과 제한 preview, 기존 report 덮어쓰기 차단·원자 저장 CLI 구현
+- 실제 5,385개 데이터셋의 기존 통계 재현 및 중복 질문 19개를 duplicate 16개·conflict 3개로 세분화
+- 다음 개발 시작점을 SQL 정규화 규칙과 sqlglot 기반 기존 SQL AST 분석으로 이동
