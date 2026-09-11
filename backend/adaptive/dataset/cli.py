@@ -8,10 +8,17 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from ..ontology.loader import load_ontology
+from .conversion_report import build_query_ir_conversion_report
 from .loader import DatasetLoadFatalError, load_jsonl_dataset
 from .report import build_quality_report
+from .source_profile import load_dataset_schema_profile
 from .sql_report import build_sql_analysis_report
-from .storage import write_quality_report, write_sql_analysis_report
+from .storage import (
+    write_conversion_artifacts,
+    write_quality_report,
+    write_sql_analysis_report,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -56,13 +63,40 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="atomically replace an existing report",
     )
+    convert = commands.add_parser(
+        "convert-ir",
+        help="convert the approved legacy SQL subset to QueryIR",
+    )
+    convert.add_argument("--input", type=Path, required=True)
+    convert.add_argument("--dataset-id", required=True)
+    convert.add_argument("--profile", type=Path, required=True)
+    convert.add_argument("--ontology", type=Path, required=True)
+    convert.add_argument("--output", type=Path, required=True)
+    convert.add_argument("--private-output", type=Path)
+    convert.add_argument("--default-limit", type=int, default=50)
+    convert.add_argument(
+        "--include-previews",
+        action="store_true",
+        help="include bounded literal-redacted SQL shape previews",
+    )
+    convert.add_argument("--preview-record-limit", type=int, default=5)
+    convert.add_argument("--preview-char-limit", type=int, default=240)
+    convert.add_argument(
+        "--force",
+        action="store_true",
+        help="atomically replace existing artifacts",
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        _reject_same_input_and_output(args.input, args.output)
+        _reject_colliding_paths(
+            args.input,
+            args.output,
+            getattr(args, "private_output", None),
+        )
         loaded = load_jsonl_dataset(args.input)
         if args.command == "inspect":
             report = build_quality_report(
@@ -74,7 +108,7 @@ def main(argv: list[str] | None = None) -> int:
                 preview_variant_limit=args.preview_variant_limit,
             )
             output = write_quality_report(args.output, report, overwrite=args.force)
-        else:
+        elif args.command == "analyze-sql":
             report = build_sql_analysis_report(
                 loaded,
                 dataset_id=args.dataset_id,
@@ -87,6 +121,31 @@ def main(argv: list[str] | None = None) -> int:
                 args.output,
                 report,
                 overwrite=args.force,
+            )
+        else:
+            ontology = load_ontology(args.ontology)
+            profile = load_dataset_schema_profile(
+                args.profile,
+                ontology,
+                expected_dialect="postgres",
+            )
+            report, private_records = build_query_ir_conversion_report(
+                loaded,
+                dataset_id=args.dataset_id,
+                profile=profile,
+                ontology=ontology,
+                default_limit=args.default_limit,
+                include_previews=args.include_previews,
+                preview_record_limit=args.preview_record_limit,
+                preview_char_limit=args.preview_char_limit,
+            )
+            output, _ = write_conversion_artifacts(
+                args.output,
+                report,
+                private_path=args.private_output,
+                private_records=private_records,
+                overwrite=args.force,
+                repository_root=Path(__file__).resolve().parents[3],
             )
         print(
             json.dumps(
@@ -113,10 +172,14 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _reject_same_input_and_output(input_path: Path, output_path: Path) -> None:
-    if input_path.resolve() == output_path.resolve():
-        raise ValueError("input and output must be different files")
-    if input_path.exists() and output_path.exists() and os.path.samefile(
-        input_path,
-        output_path,
-    ):
-        raise ValueError("input and output must be different files")
+    _reject_colliding_paths(input_path, output_path)
+
+
+def _reject_colliding_paths(*paths: Path | None) -> None:
+    present = [path for path in paths if path is not None]
+    for index, first in enumerate(present):
+        for second in present[index + 1 :]:
+            if first.resolve() == second.resolve():
+                raise ValueError("input and output paths must be different files")
+            if first.exists() and second.exists() and os.path.samefile(first, second):
+                raise ValueError("input and output paths must be different files")
