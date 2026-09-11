@@ -545,8 +545,8 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 
 - [x] JSONL loader 구현
 - [x] 중복·충돌 탐지 report 구현
-- [ ] SQL 정규화 규칙 정의
-- [ ] sqlglot 기반 기존 SQL AST 분석
+- [x] SQL 정규화 규칙 정의
+- [x] sqlglot 기반 기존 SQL AST 분석
 - [x] 공통 Query IR Pydantic model 정의
 - [ ] 기존 SQL을 Query IR로 변환
 - [ ] 수동 검토가 필요한 변환 목록 생성
@@ -802,7 +802,46 @@ python -m backend.adaptive.dataset inspect `
   --output ".schema-adaptive\reports\dataset-quality.json"
 ```
 
-다음 개발 요청 시 **Phase 1의 SQL 정규화 규칙과 sqlglot 기반 기존 SQL AST 분석**부터 시작한다. 이번 단계에서 생성한 loader record를 입력으로 사용하되 SQL을 아직 Query IR로 변환하지 않고, 지원 구문 분포와 변환 가능성·수동 검토 사유를 먼저 구조화한다. 이후 SQL→Query IR 변환, 가명화, Phase 2 공통 평가 질문·기대 결과, Phase 5 evaluation runner 순서로 진행한다. 기존 시스템 baseline 실제 정확도·응답시간은 동일한 공통 질문 집합을 사용해 데스크톱에서 측정한다.
+기존 학습 데이터셋의 PostgreSQL AST 분석 기반을 완료했다.
+
+```text
+DatasetRecord.sql 원문
+→ PostgreSQL dialect parse
+→ comment-free conservative canonical AST round-trip
+→ canonical hash + type-aware literal-redacted shape hash
+→ AST feature 추출
+→ Query IR 후보 상태와 reason code 분류
+→ versioned privacy-preserving JSON report
+```
+
+canonicalization은 identifier, qualification, alias, literal과 clause 순서를 보존하고 comment와 formatting만 fingerprint에서 제외한다. shape hash는 복사 AST의 string, integer, decimal, boolean, NULL literal만 서로 다른 placeholder로 바꾸며 실행 동등성이나 중복 정답 판정에는 사용하지 않는다. 기본 report에는 질문·SQL·literal 원문을 저장하지 않고 source line과 hash, feature, 분류 결과만 저장한다. 제한 preview도 literal-redacted shape만 허용한다.
+
+feature count는 AST node occurrence를 단위로 한 번씩 집계한다. 분류 우선순위는 `UNSUPPORTED_OR_UNSAFE`, `MANUAL_REVIEW`, `IR_EXTENSION_REQUIRED`, `CURRENT_IR_CANDIDATE` 순서다. 이는 자동 변환 성공 판정이 아니라 다음 SQL→Query IR 변환기의 보수적인 후보 선별 결과다.
+
+실제 5,385개 SQL 분석 결과:
+
+- parse·canonical round-trip 성공: 5,385개, issue 0개
+- 고유 canonical SQL: 5,085개; 원문 경계 공백 기준 고유 SQL 5,124개보다 39개 적으며 comment·formatting 차이가 합쳐진 결과
+- literal-redacted shape: 1,667개
+- `CURRENT_IR_CANDIDATE`: 3,395개
+- `IR_EXTENSION_REQUIRED`: 1,115개
+- `MANUAL_REVIEW`: 875개
+- `UNSUPPORTED_OR_UNSAFE`: 0개
+- aggregate 675개, `GROUP BY` 4개, `ORDER BY` 122개, `LIMIT` 130개
+- JOIN, subquery, CTE, set operation, window function: 각각 0개
+- 모든 산술 AST 포함 SQL: 357개; 기존 256개는 `capacity - enrolled` 형태만 센 더 좁은 정의
+
+CLI 진입점:
+
+```powershell
+python -m backend.adaptive.dataset analyze-sql `
+  --input "C:\path\to\dataset.csv" `
+  --dataset-id cnu-original-v1 `
+  --dialect postgres `
+  --output ".schema-adaptive\reports\sql-analysis.json"
+```
+
+다음 개발 요청 시 **Phase 1의 기존 SQL→Query IR 변환기와 수동 검토 목록**부터 시작한다. 현재 분석 report의 `CURRENT_IR_CANDIDATE`를 입력 후보로 사용하되 실제 변환 후 AST·IR 표현 손실을 별도 검증한다. Query IR 확장, 가명화, Phase 2 공통 평가 질문·기대 결과, Phase 5 evaluation runner는 이후 단계로 남긴다. 기존 시스템 baseline 실제 정확도·응답시간은 동일한 공통 질문 집합을 사용해 데스크톱에서 측정한다.
 
 ## 14. 첫 구현 단위
 
@@ -1076,6 +1115,13 @@ SQLite DB 입력
 - 결정: loader는 원본 문자열을 보존하고, 중복·충돌 식별 key에만 Unicode NFC, 줄바꿈 통일, 앞뒤 공백 제거를 적용한다. SQL 의미, 대소문자, 내부 공백은 다음 AST 분석 전까지 정규화하지 않는다. 기본 report는 질문·SQL 원문과 입력 절대 경로 대신 hash와 source line을 저장하며, preview는 명시적인 개수·길이 제한에서만 허용한다.
 - 이유: 초기 품질 분석이 SQL 의미가 다른 사례를 잘못 병합하지 않게 하고, 실제 대학 데이터를 분석한 report 자체가 원문 데이터 복제본이 되는 것을 방지하면서도 문제 행을 재현 가능하게 찾아야 하기 때문이다.
 
+### ADR-017: SQL fingerprint와 Query IR 후보 분류는 보수적으로 분리
+
+- 날짜: 2026-09-11
+- 상태: 채택
+- 결정: PostgreSQL AST를 동일 dialect로 직렬화한 canonical hash와 literal type만 남긴 shape hash를 구분한다. 원문 SQL은 변경하지 않으며 두 hash 모두 실행 동등성의 근거로 사용하지 않는다. 현재 Query IR 호환성은 자동 변환 성공이 아닌 네 단계 후보 분류로 기록하고 모호한 projection, LIKE, literal 처리는 수동 검토로 보낸다.
+- 이유: formatting 차이를 제거하면서 identifier·literal·조건 순서의 의미를 보존하고, 현재 IR이 표현하지 못하는 구문을 조용히 손실하지 않으며, 후속 변환기의 자동 처리 범위와 관리자 검토량을 실측하기 위해서다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -1144,3 +1190,15 @@ SQLite DB 입력
 - 원문 비공개 기본값과 제한 preview, 기존 report 덮어쓰기 차단·원자 저장 CLI 구현
 - 실제 5,385개 데이터셋의 기존 통계 재현 및 중복 질문 19개를 duplicate 16개·conflict 3개로 세분화
 - 다음 개발 시작점을 SQL 정규화 규칙과 sqlglot 기반 기존 SQL AST 분석으로 이동
+- 다음 개발용 범위와 완료 기준을 `docs/prompts/phase1-sql-normalization-ast-analysis.md`에 기록
+
+### 2026-09-11
+
+- PostgreSQL dialect 기반 SQL parser와 comment-free conservative canonical round-trip 구현
+- canonical SQL hash와 type-aware literal-redacted shape hash를 분리하고 원본 AST 불변성 검증
+- AST node 기반 table·column·projection·predicate·function·clause·JOIN·subquery·operator·literal feature 추출
+- 현재 Query IR 후보를 네 상태와 결정적 reason code로 분류
+- 원문 비공개 기본값, 제한된 redacted preview, version metadata를 갖는 SQL analysis report와 `analyze-sql` CLI 구현
+- 실제 5,385개 SQL 모두 분석: issue 0개, canonical 5,085개, shape 1,667개
+- 기존 핵심 통계를 재현하고 모든 산술 AST 357개와 기존 특정 뺄셈 256개의 정의 차이를 기록
+- 다음 개발 시작점을 기존 SQL→Query IR 변환기와 수동 검토 목록으로 이동
