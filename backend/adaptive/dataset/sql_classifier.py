@@ -46,7 +46,13 @@ def _unwrap_parentheses(node: exp.Expression) -> exp.Expression:
 
 
 def _literal_value(node: exp.Expression) -> bool:
-    return isinstance(node, (exp.Literal, exp.Boolean))
+    if isinstance(node, (exp.Literal, exp.Boolean)):
+        return True
+    return (
+        isinstance(node, exp.Neg)
+        and isinstance(_unwrap_parentheses(node.this), exp.Literal)
+        and not _unwrap_parentheses(node.this).is_string
+    )
 
 
 def _like_reason(pattern: exp.Expression) -> IrReasonCode | None:
