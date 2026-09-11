@@ -1,0 +1,61 @@
+schema_version: dataset-schema-profile-v1
+profile_id: cnu-courses-v1
+version: 1
+status: APPROVED
+dialect: postgres
+table_allowlist:
+  - courses
+root_entity: CourseOffering
+ontology_version: 1
+reviewed_by: project-team
+mappings:
+  - table: courses
+    column: capacity
+    semantic_field: CourseOffering.capacity
+    allowed_literal_types: [integer]
+    evidence: Manually reviewed legacy dataset column.
+  - table: courses
+    column: category
+    semantic_field: Course.category
+    allowed_literal_types: [string]
+    evidence: Manually reviewed legacy dataset column.
+  - table: courses
+    column: course_year
+    semantic_field: CourseOffering.year
+    allowed_literal_types: [integer]
+    evidence: Manually reviewed legacy dataset column.
+  - table: courses
+    column: credit_hours
+    semantic_field: Course.credits
+    allowed_literal_types: [decimal, integer]
+    evidence: Manually reviewed legacy dataset column.
+  - table: courses
+    column: dept_name
+    semantic_field: Department.name
+    allowed_literal_types: [string]
+    evidence: Manually reviewed legacy dataset column.
+  - table: courses
+    column: enrolled
+    semantic_field: CourseOffering.enrolled
+    allowed_literal_types: [integer]
+    evidence: Manually reviewed legacy dataset column.
+  - table: courses
+    column: professor
+    semantic_field: Instructor.name
+    allowed_literal_types: [string]
+    evidence: Manually reviewed legacy dataset column.
+  - table: courses
+    column: section
+    semantic_field: CourseOffering.section
+    allowed_literal_types: [string]
+    evidence: Manually reviewed legacy dataset column.
+  - table: courses
+    column: subject_code
+    semantic_field: Course.code
+    allowed_literal_types: [string]
+    evidence: Manually reviewed legacy dataset column.
+  - table: courses
+    column: subject_name
+    semantic_field: Course.name
+    allowed_literal_types: [string]
+    evidence: Manually reviewed legacy dataset column.
