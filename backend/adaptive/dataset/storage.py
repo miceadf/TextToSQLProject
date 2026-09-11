@@ -4,7 +4,10 @@ import os
 import tempfile
 from pathlib import Path
 
+from pydantic import BaseModel
+
 from .report import DatasetQualityReport
+from .sql_contracts import SqlAnalysisReport
 
 
 def write_quality_report(
@@ -14,6 +17,27 @@ def write_quality_report(
     overwrite: bool = False,
 ) -> Path:
     """Write a complete report atomically, refusing replacement by default."""
+
+    return _write_report(path, report, overwrite=overwrite)
+
+
+def write_sql_analysis_report(
+    path: str | Path,
+    report: SqlAnalysisReport,
+    *,
+    overwrite: bool = False,
+) -> Path:
+    """Write a SQL analysis report with the dataset report safety policy."""
+
+    return _write_report(path, report, overwrite=overwrite)
+
+
+def _write_report(
+    path: str | Path,
+    report: BaseModel,
+    *,
+    overwrite: bool,
+) -> Path:
 
     target = Path(path).resolve()
     target.parent.mkdir(parents=True, exist_ok=True)

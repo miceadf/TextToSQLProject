@@ -10,7 +10,8 @@ from pydantic import ValidationError
 
 from .loader import DatasetLoadFatalError, load_jsonl_dataset
 from .report import build_quality_report
-from .storage import write_quality_report
+from .sql_report import build_sql_analysis_report
+from .storage import write_quality_report, write_sql_analysis_report
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -35,6 +36,26 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="atomically replace an existing report",
     )
+    analyze = commands.add_parser(
+        "analyze-sql",
+        help="write a privacy-preserving PostgreSQL AST analysis report",
+    )
+    analyze.add_argument("--input", type=Path, required=True)
+    analyze.add_argument("--dataset-id", required=True)
+    analyze.add_argument("--dialect", default="postgres")
+    analyze.add_argument("--output", type=Path, required=True)
+    analyze.add_argument(
+        "--include-previews",
+        action="store_true",
+        help="include bounded literal-redacted SQL shape previews",
+    )
+    analyze.add_argument("--preview-record-limit", type=int, default=5)
+    analyze.add_argument("--preview-char-limit", type=int, default=240)
+    analyze.add_argument(
+        "--force",
+        action="store_true",
+        help="atomically replace an existing report",
+    )
     return parser
 
 
@@ -43,15 +64,30 @@ def main(argv: list[str] | None = None) -> int:
     try:
         _reject_same_input_and_output(args.input, args.output)
         loaded = load_jsonl_dataset(args.input)
-        report = build_quality_report(
-            loaded,
-            dataset_id=args.dataset_id,
-            include_previews=args.include_previews,
-            preview_group_limit=args.preview_group_limit,
-            preview_char_limit=args.preview_char_limit,
-            preview_variant_limit=args.preview_variant_limit,
-        )
-        output = write_quality_report(args.output, report, overwrite=args.force)
+        if args.command == "inspect":
+            report = build_quality_report(
+                loaded,
+                dataset_id=args.dataset_id,
+                include_previews=args.include_previews,
+                preview_group_limit=args.preview_group_limit,
+                preview_char_limit=args.preview_char_limit,
+                preview_variant_limit=args.preview_variant_limit,
+            )
+            output = write_quality_report(args.output, report, overwrite=args.force)
+        else:
+            report = build_sql_analysis_report(
+                loaded,
+                dataset_id=args.dataset_id,
+                dialect=args.dialect,
+                include_previews=args.include_previews,
+                preview_record_limit=args.preview_record_limit,
+                preview_char_limit=args.preview_char_limit,
+            )
+            output = write_sql_analysis_report(
+                args.output,
+                report,
+                overwrite=args.force,
+            )
         print(
             json.dumps(
                 {
