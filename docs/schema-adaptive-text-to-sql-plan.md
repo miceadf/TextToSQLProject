@@ -548,8 +548,8 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 - [x] SQL 정규화 규칙 정의
 - [x] sqlglot 기반 기존 SQL AST 분석
 - [x] 공통 Query IR Pydantic model 정의
-- [ ] 기존 SQL을 Query IR로 변환
-- [ ] 수동 검토가 필요한 변환 목록 생성
+- [x] 기존 SQL을 Query IR로 변환
+- [x] 수동 검토가 필요한 변환 목록 생성
 - [ ] 실제 식별값 가명화 도구 구현
 
 ### Phase 2. 다중 스키마 경량 실험 환경
@@ -841,7 +841,43 @@ python -m backend.adaptive.dataset analyze-sql `
   --output ".schema-adaptive\reports\sql-analysis.json"
 ```
 
-다음 개발 요청 시 **Phase 1의 기존 SQL→Query IR 변환기와 수동 검토 목록**부터 시작한다. 현재 분석 report의 `CURRENT_IR_CANDIDATE`를 입력 후보로 사용하되 실제 변환 후 AST·IR 표현 손실을 별도 검증한다. Query IR 확장, 가명화, Phase 2 공통 평가 질문·기대 결과, Phase 5 evaluation runner는 이후 단계로 남긴다. 기존 시스템 baseline 실제 정확도·응답시간은 동일한 공통 질문 집합을 사용해 데스크톱에서 측정한다.
+기존 학습 데이터셋의 SQL→Query IR 변환기와 수동 검토 목록을 완료했다.
+
+```text
+DatasetRecord + PostgreSQL AST compatibility
+→ 승인된 legacy dataset schema profile 검증
+→ courses physical column을 ontology semantic field로 변환
+→ projection·AND filter·typed literal·LIMIT intent signature 구성
+→ 기존 Query IR validator와 signature 동등성 검증
+→ 공개 conversion report + opt-in private Query IR JSONL
+```
+
+`cnu-courses-v1` source profile은 운영용 Published Mapping과 별도인 학습 데이터 변환용 승인 metadata다. `courses`의 10개 물리 컬럼만 명시적으로 매핑하며 의미 손실이 발생하는 `lecture_time`, `class_mode`는 제외한다. 자동 변환은 analyzer의 `CURRENT_IR_CANDIDATE`에만 허용하고, double-quoted identifier를 문자열로 추측하거나 문자열 숫자를 강제 변환하지 않는다. 음수 numeric literal은 AST의 부호를 보존하며 decimal은 현재 Query IR의 `float`로 정확히 왕복할 수 있을 때만 허용한다.
+
+source SQL의 1~200 정수 LIMIT은 그대로 보존한다. LIMIT이 없으면 실행 안전 기본값 50을 적용하고 `CONVERTED_WITH_EXECUTION_POLICY`와 `DEFAULT_LIMIT_APPLIED`로 exact 변환과 구분한다. 동일 질문에 서로 다른 SQL이 연결된 conflict group 전체는 자동 학습 artifact에서 차단한다. 공개 report는 source line, hash, 상태와 reason만 저장하고 질문·SQL·literal·Query IR value는 opt-in private JSONL에만 기록한다. private output은 저장소의 gitignore된 `.schema-adaptive` 아래로 제한하며 public report를 마지막에 설치한다.
+
+실제 5,385개 record의 read-only 변환 결과:
+
+- `CONVERTED_EXACT`: 11개
+- `CONVERTED_WITH_EXECUTION_POLICY`: 3,201개
+- `REVIEW_REQUIRED`: 1,059개
+- `UNSUPPORTED`: 1,114개
+- 자동 변환 합계: 3,212개(59.6%)
+- conflict 영향 record: 6개; 모두 자동 변환 차단
+- 주요 review 사유: double-quoted identifier 345개, non-literal filter 328개, unmapped source column 113개, literal type mismatch 72개, unsupported LIKE 28개
+
+CLI 진입점:
+
+```powershell
+python -m backend.adaptive.dataset convert-ir `
+  --input "C:\path\to\dataset.csv" `
+  --dataset-id cnu-original-v1 `
+  --profile backend/adaptive/dataset/profiles/cnu-courses-v1.yaml `
+  --ontology backend/adaptive/ontology/course-domain.yaml `
+  --output ".schema-adaptive\reports\ir-conversion.json"
+```
+
+다음 개발 요청 시 **Phase 1의 실제 식별값 가명화 도구**부터 시작한다. 변환된 private Query IR의 질문·literal과 원본 데이터 값을 안정적으로 가명화하되 semantic type, 중복·충돌 provenance와 질문-SQL 대응을 보존해야 한다. Query IR 확장, 수동 검토 UI, Phase 2 공통 평가 질문·기대 결과, Phase 5 evaluation runner는 이후 단계로 남긴다. 기존 시스템 baseline 실제 정확도·응답시간은 동일한 공통 질문 집합을 사용해 데스크톱에서 측정한다.
 
 ## 14. 첫 구현 단위
 
@@ -1122,6 +1158,13 @@ SQLite DB 입력
 - 결정: PostgreSQL AST를 동일 dialect로 직렬화한 canonical hash와 literal type만 남긴 shape hash를 구분한다. 원문 SQL은 변경하지 않으며 두 hash 모두 실행 동등성의 근거로 사용하지 않는다. 현재 Query IR 호환성은 자동 변환 성공이 아닌 네 단계 후보 분류로 기록하고 모호한 projection, LIKE, literal 처리는 수동 검토로 보낸다.
 - 이유: formatting 차이를 제거하면서 identifier·literal·조건 순서의 의미를 보존하고, 현재 IR이 표현하지 못하는 구문을 조용히 손실하지 않으며, 후속 변환기의 자동 처리 범위와 관리자 검토량을 실측하기 위해서다.
 
+### ADR-018: Legacy SQL 변환은 승인 source profile과 실행 정책 provenance를 분리
+
+- 날짜: 2026-09-11
+- 상태: 채택
+- 결정: 학습 데이터 변환에는 운영 Published Mapping과 별도인 versioned·승인된 source schema profile만 사용한다. analyzer의 `CURRENT_IR_CANDIDATE`만 자동 변환하고 source intent와 생성 Query IR signature가 일치해야 성공으로 기록한다. 원본에 LIMIT이 없을 때 적용한 안전 기본값은 exact 변환과 구분하며, 질문별 SQL conflict는 자동 학습 artifact에서 차단한다. 공개 report에는 원문과 Query IR value를 넣지 않고 private artifact는 gitignore된 전용 경로에 opt-in으로만 쓴다.
+- 이유: 특정 학교의 물리 컬럼을 이름 유사도로 재추측하거나 기존 오류를 자동 보정하면 의미 손실이 학습 데이터에 섞인다. source 의미, 실행 안전 정책, 운영 mapping lifecycle과 개인정보 경계를 분리해야 변환 성공률과 사람 검토량을 논문에서 재현 가능하게 측정할 수 있다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -1179,7 +1222,7 @@ SQLite DB 입력
 - flat·normalized·legacy compiler SQL의 AST 검증 및 결과 동등성 확인
 - Phase 순서를 의존성 기준으로 적용하고 하드웨어 의존 항목은 별도 데스크톱 체크포인트로 유지하도록 로드맵 실행 원칙 명시
 - 다음 개발 시작점을 Phase 1의 JSONL loader와 데이터 품질 report로 수정
-- 다음 개발용 범위와 완료 기준을 `docs/prompts/phase1-jsonl-loader-quality-report.md`에 기록
+- 다음 개발용 범위와 완료 기준을 `docs/prompts/phase1-01-jsonl-loader-quality-report.md`에 기록
 
 ### 2026-09-10
 
@@ -1190,7 +1233,7 @@ SQLite DB 입력
 - 원문 비공개 기본값과 제한 preview, 기존 report 덮어쓰기 차단·원자 저장 CLI 구현
 - 실제 5,385개 데이터셋의 기존 통계 재현 및 중복 질문 19개를 duplicate 16개·conflict 3개로 세분화
 - 다음 개발 시작점을 SQL 정규화 규칙과 sqlglot 기반 기존 SQL AST 분석으로 이동
-- 다음 개발용 범위와 완료 기준을 `docs/prompts/phase1-sql-normalization-ast-analysis.md`에 기록
+- 다음 개발용 범위와 완료 기준을 `docs/prompts/phase1-02-sql-normalization-ast-analysis.md`에 기록
 
 ### 2026-09-11
 
@@ -1202,3 +1245,11 @@ SQLite DB 입력
 - 실제 5,385개 SQL 모두 분석: issue 0개, canonical 5,085개, shape 1,667개
 - 기존 핵심 통계를 재현하고 모든 산술 AST 357개와 기존 특정 뺄셈 256개의 정의 차이를 기록
 - 다음 개발 시작점을 기존 SQL→Query IR 변환기와 수동 검토 목록으로 이동
+- 개발 프롬프트 파일명에 Phase 내 작성 순서 번호를 추가하고 기존 문서 참조 갱신
+- SQL→Query IR 변환과 수동 검토 목록 구현 범위를 `docs/prompts/phase1-03-sql-to-query-ir-conversion.md`에 기록
+- 승인된 `cnu-courses-v1` source profile과 10개 physical→semantic mapping 구현
+- analyzer 후보 gate, typed literal, contains LIKE, LIMIT provenance와 intent signature 검증을 갖는 SQL→Query IR 변환기 구현
+- 질문별 SQL conflict 자동 변환 차단과 결정적 수동 검토 reason taxonomy 구현
+- 원문 비공개 conversion report, opt-in private JSONL, 경로 충돌·덮어쓰기·부분 저장 안전장치와 `convert-ir` CLI 구현
+- 실제 5,385개 record 변환: exact 11개, 실행 LIMIT 정책 적용 3,201개, review 1,059개, unsupported 1,114개
+- 다음 개발 시작점을 Phase 1의 실제 식별값 가명화 도구로 이동
