@@ -550,7 +550,7 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 - [x] 공통 Query IR Pydantic model 정의
 - [x] 기존 SQL을 Query IR로 변환
 - [x] 수동 검토가 필요한 변환 목록 생성
-- [ ] 실제 식별값 가명화 도구 구현
+- [x] 실제 식별값 가명화 도구 구현
 
 ### Phase 2. 다중 스키마 경량 실험 환경
 
@@ -877,7 +877,13 @@ python -m backend.adaptive.dataset convert-ir `
   --output ".schema-adaptive\reports\ir-conversion.json"
 ```
 
-다음 개발 요청 시 **Phase 1의 실제 식별값 가명화 도구**부터 시작한다. 변환된 private Query IR의 질문·literal과 원본 데이터 값을 안정적으로 가명화하되 semantic type, 중복·충돌 provenance와 질문-SQL 대응을 보존해야 한다. Query IR 확장, 수동 검토 UI, Phase 2 공통 평가 질문·기대 결과, Phase 5 evaluation runner는 이후 단계로 남긴다. 기존 시스템 baseline 실제 정확도·응답시간은 동일한 공통 질문 집합을 사용해 데스크톱에서 측정한다.
+`pseudonymize-ir`는 opt-in private converted JSONL을 입력으로 받아 `cnu-pseudonymization-v1` 정책과 외부 key file을 적용한다. `Course.name/code`, `Department.name`, `Instructor.name`은 field별 namespace HMAC token으로 치환하고 나머지 6개 초기 field는 보존한다. 질문·instruction·Query IR의 대응을 한 record 전체에서 확인하지 못하면 부분 결과를 쓰지 않고 로컬 review로 보낸다. 출력의 source line·SQL hash·중복 group id는 별도 HMAC lineage token으로 바꾸며, 공개 summary에는 집계·fingerprint·잔여 위험만 기록한다. 생성물은 gitignore된 `.schema-adaptive` 아래의 불변 generation과 마지막 manifest로 묶는다. 이는 **가명화**이지 재식별 위험이 없는 익명화나 외부 공개 승인이 아니다. 보존하는 `Course.category`와 `CourseOffering.section`, filter로 드러나지 않는 질문 속 고유명사는 공개 전 별도 검토가 필요하다.
+
+실제 원본 5,385건에서 변환된 3,212건을 저장소 밖 원본과 임시 메모리 key로 이어받아 read-only 검증했다. 자동 출력 가능 2,528건, 수동 검토 684건, 성공 출력의 알려진 sensitive value 잔존 0건이었다. 주요 검토 사유는 질문-IR 대응 불명확 542건, 겹치는 문자열 match 517건, filter 값의 질문·instruction 부재 176건이다(복수 사유 중복 집계). 수치는 현재 lexicon과 보수적 match 정책에 따른 결과이지 개인정보 안전성의 증명이 아니다. 실제 private artifact·key·가명 출력은 이 검증에서 파일로 저장하지 않았다.
+
+CLI는 이전 `convert-ir --private-output` 결과와 저장소 밖 32바이트 이상 binary key를 사용한다. 예: `python -m backend.adaptive.dataset pseudonymize-ir --input .schema-adaptive/private/cnu-query-ir-v1.jsonl --dataset-id cnu-original-v1 --profile backend/adaptive/dataset/profiles/cnu-pseudonymization-v1.yaml --ontology backend/adaptive/ontology/course-domain.yaml --key-file C:\private\pseudonym-key.bin --key-id key-v1 --output-dir .schema-adaptive/pseudonymized/cnu-v1`. 출력은 기본 덮어쓰기 금지, `--force`에서만 manifest를 원자 교체한다. 공개 가능 여부와 key 보관·회전은 별도 운영 결정으로 남긴다.
+
+다음 개발 요청 시 **Phase 2 공통 평가 질문 30~50개와 기대 semantic result 계약**부터 시작한다. Phase 1의 수동 검토 684건은 자동 학습 자료로 승인하지 않는다. Query IR 확장, 수동 검토 UI, Phase 5 evaluation runner는 이후 단계로 남긴다. 기존 시스템 baseline 실제 정확도·응답시간은 동일한 공통 질문 집합을 사용해 데스크톱에서 측정한다.
 
 ## 14. 첫 구현 단위
 
@@ -1165,6 +1171,13 @@ SQLite DB 입력
 - 결정: 학습 데이터 변환에는 운영 Published Mapping과 별도인 versioned·승인된 source schema profile만 사용한다. analyzer의 `CURRENT_IR_CANDIDATE`만 자동 변환하고 source intent와 생성 Query IR signature가 일치해야 성공으로 기록한다. 원본에 LIMIT이 없을 때 적용한 안전 기본값은 exact 변환과 구분하며, 질문별 SQL conflict는 자동 학습 artifact에서 차단한다. 공개 report에는 원문과 Query IR value를 넣지 않고 private artifact는 gitignore된 전용 경로에 opt-in으로만 쓴다.
 - 이유: 특정 학교의 물리 컬럼을 이름 유사도로 재추측하거나 기존 오류를 자동 보정하면 의미 손실이 학습 데이터에 섞인다. source 의미, 실행 안전 정책, 운영 mapping lifecycle과 개인정보 경계를 분리해야 변환 성공률과 사람 검토량을 논문에서 재현 가능하게 측정할 수 있다.
 
+### ADR-019: 실제 식별값은 field별 HMAC token으로 가명화하고 불확실한 문장은 격리
+
+- 날짜: 2026-09-12
+- 상태: 채택
+- 결정: 승인된 semantic field 정책과 외부 binary secret key를 사용해 NFC 값에 domain-separated HMAC-SHA-256을 적용한다. 동일 surface의 namespace 충돌, 겹침, 질문·instruction·IR 대응 불일치 또는 알려진 원본 값 잔존은 record 전체를 review로 보낸다. 원본 line/hash/group id는 공개 가명 artifact에 복사하지 않고 keyed lineage로 보존하며 private 생성물은 manifest-last bundle로 저장한다. `Course.category`와 `CourseOffering.section`은 초기 보존하되 공개 전 재검토한다.
+- 이유: 단순 hash나 부분 치환은 사전 대입·질문/정답 불일치·원본 데이터 연결 위험이 있다. 보수적 실패와 keyed lineage는 재현성을 유지하면서 식별값 노출을 줄이지만, filter에 없는 고유명사나 외부 데이터에 의한 재식별까지 제거하지는 못한다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -1253,3 +1266,12 @@ SQLite DB 입력
 - 원문 비공개 conversion report, opt-in private JSONL, 경로 충돌·덮어쓰기·부분 저장 안전장치와 `convert-ir` CLI 구현
 - 실제 5,385개 record 변환: exact 11개, 실행 LIMIT 정책 적용 3,201개, review 1,059개, unsupported 1,114개
 - 다음 개발 시작점을 Phase 1의 실제 식별값 가명화 도구로 이동
+- 식별값 가명화의 HMAC token, field policy, question-IR 동기화, lineage와 leak audit 범위를 `docs/prompts/phase1-04-identifier-pseudonymization.md`에 기록
+
+### 2026-09-12
+
+- versioned semantic field 가명화 profile, 외부 secret key 검증, 결정적 HMAC token과 keyed lineage 계약 구현
+- private converted JSONL loader, 보수적 질문·instruction·IR 동시 변환, 충돌·겹침·잔존값 review gate 구현
+- aggregate summary, 로컬 review, 불변 generation과 manifest-last 저장, `pseudonymize-ir` CLI 구현
+- 실제 3,212개 변환 record를 메모리에서 검증: 출력 가능 2,528개, review 684개, 알려진 값 잔존 0개
+- 다음 시작점을 Phase 2 공통 평가 질문·기대 semantic result 계약으로 이동
