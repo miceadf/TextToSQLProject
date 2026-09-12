@@ -1,0 +1,29 @@
+schema_version: pseudonym-profile-v1
+profile_id: cnu-pseudonymization-v1
+version: 1
+ontology_version: 1
+field_policies:
+  - field: Course.category
+    policy: PRESERVE
+  - field: Course.code
+    policy: PSEUDONYMIZE
+    namespace: course-code
+  - field: Course.credits
+    policy: PRESERVE
+  - field: Course.name
+    policy: PSEUDONYMIZE
+    namespace: course-name
+  - field: CourseOffering.capacity
+    policy: PRESERVE
+  - field: CourseOffering.enrolled
+    policy: PRESERVE
+  - field: CourseOffering.section
+    policy: PRESERVE
+  - field: CourseOffering.year
+    policy: PRESERVE
+  - field: Department.name
+    policy: PSEUDONYMIZE
+    namespace: department-name
+  - field: Instructor.name
+    policy: PSEUDONYMIZE
+    namespace: instructor-name
