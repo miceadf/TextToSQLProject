@@ -14,6 +14,12 @@ from .loader import DatasetLoadFatalError, load_jsonl_dataset
 from .report import build_quality_report
 from .source_profile import load_dataset_schema_profile
 from .sql_report import build_sql_analysis_report
+from .pseudonym_loader import load_private_converted_jsonl
+from .pseudonym_contracts import PseudonymReasonCode, PseudonymReviewItem
+from .pseudonym_profile import load_pseudonymization_profile, read_secret_key
+from .pseudonym_report import build_pseudonym_summary
+from .pseudonym_storage import write_pseudonym_bundle
+from .pseudonym_transform import pseudonymize_records
 from .storage import (
     write_conversion_artifacts,
     write_quality_report,
@@ -86,11 +92,25 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="atomically replace existing artifacts",
     )
+    pseudonymize = commands.add_parser(
+        "pseudonymize-ir",
+        help="pseudonymize a private converted QueryIR artifact",
+    )
+    pseudonymize.add_argument("--input", type=Path, required=True)
+    pseudonymize.add_argument("--dataset-id", required=True)
+    pseudonymize.add_argument("--profile", type=Path, required=True)
+    pseudonymize.add_argument("--ontology", type=Path, required=True)
+    pseudonymize.add_argument("--key-file", type=Path, required=True)
+    pseudonymize.add_argument("--key-id", required=True)
+    pseudonymize.add_argument("--output-dir", type=Path, required=True)
+    pseudonymize.add_argument("--force", action="store_true")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == "pseudonymize-ir":
+        return _run_pseudonymize(args)
     try:
         _reject_colliding_paths(
             args.input,
@@ -168,6 +188,71 @@ def main(argv: list[str] | None = None) -> int:
             ),
             file=sys.stderr,
         )
+        return 2
+
+
+def _run_pseudonymize(args: argparse.Namespace) -> int:
+    """Keep key paths, source values and Pydantic errors out of CLI output."""
+
+    try:
+        repository_root = Path(__file__).resolve().parents[3]
+        loaded = load_private_converted_jsonl(args.input)
+        if loaded.metadata is None:
+            raise ValueError("private artifact has no valid metadata")
+        if loaded.metadata.dataset_id != args.dataset_id:
+            raise ValueError("dataset id does not match private artifact")
+        ontology = load_ontology(args.ontology)
+        profile = load_pseudonymization_profile(args.profile, ontology)
+        if loaded.metadata.ontology_version != ontology.version:
+            raise ValueError("ontology version does not match private artifact")
+        key = read_secret_key(args.key_file, repository_root)
+        run = pseudonymize_records(
+            loaded.records, profile, ontology, key, args.dataset_id, args.key_id
+        )
+        report = build_pseudonym_summary(
+            run,
+            dataset_id=args.dataset_id,
+            dataset_fingerprint=loaded.metadata.dataset_content_sha256,
+            input_artifact_sha256=loaded.content_sha256,
+            profile=profile,
+            key_id=args.key_id,
+            invalid_input_count=len(loaded.issues),
+        )
+        manifest = write_pseudonym_bundle(
+            args.output_dir,
+            run.records,
+            report,
+            [
+                *run.review_items,
+                *[
+                    PseudonymReviewItem(
+                        input_line=issue.line_number,
+                        reason_codes=[
+                            PseudonymReasonCode.INPUT_SCHEMA_VERSION_MISMATCH
+                            if issue.code.value == "INPUT_SCHEMA_VERSION_MISMATCH"
+                            else PseudonymReasonCode.PSEUDONYMIZATION_ERROR
+                        ],
+                    )
+                    for issue in loaded.issues
+                ],
+            ],
+            input_path=args.input,
+            key_path=args.key_file,
+            overwrite=args.force,
+            repository_root=repository_root,
+        )
+        print(json.dumps({
+            "ok": True,
+            "dataset_id": report.dataset_id,
+            "manifest": str(manifest),
+            "input_records": report.input_record_count,
+            "output_records": report.output_record_count,
+            "review_records": report.review_record_count,
+            "invalid_input_lines": len(loaded.issues),
+        }, ensure_ascii=False, indent=2))
+        return 0
+    except Exception:
+        print(json.dumps({"ok": False, "error": "pseudonymization failed"}), file=sys.stderr)
         return 2
 
 
