@@ -16,14 +16,14 @@ cases:
       filters: []
       limit: 50
     expected:
-      offering_keys
+      offering_keys:
         - {"year":2026,"semester":"1","course_code":"CSE101","section":"01"}
         - {"year":2026,"semester":"1","course_code":"CSE201","section":"01"}
         - {"year":2026,"semester":"1","course_code":"CSE201","section":"02"}
         - {"year":2026,"semester":"1","course_code":"CSE301","section":"01"}
         - {"year":2026,"semester":"1","course_code":"HUM101","section":"01"}
         - {"year":2026,"semester":"1","course_code":"MTH101","section":"01"}
-      rows
+      rows:
         - {"Course.name":"프로그래밍기초","CourseOffering.section":"01"}
         - {"Course.name":"자료구조","CourseOffering.section":"01"}
         - {"Course.name":"자료구조","CourseOffering.section":"02"}
@@ -44,10 +44,10 @@ cases:
       filters: [{"field":"Course.code","operator":"equals","value":"CSE201"}]
       limit: 50
     expected:
-      offering_keys
+      offering_keys:
         - {"year":2026,"semester":"1","course_code":"CSE201","section":"01"}
         - {"year":2026,"semester":"1","course_code":"CSE201","section":"02"}
-      rows
+      rows:
         - {"CourseOffering.section":"01","Instructor.name":"교원B","Schedule.day":"TUE"}
         - {"CourseOffering.section":"02","Instructor.name":"교원C","Schedule.day":"WED"}
       cardinality: 2
@@ -64,9 +64,9 @@ cases:
       filters: [{"field":"Course.name","operator":"equals","value":"프로그래밍기초"}]
       limit: 50
     expected:
-      offering_keys
+      offering_keys:
         - {"year":2026,"semester":"1","course_code":"CSE101","section":"01"}
-      rows
+      rows:
         - {"Course.code":"CSE101","Course.credits":3}
       cardinality: 1
       answerability: MATCHES
@@ -82,10 +82,10 @@ cases:
       filters: [{"field":"Course.name","operator":"contains","value":"자료"}]
       limit: 50
     expected:
-      offering_keys
+      offering_keys:
         - {"year":2026,"semester":"1","course_code":"CSE201","section":"01"}
         - {"year":2026,"semester":"1","course_code":"CSE201","section":"02"}
-      rows
+      rows:
         - {"Course.name":"자료구조","CourseOffering.section":"01"}
         - {"Course.name":"자료구조","CourseOffering.section":"02"}
       cardinality: 2
@@ -102,10 +102,10 @@ cases:
       filters: [{"field":"Course.category","operator":"equals","value":"교양"}]
       limit: 50
     expected:
-      offering_keys
+      offering_keys:
         - {"year":2026,"semester":"1","course_code":"HUM101","section":"01"}
         - {"year":2026,"semester":"1","course_code":"MTH101","section":"01"}
-      rows
+      rows:
         - {"Course.name":"사고와표현","Department.name":"교양교육원"}
         - {"Course.name":"대학수학","Department.name":"수학과"}
       cardinality: 2
@@ -122,12 +122,12 @@ cases:
       filters: [{"field":"Department.name","operator":"equals","value":"컴퓨터공학과"}]
       limit: 50
     expected:
-      offering_keys
+      offering_keys:
         - {"year":2026,"semester":"1","course_code":"CSE101","section":"01"}
         - {"year":2026,"semester":"1","course_code":"CSE201","section":"01"}
         - {"year":2026,"semester":"1","course_code":"CSE201","section":"02"}
         - {"year":2026,"semester":"1","course_code":"CSE301","section":"01"}
-      rows
+      rows:
         - {"Course.code":"CSE101","Instructor.name":"교원A"}
         - {"Course.code":"CSE201","Instructor.name":"교원B"}
         - {"Course.code":"CSE201","Instructor.name":"교원C"}
@@ -146,9 +146,9 @@ cases:
       filters: [{"field":"Department.code","operator":"equals","value":"MATH"}]
       limit: 50
     expected:
-      offering_keys
+      offering_keys:
         - {"year":2026,"semester":"1","course_code":"MTH101","section":"01"}
-      rows
+      rows:
         - {"Course.name":"대학수학","CourseOffering.capacity":50}
       cardinality: 1
       answerability: MATCHES
@@ -164,10 +164,10 @@ cases:
       filters: [{"field":"Instructor.name","operator":"equals","value":"교원A"}]
       limit: 50
     expected:
-      offering_keys
+      offering_keys:
         - {"year":2026,"semester":"1","course_code":"CSE101","section":"01"}
         - {"year":2026,"semester":"1","course_code":"CSE301","section":"01"}
-      rows
+      rows:
         - {"Course.name":"프로그래밍기초","Schedule.day":"MON"}
         - {"Course.name":"데이터베이스","Schedule.day":"THU"}
       cardinality: 2
@@ -184,14 +184,14 @@ cases:
       filters: [{"field":"CourseOffering.year","operator":"equals","value":2026}]
       limit: 50
     expected:
-      offering_keys
+      offering_keys:
         - {"year":2026,"semester":"1","course_code":"CSE101","section":"01"}
         - {"year":2026,"semester":"1","course_code":"CSE201","section":"01"}
         - {"year":2026,"semester":"1","course_code":"CSE201","section":"02"}
         - {"year":2026,"semester":"1","course_code":"CSE301","section":"01"}
         - {"year":2026,"semester":"1","course_code":"HUM101","section":"01"}
         - {"year":2026,"semester":"1","course_code":"MTH101","section":"01"}
-      rows
+      rows:
         - {"CourseOffering.year":2026,"Course.code":"CSE101"}
         - {"CourseOffering.year":2026,"Course.code":"CSE201"}
         - {"CourseOffering.year":2026,"Course.code":"CSE201"}
@@ -212,14 +212,14 @@ cases:
       filters: [{"field":"CourseOffering.semester","operator":"equals","value":"1"}]
       limit: 50
     expected:
-      offering_keys
+      offering_keys:
         - {"year":2026,"semester":"1","course_code":"CSE101","section":"01"}
         - {"year":2026,"semester":"1","course_code":"CSE201","section":"01"}
         - {"year":2026,"semester":"1","course_code":"CSE201","section":"02"}
         - {"year":2026,"semester":"1","course_code":"CSE301","section":"01"}
         - {"year":2026,"semester":"1","course_code":"HUM101","section":"01"}
         - {"year":2026,"semester":"1","course_code":"MTH101","section":"01"}
-      rows
+      rows:
         - {"CourseOffering.semester":"1","Course.name":"프로그래밍기초"}
         - {"CourseOffering.semester":"1","Course.name":"자료구조"}
         - {"CourseOffering.semester":"1","Course.name":"자료구조"}
@@ -240,9 +240,9 @@ cases:
       filters: [{"field":"CourseOffering.section","operator":"equals","value":"02"}]
       limit: 50
     expected:
-      offering_keys
+      offering_keys:
         - {"year":2026,"semester":"1","course_code":"CSE201","section":"02"}
-      rows
+      rows:
         - {"Course.name":"자료구조","Instructor.name":"교원C"}
       cardinality: 1
       answerability: MATCHES
@@ -258,10 +258,10 @@ cases:
       filters: [{"field":"CourseOffering.capacity","operator":"equals","value":35}]
       limit: 50
     expected:
-      offering_keys
+      offering_keys:
         - {"year":2026,"semester":"1","course_code":"CSE201","section":"01"}
         - {"year":2026,"semester":"1","course_code":"CSE201","section":"02"}
-      rows
+      rows:
         - {"Course.name":"자료구조","CourseOffering.section":"01"}
         - {"Course.name":"자료구조","CourseOffering.section":"02"}
       cardinality: 2
@@ -278,9 +278,9 @@ cases:
       filters: [{"field":"CourseOffering.enrolled","operator":"equals","value":35}]
       limit: 50
     expected:
-      offering_keys
+      offering_keys:
         - {"year":2026,"semester":"1","course_code":"CSE201","section":"01"}
-      rows
+      rows:
         - {"Course.name":"자료구조","CourseOffering.capacity":35}
       cardinality: 1
       answerability: MATCHES
@@ -296,9 +296,9 @@ cases:
       filters: [{"field":"Course.credits","operator":"equals","value":2}]
       limit: 50
     expected:
-      offering_keys
+      offering_keys:
         - {"year":2026,"semester":"1","course_code":"HUM101","section":"01"}
-      rows
+      rows:
         - {"Course.name":"사고와표현","Course.category":"교양"}
       cardinality: 1
       answerability: MATCHES
@@ -314,10 +314,10 @@ cases:
       filters: [{"field":"Schedule.day","operator":"equals","value":"WED"}]
       limit: 50
     expected:
-      offering_keys
+      offering_keys:
         - {"year":2026,"semester":"1","course_code":"CSE201","section":"02"}
         - {"year":2026,"semester":"1","course_code":"HUM101","section":"01"}
-      rows
+      rows:
         - {"Course.name":"자료구조","Schedule.start_time":"13:30"}
         - {"Course.name":"사고와표현","Schedule.start_time":"10:30"}
       cardinality: 2
@@ -334,10 +334,10 @@ cases:
       filters: [{"field":"Schedule.start_time","operator":"equals","value":"09:00"}]
       limit: 50
     expected:
-      offering_keys
+      offering_keys:
         - {"year":2026,"semester":"1","course_code":"CSE101","section":"01"}
         - {"year":2026,"semester":"1","course_code":"MTH101","section":"01"}
-      rows
+      rows:
         - {"Course.name":"프로그래밍기초","Schedule.day":"MON"}
         - {"Course.name":"대학수학","Schedule.day":"FRI"}
       cardinality: 2
@@ -354,10 +354,10 @@ cases:
       filters: [{"field":"Schedule.end_time","operator":"equals","value":"12:00"}]
       limit: 50
     expected:
-      offering_keys
+      offering_keys:
         - {"year":2026,"semester":"1","course_code":"CSE201","section":"01"}
         - {"year":2026,"semester":"1","course_code":"HUM101","section":"01"}
-      rows
+      rows:
         - {"Course.name":"자료구조","Instructor.name":"교원B"}
         - {"Course.name":"사고와표현","Instructor.name":"교원E"}
       cardinality: 2
@@ -374,10 +374,10 @@ cases:
       filters: [{"field":"CourseOffering.capacity","operator":"greater_than","value":40}]
       limit: 50
     expected:
-      offering_keys
+      offering_keys:
         - {"year":2026,"semester":"1","course_code":"HUM101","section":"01"}
         - {"year":2026,"semester":"1","course_code":"MTH101","section":"01"}
-      rows
+      rows:
         - {"Course.name":"사고와표현","CourseOffering.capacity":45}
         - {"Course.name":"대학수학","CourseOffering.capacity":50}
       cardinality: 2
@@ -394,11 +394,11 @@ cases:
       filters: [{"field":"CourseOffering.capacity","operator":"greater_than_or_equal","value":40}]
       limit: 50
     expected:
-      offering_keys
+      offering_keys:
         - {"year":2026,"semester":"1","course_code":"CSE101","section":"01"}
         - {"year":2026,"semester":"1","course_code":"HUM101","section":"01"}
         - {"year":2026,"semester":"1","course_code":"MTH101","section":"01"}
-      rows
+      rows:
         - {"Course.name":"프로그래밍기초","CourseOffering.enrolled":32}
         - {"Course.name":"사고와표현","CourseOffering.enrolled":38}
         - {"Course.name":"대학수학","CourseOffering.enrolled":41}
@@ -416,9 +416,9 @@ cases:
       filters: [{"field":"CourseOffering.capacity","operator":"less_than","value":35}]
       limit: 50
     expected:
-      offering_keys
+      offering_keys:
         - {"year":2026,"semester":"1","course_code":"CSE301","section":"01"}
-      rows
+      rows:
         - {"Course.name":"데이터베이스","CourseOffering.capacity":30}
       cardinality: 1
       answerability: MATCHES
@@ -434,11 +434,11 @@ cases:
       filters: [{"field":"CourseOffering.capacity","operator":"less_than_or_equal","value":35}]
       limit: 50
     expected:
-      offering_keys
+      offering_keys:
         - {"year":2026,"semester":"1","course_code":"CSE201","section":"01"}
         - {"year":2026,"semester":"1","course_code":"CSE201","section":"02"}
         - {"year":2026,"semester":"1","course_code":"CSE301","section":"01"}
-      rows
+      rows:
         - {"Course.code":"CSE201","CourseOffering.section":"01"}
         - {"Course.code":"CSE201","CourseOffering.section":"02"}
         - {"Course.code":"CSE301","CourseOffering.section":"01"}
@@ -456,11 +456,11 @@ cases:
       filters: [{"field":"CourseOffering.enrolled","operator":"greater_than","value":32}]
       limit: 50
     expected:
-      offering_keys
+      offering_keys:
         - {"year":2026,"semester":"1","course_code":"CSE201","section":"01"}
         - {"year":2026,"semester":"1","course_code":"HUM101","section":"01"}
         - {"year":2026,"semester":"1","course_code":"MTH101","section":"01"}
-      rows
+      rows:
         - {"Course.name":"자료구조","CourseOffering.enrolled":35}
         - {"Course.name":"사고와표현","CourseOffering.enrolled":38}
         - {"Course.name":"대학수학","CourseOffering.enrolled":41}
@@ -478,12 +478,12 @@ cases:
       filters: [{"field":"CourseOffering.enrolled","operator":"greater_than_or_equal","value":32}]
       limit: 50
     expected:
-      offering_keys
+      offering_keys:
         - {"year":2026,"semester":"1","course_code":"CSE101","section":"01"}
         - {"year":2026,"semester":"1","course_code":"CSE201","section":"01"}
         - {"year":2026,"semester":"1","course_code":"HUM101","section":"01"}
         - {"year":2026,"semester":"1","course_code":"MTH101","section":"01"}
-      rows
+      rows:
         - {"Course.name":"프로그래밍기초","CourseOffering.capacity":40}
         - {"Course.name":"자료구조","CourseOffering.capacity":35}
         - {"Course.name":"사고와표현","CourseOffering.capacity":45}
@@ -502,10 +502,10 @@ cases:
       filters: [{"field":"CourseOffering.enrolled","operator":"less_than","value":30}]
       limit: 50
     expected:
-      offering_keys
+      offering_keys:
         - {"year":2026,"semester":"1","course_code":"CSE201","section":"02"}
         - {"year":2026,"semester":"1","course_code":"CSE301","section":"01"}
-      rows
+      rows:
         - {"Course.name":"자료구조","CourseOffering.section":"02","CourseOffering.enrolled":29}
         - {"Course.name":"데이터베이스","CourseOffering.section":"01","CourseOffering.enrolled":24}
       cardinality: 2
@@ -522,9 +522,9 @@ cases:
       filters: [{"field":"CourseOffering.enrolled","operator":"less_than_or_equal","value":24}]
       limit: 50
     expected:
-      offering_keys
+      offering_keys:
         - {"year":2026,"semester":"1","course_code":"CSE301","section":"01"}
-      rows
+      rows:
         - {"Course.name":"데이터베이스","Instructor.name":"교원A"}
       cardinality: 1
       answerability: MATCHES
@@ -540,13 +540,13 @@ cases:
       filters: [{"field":"Course.credits","operator":"greater_than","value":2}]
       limit: 50
     expected:
-      offering_keys
+      offering_keys:
         - {"year":2026,"semester":"1","course_code":"CSE101","section":"01"}
         - {"year":2026,"semester":"1","course_code":"CSE201","section":"01"}
         - {"year":2026,"semester":"1","course_code":"CSE201","section":"02"}
         - {"year":2026,"semester":"1","course_code":"CSE301","section":"01"}
         - {"year":2026,"semester":"1","course_code":"MTH101","section":"01"}
-      rows
+      rows:
         - {"Course.name":"프로그래밍기초","Course.credits":3,"CourseOffering.section":"01"}
         - {"Course.name":"자료구조","Course.credits":3,"CourseOffering.section":"01"}
         - {"Course.name":"자료구조","Course.credits":3,"CourseOffering.section":"02"}
@@ -566,9 +566,9 @@ cases:
       filters: [{"field":"Course.credits","operator":"less_than_or_equal","value":2}]
       limit: 50
     expected:
-      offering_keys
+      offering_keys:
         - {"year":2026,"semester":"1","course_code":"HUM101","section":"01"}
-      rows
+      rows:
         - {"Course.name":"사고와표현","Course.credits":2}
       cardinality: 1
       answerability: MATCHES
@@ -616,9 +616,9 @@ cases:
       filters: [{"field":"Course.name","operator":"equals","value":"자료구조"},{"field":"CourseOffering.section","operator":"equals","value":"02"}]
       limit: 50
     expected:
-      offering_keys
+      offering_keys:
         - {"year":2026,"semester":"1","course_code":"CSE201","section":"02"}
-      rows
+      rows:
         - {"Instructor.name":"교원C","Schedule.start_time":"13:30","Schedule.end_time":"15:00"}
       cardinality: 1
       answerability: MATCHES
@@ -634,9 +634,9 @@ cases:
       filters: [{"field":"Department.name","operator":"equals","value":"컴퓨터공학과"},{"field":"Schedule.day","operator":"equals","value":"WED"}]
       limit: 50
     expected:
-      offering_keys
+      offering_keys:
         - {"year":2026,"semester":"1","course_code":"CSE201","section":"02"}
-      rows
+      rows:
         - {"Course.name":"자료구조","CourseOffering.section":"02"}
       cardinality: 1
       answerability: MATCHES
@@ -652,9 +652,9 @@ cases:
       filters: [{"field":"Course.category","operator":"equals","value":"전공"},{"field":"Course.credits","operator":"equals","value":3},{"field":"CourseOffering.capacity","operator":"greater_than","value":35}]
       limit: 50
     expected:
-      offering_keys
+      offering_keys:
         - {"year":2026,"semester":"1","course_code":"CSE101","section":"01"}
-      rows
+      rows:
         - {"Course.name":"프로그래밍기초","CourseOffering.capacity":40}
       cardinality: 1
       answerability: MATCHES
@@ -670,9 +670,9 @@ cases:
       filters: [{"field":"Instructor.name","operator":"equals","value":"교원A"},{"field":"Schedule.day","operator":"equals","value":"THU"}]
       limit: 50
     expected:
-      offering_keys
+      offering_keys:
         - {"year":2026,"semester":"1","course_code":"CSE301","section":"01"}
-      rows
+      rows:
         - {"Course.code":"CSE301","Schedule.start_time":"15:00"}
       cardinality: 1
       answerability: MATCHES
@@ -688,9 +688,9 @@ cases:
       filters: [{"field":"Department.name","operator":"equals","value":"수학과"},{"field":"Schedule.start_time","operator":"equals","value":"09:00"}]
       limit: 50
     expected:
-      offering_keys
+      offering_keys:
         - {"year":2026,"semester":"1","course_code":"MTH101","section":"01"}
-      rows
+      rows:
         - {"Course.name":"대학수학","Schedule.end_time":"10:30"}
       cardinality: 1
       answerability: MATCHES
@@ -706,11 +706,11 @@ cases:
       filters: [{"field":"Course.code","operator":"contains","value":"101"}]
       limit: 50
     expected:
-      offering_keys
+      offering_keys:
         - {"year":2026,"semester":"1","course_code":"CSE101","section":"01"}
         - {"year":2026,"semester":"1","course_code":"HUM101","section":"01"}
         - {"year":2026,"semester":"1","course_code":"MTH101","section":"01"}
-      rows
+      rows:
         - {"Course.code":"CSE101","Course.category":"전공"}
         - {"Course.code":"HUM101","Course.category":"교양"}
         - {"Course.code":"MTH101","Course.category":"교양"}
@@ -728,12 +728,12 @@ cases:
       filters: [{"field":"Department.name","operator":"contains","value":"공학"}]
       limit: 50
     expected:
-      offering_keys
+      offering_keys:
         - {"year":2026,"semester":"1","course_code":"CSE101","section":"01"}
         - {"year":2026,"semester":"1","course_code":"CSE201","section":"01"}
         - {"year":2026,"semester":"1","course_code":"CSE201","section":"02"}
         - {"year":2026,"semester":"1","course_code":"CSE301","section":"01"}
-      rows
+      rows:
         - {"Course.name":"프로그래밍기초","Department.name":"컴퓨터공학과","CourseOffering.section":"01"}
         - {"Course.name":"자료구조","Department.name":"컴퓨터공학과","CourseOffering.section":"01"}
         - {"Course.name":"자료구조","Department.name":"컴퓨터공학과","CourseOffering.section":"02"}
@@ -752,9 +752,9 @@ cases:
       filters: [{"field":"Schedule.end_time","operator":"greater_than","value":"15:00"}]
       limit: 50
     expected:
-      offering_keys
+      offering_keys:
         - {"year":2026,"semester":"1","course_code":"CSE301","section":"01"}
-      rows
+      rows:
         - {"Course.name":"데이터베이스","Schedule.end_time":"16:30"}
       cardinality: 1
       answerability: MATCHES
@@ -770,10 +770,10 @@ cases:
       filters: [{"field":"Schedule.start_time","operator":"less_than","value":"10:00"}]
       limit: 50
     expected:
-      offering_keys
+      offering_keys:
         - {"year":2026,"semester":"1","course_code":"CSE101","section":"01"}
         - {"year":2026,"semester":"1","course_code":"MTH101","section":"01"}
-      rows
+      rows:
         - {"Course.name":"프로그래밍기초","Schedule.start_time":"09:00"}
         - {"Course.name":"대학수학","Schedule.start_time":"09:00"}
       cardinality: 2
@@ -790,10 +790,10 @@ cases:
       filters: [{"field":"Course.name","operator":"equals","value":"자료구조"}]
       limit: 50
     expected:
-      offering_keys
+      offering_keys:
         - {"year":2026,"semester":"1","course_code":"CSE201","section":"01"}
         - {"year":2026,"semester":"1","course_code":"CSE201","section":"02"}
-      rows
+      rows:
         - {"Course.name":"자료구조","Department.name":"컴퓨터공학과","Instructor.name":"교원B","Schedule.day":"TUE"}
         - {"Course.name":"자료구조","Department.name":"컴퓨터공학과","Instructor.name":"교원C","Schedule.day":"WED"}
       cardinality: 2
@@ -810,10 +810,10 @@ cases:
       filters: [{"field":"Course.category","operator":"equals","value":"전공"},{"field":"CourseOffering.enrolled","operator":"less_than","value":30}]
       limit: 50
     expected:
-      offering_keys
+      offering_keys:
         - {"year":2026,"semester":"1","course_code":"CSE201","section":"02"}
         - {"year":2026,"semester":"1","course_code":"CSE301","section":"01"}
-      rows
+      rows:
         - {"Course.name":"자료구조","Department.code":"CSE","Instructor.name":"교원C","Schedule.start_time":"13:30"}
         - {"Course.name":"데이터베이스","Department.code":"CSE","Instructor.name":"교원A","Schedule.start_time":"15:00"}
       cardinality: 2
