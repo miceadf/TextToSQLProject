@@ -1,0 +1,824 @@
+# Synthetic FixtureSeed v1 only. Human approval pending.
+schema_version: fixture-evaluation-set-v1
+benchmark_id: fixture-v1-common-questions
+version: 1
+seed_version: 1
+seed_fingerprint: 69db09553035a9a214b1979375d560b574e55d6d044022c56f2598b9ec93aa23
+ontology_version: 1
+ontology_fingerprint: 45551eccae087e32abc4f1b28f23dd1e177c07f96487d93514a5408c9b4fedf7
+query_ir_fingerprint: 819c3ba38064cbb6c0831ea9449d28f21e959cb1d212d8170296df2a6fae9a4f
+cases:
+  - case_id: P2-001
+    question_ko: "개설된 모든 강좌의 과목명과 분반을 알려줘."
+    gold_query_ir:
+      entity: CourseOffering
+      select: ["Course.name","CourseOffering.section"]
+      filters: []
+      limit: 50
+    expected:
+      offering_keys
+        - {"year":2026,"semester":"1","course_code":"CSE101","section":"01"}
+        - {"year":2026,"semester":"1","course_code":"CSE201","section":"01"}
+        - {"year":2026,"semester":"1","course_code":"CSE201","section":"02"}
+        - {"year":2026,"semester":"1","course_code":"CSE301","section":"01"}
+        - {"year":2026,"semester":"1","course_code":"HUM101","section":"01"}
+        - {"year":2026,"semester":"1","course_code":"MTH101","section":"01"}
+      rows
+        - {"Course.name":"프로그래밍기초","CourseOffering.section":"01"}
+        - {"Course.name":"자료구조","CourseOffering.section":"01"}
+        - {"Course.name":"자료구조","CourseOffering.section":"02"}
+        - {"Course.name":"데이터베이스","CourseOffering.section":"01"}
+        - {"Course.name":"사고와표현","CourseOffering.section":"01"}
+        - {"Course.name":"대학수학","CourseOffering.section":"01"}
+      cardinality: 6
+      answerability: MATCHES
+    intent_family: all-course-names
+    review_status: NEEDS_HUMAN_REVIEW
+    review_rationale: "작성자가 합성 seed와 질문 조건을 대조했으며 독립적인 사람의 의미 검토가 필요함"
+    author_id: phase2-draft
+  - case_id: P2-002
+    question_ko: "과목 코드 CSE201 강좌의 분반, 담당 교원, 수업 요일을 알려줘."
+    gold_query_ir:
+      entity: CourseOffering
+      select: ["CourseOffering.section","Instructor.name","Schedule.day"]
+      filters: [{"field":"Course.code","operator":"equals","value":"CSE201"}]
+      limit: 50
+    expected:
+      offering_keys
+        - {"year":2026,"semester":"1","course_code":"CSE201","section":"01"}
+        - {"year":2026,"semester":"1","course_code":"CSE201","section":"02"}
+      rows
+        - {"CourseOffering.section":"01","Instructor.name":"교원B","Schedule.day":"TUE"}
+        - {"CourseOffering.section":"02","Instructor.name":"교원C","Schedule.day":"WED"}
+      cardinality: 2
+      answerability: MATCHES
+    intent_family: course-code-sections
+    review_status: NEEDS_HUMAN_REVIEW
+    review_rationale: "작성자가 합성 seed와 질문 조건을 대조했으며 독립적인 사람의 의미 검토가 필요함"
+    author_id: phase2-draft
+  - case_id: P2-003
+    question_ko: "프로그래밍기초 강좌의 과목 코드와 학점을 알려줘."
+    gold_query_ir:
+      entity: CourseOffering
+      select: ["Course.code","Course.credits"]
+      filters: [{"field":"Course.name","operator":"equals","value":"프로그래밍기초"}]
+      limit: 50
+    expected:
+      offering_keys
+        - {"year":2026,"semester":"1","course_code":"CSE101","section":"01"}
+      rows
+        - {"Course.code":"CSE101","Course.credits":3}
+      cardinality: 1
+      answerability: MATCHES
+    intent_family: exact-course-name
+    review_status: NEEDS_HUMAN_REVIEW
+    review_rationale: "작성자가 합성 seed와 질문 조건을 대조했으며 독립적인 사람의 의미 검토가 필요함"
+    author_id: phase2-draft
+  - case_id: P2-004
+    question_ko: "과목명에 '자료'가 들어가는 강좌의 과목명과 분반을 알려줘."
+    gold_query_ir:
+      entity: CourseOffering
+      select: ["Course.name","CourseOffering.section"]
+      filters: [{"field":"Course.name","operator":"contains","value":"자료"}]
+      limit: 50
+    expected:
+      offering_keys
+        - {"year":2026,"semester":"1","course_code":"CSE201","section":"01"}
+        - {"year":2026,"semester":"1","course_code":"CSE201","section":"02"}
+      rows
+        - {"Course.name":"자료구조","CourseOffering.section":"01"}
+        - {"Course.name":"자료구조","CourseOffering.section":"02"}
+      cardinality: 2
+      answerability: MATCHES
+    intent_family: partial-course-name
+    review_status: NEEDS_HUMAN_REVIEW
+    review_rationale: "작성자가 합성 seed와 질문 조건을 대조했으며 독립적인 사람의 의미 검토가 필요함"
+    author_id: phase2-draft
+  - case_id: P2-005
+    question_ko: "교양 강좌의 과목명과 학과명을 알려줘."
+    gold_query_ir:
+      entity: CourseOffering
+      select: ["Course.name","Department.name"]
+      filters: [{"field":"Course.category","operator":"equals","value":"교양"}]
+      limit: 50
+    expected:
+      offering_keys
+        - {"year":2026,"semester":"1","course_code":"HUM101","section":"01"}
+        - {"year":2026,"semester":"1","course_code":"MTH101","section":"01"}
+      rows
+        - {"Course.name":"사고와표현","Department.name":"교양교육원"}
+        - {"Course.name":"대학수학","Department.name":"수학과"}
+      cardinality: 2
+      answerability: MATCHES
+    intent_family: category-courses
+    review_status: NEEDS_HUMAN_REVIEW
+    review_rationale: "작성자가 합성 seed와 질문 조건을 대조했으며 독립적인 사람의 의미 검토가 필요함"
+    author_id: phase2-draft
+  - case_id: P2-006
+    question_ko: "컴퓨터공학과에서 개설한 강좌의 과목 코드와 담당 교원을 알려줘."
+    gold_query_ir:
+      entity: CourseOffering
+      select: ["Course.code","Instructor.name"]
+      filters: [{"field":"Department.name","operator":"equals","value":"컴퓨터공학과"}]
+      limit: 50
+    expected:
+      offering_keys
+        - {"year":2026,"semester":"1","course_code":"CSE101","section":"01"}
+        - {"year":2026,"semester":"1","course_code":"CSE201","section":"01"}
+        - {"year":2026,"semester":"1","course_code":"CSE201","section":"02"}
+        - {"year":2026,"semester":"1","course_code":"CSE301","section":"01"}
+      rows
+        - {"Course.code":"CSE101","Instructor.name":"교원A"}
+        - {"Course.code":"CSE201","Instructor.name":"교원B"}
+        - {"Course.code":"CSE201","Instructor.name":"교원C"}
+        - {"Course.code":"CSE301","Instructor.name":"교원A"}
+      cardinality: 4
+      answerability: MATCHES
+    intent_family: department-offerings
+    review_status: NEEDS_HUMAN_REVIEW
+    review_rationale: "작성자가 합성 seed와 질문 조건을 대조했으며 독립적인 사람의 의미 검토가 필요함"
+    author_id: phase2-draft
+  - case_id: P2-007
+    question_ko: "학과 코드가 MATH인 강좌의 과목명과 수강 정원을 알려줘."
+    gold_query_ir:
+      entity: CourseOffering
+      select: ["Course.name","CourseOffering.capacity"]
+      filters: [{"field":"Department.code","operator":"equals","value":"MATH"}]
+      limit: 50
+    expected:
+      offering_keys
+        - {"year":2026,"semester":"1","course_code":"MTH101","section":"01"}
+      rows
+        - {"Course.name":"대학수학","CourseOffering.capacity":50}
+      cardinality: 1
+      answerability: MATCHES
+    intent_family: department-code
+    review_status: NEEDS_HUMAN_REVIEW
+    review_rationale: "작성자가 합성 seed와 질문 조건을 대조했으며 독립적인 사람의 의미 검토가 필요함"
+    author_id: phase2-draft
+  - case_id: P2-008
+    question_ko: "교원A가 담당하는 강좌의 과목명과 수업 요일을 알려줘."
+    gold_query_ir:
+      entity: CourseOffering
+      select: ["Course.name","Schedule.day"]
+      filters: [{"field":"Instructor.name","operator":"equals","value":"교원A"}]
+      limit: 50
+    expected:
+      offering_keys
+        - {"year":2026,"semester":"1","course_code":"CSE101","section":"01"}
+        - {"year":2026,"semester":"1","course_code":"CSE301","section":"01"}
+      rows
+        - {"Course.name":"프로그래밍기초","Schedule.day":"MON"}
+        - {"Course.name":"데이터베이스","Schedule.day":"THU"}
+      cardinality: 2
+      answerability: MATCHES
+    intent_family: instructor-offerings
+    review_status: NEEDS_HUMAN_REVIEW
+    review_rationale: "작성자가 합성 seed와 질문 조건을 대조했으며 독립적인 사람의 의미 검토가 필요함"
+    author_id: phase2-draft
+  - case_id: P2-009
+    question_ko: "2026년에 개설된 강좌의 개설 연도와 과목 코드를 알려줘."
+    gold_query_ir:
+      entity: CourseOffering
+      select: ["CourseOffering.year","Course.code"]
+      filters: [{"field":"CourseOffering.year","operator":"equals","value":2026}]
+      limit: 50
+    expected:
+      offering_keys
+        - {"year":2026,"semester":"1","course_code":"CSE101","section":"01"}
+        - {"year":2026,"semester":"1","course_code":"CSE201","section":"01"}
+        - {"year":2026,"semester":"1","course_code":"CSE201","section":"02"}
+        - {"year":2026,"semester":"1","course_code":"CSE301","section":"01"}
+        - {"year":2026,"semester":"1","course_code":"HUM101","section":"01"}
+        - {"year":2026,"semester":"1","course_code":"MTH101","section":"01"}
+      rows
+        - {"CourseOffering.year":2026,"Course.code":"CSE101"}
+        - {"CourseOffering.year":2026,"Course.code":"CSE201"}
+        - {"CourseOffering.year":2026,"Course.code":"CSE201"}
+        - {"CourseOffering.year":2026,"Course.code":"CSE301"}
+        - {"CourseOffering.year":2026,"Course.code":"HUM101"}
+        - {"CourseOffering.year":2026,"Course.code":"MTH101"}
+      cardinality: 6
+      answerability: MATCHES
+    intent_family: year-equality
+    review_status: NEEDS_HUMAN_REVIEW
+    review_rationale: "작성자가 합성 seed와 질문 조건을 대조했으며 독립적인 사람의 의미 검토가 필요함"
+    author_id: phase2-draft
+  - case_id: P2-010
+    question_ko: "1학기 강좌의 학기와 과목명을 알려줘."
+    gold_query_ir:
+      entity: CourseOffering
+      select: ["CourseOffering.semester","Course.name"]
+      filters: [{"field":"CourseOffering.semester","operator":"equals","value":"1"}]
+      limit: 50
+    expected:
+      offering_keys
+        - {"year":2026,"semester":"1","course_code":"CSE101","section":"01"}
+        - {"year":2026,"semester":"1","course_code":"CSE201","section":"01"}
+        - {"year":2026,"semester":"1","course_code":"CSE201","section":"02"}
+        - {"year":2026,"semester":"1","course_code":"CSE301","section":"01"}
+        - {"year":2026,"semester":"1","course_code":"HUM101","section":"01"}
+        - {"year":2026,"semester":"1","course_code":"MTH101","section":"01"}
+      rows
+        - {"CourseOffering.semester":"1","Course.name":"프로그래밍기초"}
+        - {"CourseOffering.semester":"1","Course.name":"자료구조"}
+        - {"CourseOffering.semester":"1","Course.name":"자료구조"}
+        - {"CourseOffering.semester":"1","Course.name":"데이터베이스"}
+        - {"CourseOffering.semester":"1","Course.name":"사고와표현"}
+        - {"CourseOffering.semester":"1","Course.name":"대학수학"}
+      cardinality: 6
+      answerability: MATCHES
+    intent_family: semester-equality
+    review_status: NEEDS_HUMAN_REVIEW
+    review_rationale: "작성자가 합성 seed와 질문 조건을 대조했으며 독립적인 사람의 의미 검토가 필요함"
+    author_id: phase2-draft
+  - case_id: P2-011
+    question_ko: "02분반 강좌의 과목명과 담당 교원을 알려줘."
+    gold_query_ir:
+      entity: CourseOffering
+      select: ["Course.name","Instructor.name"]
+      filters: [{"field":"CourseOffering.section","operator":"equals","value":"02"}]
+      limit: 50
+    expected:
+      offering_keys
+        - {"year":2026,"semester":"1","course_code":"CSE201","section":"02"}
+      rows
+        - {"Course.name":"자료구조","Instructor.name":"교원C"}
+      cardinality: 1
+      answerability: MATCHES
+    intent_family: section-equality
+    review_status: NEEDS_HUMAN_REVIEW
+    review_rationale: "작성자가 합성 seed와 질문 조건을 대조했으며 독립적인 사람의 의미 검토가 필요함"
+    author_id: phase2-draft
+  - case_id: P2-012
+    question_ko: "수강 정원이 정확히 35명인 강좌의 과목명과 분반을 알려줘."
+    gold_query_ir:
+      entity: CourseOffering
+      select: ["Course.name","CourseOffering.section"]
+      filters: [{"field":"CourseOffering.capacity","operator":"equals","value":35}]
+      limit: 50
+    expected:
+      offering_keys
+        - {"year":2026,"semester":"1","course_code":"CSE201","section":"01"}
+        - {"year":2026,"semester":"1","course_code":"CSE201","section":"02"}
+      rows
+        - {"Course.name":"자료구조","CourseOffering.section":"01"}
+        - {"Course.name":"자료구조","CourseOffering.section":"02"}
+      cardinality: 2
+      answerability: MATCHES
+    intent_family: capacity-equality
+    review_status: NEEDS_HUMAN_REVIEW
+    review_rationale: "작성자가 합성 seed와 질문 조건을 대조했으며 독립적인 사람의 의미 검토가 필요함"
+    author_id: phase2-draft
+  - case_id: P2-013
+    question_ko: "현재 수강 인원이 정확히 35명인 강좌의 과목명과 정원을 알려줘."
+    gold_query_ir:
+      entity: CourseOffering
+      select: ["Course.name","CourseOffering.capacity"]
+      filters: [{"field":"CourseOffering.enrolled","operator":"equals","value":35}]
+      limit: 50
+    expected:
+      offering_keys
+        - {"year":2026,"semester":"1","course_code":"CSE201","section":"01"}
+      rows
+        - {"Course.name":"자료구조","CourseOffering.capacity":35}
+      cardinality: 1
+      answerability: MATCHES
+    intent_family: enrolled-equality
+    review_status: NEEDS_HUMAN_REVIEW
+    review_rationale: "작성자가 합성 seed와 질문 조건을 대조했으며 독립적인 사람의 의미 검토가 필요함"
+    author_id: phase2-draft
+  - case_id: P2-014
+    question_ko: "2학점 강좌의 과목명과 이수 구분을 알려줘."
+    gold_query_ir:
+      entity: CourseOffering
+      select: ["Course.name","Course.category"]
+      filters: [{"field":"Course.credits","operator":"equals","value":2}]
+      limit: 50
+    expected:
+      offering_keys
+        - {"year":2026,"semester":"1","course_code":"HUM101","section":"01"}
+      rows
+        - {"Course.name":"사고와표현","Course.category":"교양"}
+      cardinality: 1
+      answerability: MATCHES
+    intent_family: credit-equality
+    review_status: NEEDS_HUMAN_REVIEW
+    review_rationale: "작성자가 합성 seed와 질문 조건을 대조했으며 독립적인 사람의 의미 검토가 필요함"
+    author_id: phase2-draft
+  - case_id: P2-015
+    question_ko: "수요일에 진행하는 강좌의 과목명과 시작 시간을 알려줘."
+    gold_query_ir:
+      entity: CourseOffering
+      select: ["Course.name","Schedule.start_time"]
+      filters: [{"field":"Schedule.day","operator":"equals","value":"WED"}]
+      limit: 50
+    expected:
+      offering_keys
+        - {"year":2026,"semester":"1","course_code":"CSE201","section":"02"}
+        - {"year":2026,"semester":"1","course_code":"HUM101","section":"01"}
+      rows
+        - {"Course.name":"자료구조","Schedule.start_time":"13:30"}
+        - {"Course.name":"사고와표현","Schedule.start_time":"10:30"}
+      cardinality: 2
+      answerability: MATCHES
+    intent_family: weekday-equality
+    review_status: NEEDS_HUMAN_REVIEW
+    review_rationale: "작성자가 합성 seed와 질문 조건을 대조했으며 독립적인 사람의 의미 검토가 필요함"
+    author_id: phase2-draft
+  - case_id: P2-016
+    question_ko: "09:00에 시작하는 강좌의 과목명과 요일을 알려줘."
+    gold_query_ir:
+      entity: CourseOffering
+      select: ["Course.name","Schedule.day"]
+      filters: [{"field":"Schedule.start_time","operator":"equals","value":"09:00"}]
+      limit: 50
+    expected:
+      offering_keys
+        - {"year":2026,"semester":"1","course_code":"CSE101","section":"01"}
+        - {"year":2026,"semester":"1","course_code":"MTH101","section":"01"}
+      rows
+        - {"Course.name":"프로그래밍기초","Schedule.day":"MON"}
+        - {"Course.name":"대학수학","Schedule.day":"FRI"}
+      cardinality: 2
+      answerability: MATCHES
+    intent_family: start-equality
+    review_status: NEEDS_HUMAN_REVIEW
+    review_rationale: "작성자가 합성 seed와 질문 조건을 대조했으며 독립적인 사람의 의미 검토가 필요함"
+    author_id: phase2-draft
+  - case_id: P2-017
+    question_ko: "12:00에 끝나는 강좌의 과목명과 담당 교원을 알려줘."
+    gold_query_ir:
+      entity: CourseOffering
+      select: ["Course.name","Instructor.name"]
+      filters: [{"field":"Schedule.end_time","operator":"equals","value":"12:00"}]
+      limit: 50
+    expected:
+      offering_keys
+        - {"year":2026,"semester":"1","course_code":"CSE201","section":"01"}
+        - {"year":2026,"semester":"1","course_code":"HUM101","section":"01"}
+      rows
+        - {"Course.name":"자료구조","Instructor.name":"교원B"}
+        - {"Course.name":"사고와표현","Instructor.name":"교원E"}
+      cardinality: 2
+      answerability: MATCHES
+    intent_family: end-equality
+    review_status: NEEDS_HUMAN_REVIEW
+    review_rationale: "작성자가 합성 seed와 질문 조건을 대조했으며 독립적인 사람의 의미 검토가 필요함"
+    author_id: phase2-draft
+  - case_id: P2-018
+    question_ko: "정원이 40명을 초과하는 강좌의 과목명과 정원을 알려줘."
+    gold_query_ir:
+      entity: CourseOffering
+      select: ["Course.name","CourseOffering.capacity"]
+      filters: [{"field":"CourseOffering.capacity","operator":"greater_than","value":40}]
+      limit: 50
+    expected:
+      offering_keys
+        - {"year":2026,"semester":"1","course_code":"HUM101","section":"01"}
+        - {"year":2026,"semester":"1","course_code":"MTH101","section":"01"}
+      rows
+        - {"Course.name":"사고와표현","CourseOffering.capacity":45}
+        - {"Course.name":"대학수학","CourseOffering.capacity":50}
+      cardinality: 2
+      answerability: MATCHES
+    intent_family: capacity-greater
+    review_status: NEEDS_HUMAN_REVIEW
+    review_rationale: "작성자가 합성 seed와 질문 조건을 대조했으며 독립적인 사람의 의미 검토가 필요함"
+    author_id: phase2-draft
+  - case_id: P2-019
+    question_ko: "정원이 40명 이상인 강좌의 과목명과 수강 인원을 알려줘."
+    gold_query_ir:
+      entity: CourseOffering
+      select: ["Course.name","CourseOffering.enrolled"]
+      filters: [{"field":"CourseOffering.capacity","operator":"greater_than_or_equal","value":40}]
+      limit: 50
+    expected:
+      offering_keys
+        - {"year":2026,"semester":"1","course_code":"CSE101","section":"01"}
+        - {"year":2026,"semester":"1","course_code":"HUM101","section":"01"}
+        - {"year":2026,"semester":"1","course_code":"MTH101","section":"01"}
+      rows
+        - {"Course.name":"프로그래밍기초","CourseOffering.enrolled":32}
+        - {"Course.name":"사고와표현","CourseOffering.enrolled":38}
+        - {"Course.name":"대학수학","CourseOffering.enrolled":41}
+      cardinality: 3
+      answerability: MATCHES
+    intent_family: capacity-at-least
+    review_status: NEEDS_HUMAN_REVIEW
+    review_rationale: "작성자가 합성 seed와 질문 조건을 대조했으며 독립적인 사람의 의미 검토가 필요함"
+    author_id: phase2-draft
+  - case_id: P2-020
+    question_ko: "정원이 35명 미만인 강좌의 과목명과 정원을 알려줘."
+    gold_query_ir:
+      entity: CourseOffering
+      select: ["Course.name","CourseOffering.capacity"]
+      filters: [{"field":"CourseOffering.capacity","operator":"less_than","value":35}]
+      limit: 50
+    expected:
+      offering_keys
+        - {"year":2026,"semester":"1","course_code":"CSE301","section":"01"}
+      rows
+        - {"Course.name":"데이터베이스","CourseOffering.capacity":30}
+      cardinality: 1
+      answerability: MATCHES
+    intent_family: capacity-less
+    review_status: NEEDS_HUMAN_REVIEW
+    review_rationale: "작성자가 합성 seed와 질문 조건을 대조했으며 독립적인 사람의 의미 검토가 필요함"
+    author_id: phase2-draft
+  - case_id: P2-021
+    question_ko: "정원이 35명 이하인 강좌의 과목 코드와 분반을 알려줘."
+    gold_query_ir:
+      entity: CourseOffering
+      select: ["Course.code","CourseOffering.section"]
+      filters: [{"field":"CourseOffering.capacity","operator":"less_than_or_equal","value":35}]
+      limit: 50
+    expected:
+      offering_keys
+        - {"year":2026,"semester":"1","course_code":"CSE201","section":"01"}
+        - {"year":2026,"semester":"1","course_code":"CSE201","section":"02"}
+        - {"year":2026,"semester":"1","course_code":"CSE301","section":"01"}
+      rows
+        - {"Course.code":"CSE201","CourseOffering.section":"01"}
+        - {"Course.code":"CSE201","CourseOffering.section":"02"}
+        - {"Course.code":"CSE301","CourseOffering.section":"01"}
+      cardinality: 3
+      answerability: MATCHES
+    intent_family: capacity-at-most
+    review_status: NEEDS_HUMAN_REVIEW
+    review_rationale: "작성자가 합성 seed와 질문 조건을 대조했으며 독립적인 사람의 의미 검토가 필요함"
+    author_id: phase2-draft
+  - case_id: P2-022
+    question_ko: "현재 수강 인원이 32명을 초과하는 강좌의 과목명과 수강 인원을 알려줘."
+    gold_query_ir:
+      entity: CourseOffering
+      select: ["Course.name","CourseOffering.enrolled"]
+      filters: [{"field":"CourseOffering.enrolled","operator":"greater_than","value":32}]
+      limit: 50
+    expected:
+      offering_keys
+        - {"year":2026,"semester":"1","course_code":"CSE201","section":"01"}
+        - {"year":2026,"semester":"1","course_code":"HUM101","section":"01"}
+        - {"year":2026,"semester":"1","course_code":"MTH101","section":"01"}
+      rows
+        - {"Course.name":"자료구조","CourseOffering.enrolled":35}
+        - {"Course.name":"사고와표현","CourseOffering.enrolled":38}
+        - {"Course.name":"대학수학","CourseOffering.enrolled":41}
+      cardinality: 3
+      answerability: MATCHES
+    intent_family: enrolled-greater
+    review_status: NEEDS_HUMAN_REVIEW
+    review_rationale: "작성자가 합성 seed와 질문 조건을 대조했으며 독립적인 사람의 의미 검토가 필요함"
+    author_id: phase2-draft
+  - case_id: P2-023
+    question_ko: "현재 수강 인원이 32명 이상인 강좌의 과목명과 정원을 알려줘."
+    gold_query_ir:
+      entity: CourseOffering
+      select: ["Course.name","CourseOffering.capacity"]
+      filters: [{"field":"CourseOffering.enrolled","operator":"greater_than_or_equal","value":32}]
+      limit: 50
+    expected:
+      offering_keys
+        - {"year":2026,"semester":"1","course_code":"CSE101","section":"01"}
+        - {"year":2026,"semester":"1","course_code":"CSE201","section":"01"}
+        - {"year":2026,"semester":"1","course_code":"HUM101","section":"01"}
+        - {"year":2026,"semester":"1","course_code":"MTH101","section":"01"}
+      rows
+        - {"Course.name":"프로그래밍기초","CourseOffering.capacity":40}
+        - {"Course.name":"자료구조","CourseOffering.capacity":35}
+        - {"Course.name":"사고와표현","CourseOffering.capacity":45}
+        - {"Course.name":"대학수학","CourseOffering.capacity":50}
+      cardinality: 4
+      answerability: MATCHES
+    intent_family: enrolled-at-least
+    review_status: NEEDS_HUMAN_REVIEW
+    review_rationale: "작성자가 합성 seed와 질문 조건을 대조했으며 독립적인 사람의 의미 검토가 필요함"
+    author_id: phase2-draft
+  - case_id: P2-024
+    question_ko: "수강 인원이 30명 미만인 강좌의 과목명, 분반, 수강 인원을 알려줘."
+    gold_query_ir:
+      entity: CourseOffering
+      select: ["Course.name","CourseOffering.section","CourseOffering.enrolled"]
+      filters: [{"field":"CourseOffering.enrolled","operator":"less_than","value":30}]
+      limit: 50
+    expected:
+      offering_keys
+        - {"year":2026,"semester":"1","course_code":"CSE201","section":"02"}
+        - {"year":2026,"semester":"1","course_code":"CSE301","section":"01"}
+      rows
+        - {"Course.name":"자료구조","CourseOffering.section":"02","CourseOffering.enrolled":29}
+        - {"Course.name":"데이터베이스","CourseOffering.section":"01","CourseOffering.enrolled":24}
+      cardinality: 2
+      answerability: MATCHES
+    intent_family: enrolled-less
+    review_status: NEEDS_HUMAN_REVIEW
+    review_rationale: "작성자가 합성 seed와 질문 조건을 대조했으며 독립적인 사람의 의미 검토가 필요함"
+    author_id: phase2-draft
+  - case_id: P2-025
+    question_ko: "수강 인원이 24명 이하인 강좌의 과목명과 담당 교원을 알려줘."
+    gold_query_ir:
+      entity: CourseOffering
+      select: ["Course.name","Instructor.name"]
+      filters: [{"field":"CourseOffering.enrolled","operator":"less_than_or_equal","value":24}]
+      limit: 50
+    expected:
+      offering_keys
+        - {"year":2026,"semester":"1","course_code":"CSE301","section":"01"}
+      rows
+        - {"Course.name":"데이터베이스","Instructor.name":"교원A"}
+      cardinality: 1
+      answerability: MATCHES
+    intent_family: enrolled-at-most
+    review_status: NEEDS_HUMAN_REVIEW
+    review_rationale: "작성자가 합성 seed와 질문 조건을 대조했으며 독립적인 사람의 의미 검토가 필요함"
+    author_id: phase2-draft
+  - case_id: P2-026
+    question_ko: "학점이 2보다 큰 강좌의 과목명, 학점, 분반을 알려줘."
+    gold_query_ir:
+      entity: CourseOffering
+      select: ["Course.name","Course.credits","CourseOffering.section"]
+      filters: [{"field":"Course.credits","operator":"greater_than","value":2}]
+      limit: 50
+    expected:
+      offering_keys
+        - {"year":2026,"semester":"1","course_code":"CSE101","section":"01"}
+        - {"year":2026,"semester":"1","course_code":"CSE201","section":"01"}
+        - {"year":2026,"semester":"1","course_code":"CSE201","section":"02"}
+        - {"year":2026,"semester":"1","course_code":"CSE301","section":"01"}
+        - {"year":2026,"semester":"1","course_code":"MTH101","section":"01"}
+      rows
+        - {"Course.name":"프로그래밍기초","Course.credits":3,"CourseOffering.section":"01"}
+        - {"Course.name":"자료구조","Course.credits":3,"CourseOffering.section":"01"}
+        - {"Course.name":"자료구조","Course.credits":3,"CourseOffering.section":"02"}
+        - {"Course.name":"데이터베이스","Course.credits":3,"CourseOffering.section":"01"}
+        - {"Course.name":"대학수학","Course.credits":3,"CourseOffering.section":"01"}
+      cardinality: 5
+      answerability: MATCHES
+    intent_family: credit-greater
+    review_status: NEEDS_HUMAN_REVIEW
+    review_rationale: "작성자가 합성 seed와 질문 조건을 대조했으며 독립적인 사람의 의미 검토가 필요함"
+    author_id: phase2-draft
+  - case_id: P2-027
+    question_ko: "학점이 2 이하인 강좌의 과목명과 학점을 알려줘."
+    gold_query_ir:
+      entity: CourseOffering
+      select: ["Course.name","Course.credits"]
+      filters: [{"field":"Course.credits","operator":"less_than_or_equal","value":2}]
+      limit: 50
+    expected:
+      offering_keys
+        - {"year":2026,"semester":"1","course_code":"HUM101","section":"01"}
+      rows
+        - {"Course.name":"사고와표현","Course.credits":2}
+      cardinality: 1
+      answerability: MATCHES
+    intent_family: credit-at-most
+    review_status: NEEDS_HUMAN_REVIEW
+    review_rationale: "작성자가 합성 seed와 질문 조건을 대조했으며 독립적인 사람의 의미 검토가 필요함"
+    author_id: phase2-draft
+  - case_id: P2-028
+    question_ko: "2026년 이후에 개설된 강좌의 과목명과 개설 연도를 알려줘."
+    gold_query_ir:
+      entity: CourseOffering
+      select: ["Course.name","CourseOffering.year"]
+      filters: [{"field":"CourseOffering.year","operator":"greater_than","value":2026}]
+      limit: 50
+    expected:
+      offering_keys: []
+      rows: []
+      cardinality: 0
+      answerability: NO_MATCH
+    intent_family: future-year-empty
+    review_status: NEEDS_HUMAN_REVIEW
+    review_rationale: "작성자가 합성 seed와 질문 조건을 대조했으며 독립적인 사람의 의미 검토가 필요함"
+    author_id: phase2-draft
+  - case_id: P2-029
+    question_ko: "과목명이 천문학인 강좌의 과목 코드와 학점을 알려줘."
+    gold_query_ir:
+      entity: CourseOffering
+      select: ["Course.code","Course.credits"]
+      filters: [{"field":"Course.name","operator":"equals","value":"천문학"}]
+      limit: 50
+    expected:
+      offering_keys: []
+      rows: []
+      cardinality: 0
+      answerability: NO_MATCH
+    intent_family: absent-name-empty
+    review_status: NEEDS_HUMAN_REVIEW
+    review_rationale: "작성자가 합성 seed와 질문 조건을 대조했으며 독립적인 사람의 의미 검토가 필요함"
+    author_id: phase2-draft
+  - case_id: P2-030
+    question_ko: "자료구조 과목의 02분반 담당 교원과 강의 시간을 알려줘."
+    gold_query_ir:
+      entity: CourseOffering
+      select: ["Instructor.name","Schedule.start_time","Schedule.end_time"]
+      filters: [{"field":"Course.name","operator":"equals","value":"자료구조"},{"field":"CourseOffering.section","operator":"equals","value":"02"}]
+      limit: 50
+    expected:
+      offering_keys
+        - {"year":2026,"semester":"1","course_code":"CSE201","section":"02"}
+      rows
+        - {"Instructor.name":"교원C","Schedule.start_time":"13:30","Schedule.end_time":"15:00"}
+      cardinality: 1
+      answerability: MATCHES
+    intent_family: course-section-conjunction
+    review_status: NEEDS_HUMAN_REVIEW
+    review_rationale: "작성자가 합성 seed와 질문 조건을 대조했으며 독립적인 사람의 의미 검토가 필요함"
+    author_id: phase2-draft
+  - case_id: P2-031
+    question_ko: "컴퓨터공학과 강좌 중 수요일에 하는 과목의 이름과 분반을 알려줘."
+    gold_query_ir:
+      entity: CourseOffering
+      select: ["Course.name","CourseOffering.section"]
+      filters: [{"field":"Department.name","operator":"equals","value":"컴퓨터공학과"},{"field":"Schedule.day","operator":"equals","value":"WED"}]
+      limit: 50
+    expected:
+      offering_keys
+        - {"year":2026,"semester":"1","course_code":"CSE201","section":"02"}
+      rows
+        - {"Course.name":"자료구조","CourseOffering.section":"02"}
+      cardinality: 1
+      answerability: MATCHES
+    intent_family: department-weekday-conjunction
+    review_status: NEEDS_HUMAN_REVIEW
+    review_rationale: "작성자가 합성 seed와 질문 조건을 대조했으며 독립적인 사람의 의미 검토가 필요함"
+    author_id: phase2-draft
+  - case_id: P2-032
+    question_ko: "전공 3학점 강좌 중 정원이 35명을 초과하는 강좌의 이름과 정원을 알려줘."
+    gold_query_ir:
+      entity: CourseOffering
+      select: ["Course.name","CourseOffering.capacity"]
+      filters: [{"field":"Course.category","operator":"equals","value":"전공"},{"field":"Course.credits","operator":"equals","value":3},{"field":"CourseOffering.capacity","operator":"greater_than","value":35}]
+      limit: 50
+    expected:
+      offering_keys
+        - {"year":2026,"semester":"1","course_code":"CSE101","section":"01"}
+      rows
+        - {"Course.name":"프로그래밍기초","CourseOffering.capacity":40}
+      cardinality: 1
+      answerability: MATCHES
+    intent_family: category-credit-capacity-conjunction
+    review_status: NEEDS_HUMAN_REVIEW
+    review_rationale: "작성자가 합성 seed와 질문 조건을 대조했으며 독립적인 사람의 의미 검토가 필요함"
+    author_id: phase2-draft
+  - case_id: P2-033
+    question_ko: "교원A 담당 강좌 중 목요일에 시작하는 강좌의 과목 코드와 시작 시간을 알려줘."
+    gold_query_ir:
+      entity: CourseOffering
+      select: ["Course.code","Schedule.start_time"]
+      filters: [{"field":"Instructor.name","operator":"equals","value":"교원A"},{"field":"Schedule.day","operator":"equals","value":"THU"}]
+      limit: 50
+    expected:
+      offering_keys
+        - {"year":2026,"semester":"1","course_code":"CSE301","section":"01"}
+      rows
+        - {"Course.code":"CSE301","Schedule.start_time":"15:00"}
+      cardinality: 1
+      answerability: MATCHES
+    intent_family: instructor-weekday-conjunction
+    review_status: NEEDS_HUMAN_REVIEW
+    review_rationale: "작성자가 합성 seed와 질문 조건을 대조했으며 독립적인 사람의 의미 검토가 필요함"
+    author_id: phase2-draft
+  - case_id: P2-034
+    question_ko: "수학과에서 개설하고 09:00에 시작하는 강좌의 과목명과 종료 시간을 알려줘."
+    gold_query_ir:
+      entity: CourseOffering
+      select: ["Course.name","Schedule.end_time"]
+      filters: [{"field":"Department.name","operator":"equals","value":"수학과"},{"field":"Schedule.start_time","operator":"equals","value":"09:00"}]
+      limit: 50
+    expected:
+      offering_keys
+        - {"year":2026,"semester":"1","course_code":"MTH101","section":"01"}
+      rows
+        - {"Course.name":"대학수학","Schedule.end_time":"10:30"}
+      cardinality: 1
+      answerability: MATCHES
+    intent_family: department-start-conjunction
+    review_status: NEEDS_HUMAN_REVIEW
+    review_rationale: "작성자가 합성 seed와 질문 조건을 대조했으며 독립적인 사람의 의미 검토가 필요함"
+    author_id: phase2-draft
+  - case_id: P2-035
+    question_ko: "과목 코드에 101이 들어가는 강좌의 과목 코드와 이수 구분을 알려줘."
+    gold_query_ir:
+      entity: CourseOffering
+      select: ["Course.code","Course.category"]
+      filters: [{"field":"Course.code","operator":"contains","value":"101"}]
+      limit: 50
+    expected:
+      offering_keys
+        - {"year":2026,"semester":"1","course_code":"CSE101","section":"01"}
+        - {"year":2026,"semester":"1","course_code":"HUM101","section":"01"}
+        - {"year":2026,"semester":"1","course_code":"MTH101","section":"01"}
+      rows
+        - {"Course.code":"CSE101","Course.category":"전공"}
+        - {"Course.code":"HUM101","Course.category":"교양"}
+        - {"Course.code":"MTH101","Course.category":"교양"}
+      cardinality: 3
+      answerability: MATCHES
+    intent_family: partial-course-code
+    review_status: NEEDS_HUMAN_REVIEW
+    review_rationale: "작성자가 합성 seed와 질문 조건을 대조했으며 독립적인 사람의 의미 검토가 필요함"
+    author_id: phase2-draft
+  - case_id: P2-036
+    question_ko: "학과명에 공학이 포함된 강좌의 과목명, 학과명, 분반을 알려줘."
+    gold_query_ir:
+      entity: CourseOffering
+      select: ["Course.name","Department.name","CourseOffering.section"]
+      filters: [{"field":"Department.name","operator":"contains","value":"공학"}]
+      limit: 50
+    expected:
+      offering_keys
+        - {"year":2026,"semester":"1","course_code":"CSE101","section":"01"}
+        - {"year":2026,"semester":"1","course_code":"CSE201","section":"01"}
+        - {"year":2026,"semester":"1","course_code":"CSE201","section":"02"}
+        - {"year":2026,"semester":"1","course_code":"CSE301","section":"01"}
+      rows
+        - {"Course.name":"프로그래밍기초","Department.name":"컴퓨터공학과","CourseOffering.section":"01"}
+        - {"Course.name":"자료구조","Department.name":"컴퓨터공학과","CourseOffering.section":"01"}
+        - {"Course.name":"자료구조","Department.name":"컴퓨터공학과","CourseOffering.section":"02"}
+        - {"Course.name":"데이터베이스","Department.name":"컴퓨터공학과","CourseOffering.section":"01"}
+      cardinality: 4
+      answerability: MATCHES
+    intent_family: partial-department-name
+    review_status: NEEDS_HUMAN_REVIEW
+    review_rationale: "작성자가 합성 seed와 질문 조건을 대조했으며 독립적인 사람의 의미 검토가 필요함"
+    author_id: phase2-draft
+  - case_id: P2-037
+    question_ko: "강의 종료 시각이 15:00보다 늦은 강좌의 과목명과 종료 시각을 알려줘."
+    gold_query_ir:
+      entity: CourseOffering
+      select: ["Course.name","Schedule.end_time"]
+      filters: [{"field":"Schedule.end_time","operator":"greater_than","value":"15:00"}]
+      limit: 50
+    expected:
+      offering_keys
+        - {"year":2026,"semester":"1","course_code":"CSE301","section":"01"}
+      rows
+        - {"Course.name":"데이터베이스","Schedule.end_time":"16:30"}
+      cardinality: 1
+      answerability: MATCHES
+    intent_family: late-end-time
+    review_status: NEEDS_HUMAN_REVIEW
+    review_rationale: "작성자가 합성 seed와 질문 조건을 대조했으며 독립적인 사람의 의미 검토가 필요함"
+    author_id: phase2-draft
+  - case_id: P2-038
+    question_ko: "강의 시작 시각이 10:00보다 이른 강좌의 과목명과 시작 시각을 알려줘."
+    gold_query_ir:
+      entity: CourseOffering
+      select: ["Course.name","Schedule.start_time"]
+      filters: [{"field":"Schedule.start_time","operator":"less_than","value":"10:00"}]
+      limit: 50
+    expected:
+      offering_keys
+        - {"year":2026,"semester":"1","course_code":"CSE101","section":"01"}
+        - {"year":2026,"semester":"1","course_code":"MTH101","section":"01"}
+      rows
+        - {"Course.name":"프로그래밍기초","Schedule.start_time":"09:00"}
+        - {"Course.name":"대학수학","Schedule.start_time":"09:00"}
+      cardinality: 2
+      answerability: MATCHES
+    intent_family: early-start-time
+    review_status: NEEDS_HUMAN_REVIEW
+    review_rationale: "작성자가 합성 seed와 질문 조건을 대조했으며 독립적인 사람의 의미 검토가 필요함"
+    author_id: phase2-draft
+  - case_id: P2-039
+    question_ko: "자료구조 강좌의 과목명, 학과명, 담당 교원, 수업 요일을 함께 알려줘."
+    gold_query_ir:
+      entity: CourseOffering
+      select: ["Course.name","Department.name","Instructor.name","Schedule.day"]
+      filters: [{"field":"Course.name","operator":"equals","value":"자료구조"}]
+      limit: 50
+    expected:
+      offering_keys
+        - {"year":2026,"semester":"1","course_code":"CSE201","section":"01"}
+        - {"year":2026,"semester":"1","course_code":"CSE201","section":"02"}
+      rows
+        - {"Course.name":"자료구조","Department.name":"컴퓨터공학과","Instructor.name":"교원B","Schedule.day":"TUE"}
+        - {"Course.name":"자료구조","Department.name":"컴퓨터공학과","Instructor.name":"교원C","Schedule.day":"WED"}
+      cardinality: 2
+      answerability: MATCHES
+    intent_family: multi-entity-projection
+    review_status: NEEDS_HUMAN_REVIEW
+    review_rationale: "작성자가 합성 seed와 질문 조건을 대조했으며 독립적인 사람의 의미 검토가 필요함"
+    author_id: phase2-draft
+  - case_id: P2-040
+    question_ko: "전공 강좌 중 수강 인원이 30명 미만인 강좌의 과목명과 학과 코드, 담당 교원, 시작 시간을 알려줘."
+    gold_query_ir:
+      entity: CourseOffering
+      select: ["Course.name","Department.code","Instructor.name","Schedule.start_time"]
+      filters: [{"field":"Course.category","operator":"equals","value":"전공"},{"field":"CourseOffering.enrolled","operator":"less_than","value":30}]
+      limit: 50
+    expected:
+      offering_keys
+        - {"year":2026,"semester":"1","course_code":"CSE201","section":"02"}
+        - {"year":2026,"semester":"1","course_code":"CSE301","section":"01"}
+      rows
+        - {"Course.name":"자료구조","Department.code":"CSE","Instructor.name":"교원C","Schedule.start_time":"13:30"}
+        - {"Course.name":"데이터베이스","Department.code":"CSE","Instructor.name":"교원A","Schedule.start_time":"15:00"}
+      cardinality: 2
+      answerability: MATCHES
+    intent_family: multi-entity-filter-projection
+    review_status: NEEDS_HUMAN_REVIEW
+    review_rationale: "작성자가 합성 seed와 질문 조건을 대조했으며 독립적인 사람의 의미 검토가 필요함"
+    author_id: phase2-draft
