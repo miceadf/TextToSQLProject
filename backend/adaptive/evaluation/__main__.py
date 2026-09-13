@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 import tempfile
 from pathlib import Path
 
@@ -20,10 +21,16 @@ DEFAULT_GOLD_PATH = Path(__file__).with_name("data") / "fixture_v1_cases.yaml"
 
 
 def main(argv: list[str] | None = None) -> int:
+    effective_argv = sys.argv[1:] if argv is None else argv
+    if effective_argv and effective_argv[0] == "run-smoke":
+        from .run_cli import main as run_smoke
+
+        return run_smoke(effective_argv[1:])
+
     parser = argparse.ArgumentParser(description="Inspect synthetic fixture gold coverage")
     parser.add_argument("--input", type=Path, default=DEFAULT_GOLD_PATH)
     parser.add_argument("--format", choices=("json", "review-table"), default="json")
-    args = parser.parse_args(argv)
+    args = parser.parse_args(effective_argv)
 
     ontology = load_default_ontology()
     gold = load_evaluation_set(args.input, ontology=ontology)
