@@ -558,8 +558,8 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 - [x] flat schema 작성
 - [x] normalized schema 작성
 - [x] legacy/abbreviated schema 작성
-- [ ] 공통 평가 질문 30~50개 선정
-- [ ] 기대 결과 집합 작성
+- [x] 공통 평가 질문 40개 초안 선정(독립 사람 검토 대기)
+- [x] 기대 결과 집합 작성(정적·3스키마 검증, 사람 승인 대기)
 - [x] cross-schema result comparison 구현(fixture canonical row 기준)
 
 ### Phase 3. Catalog와 Schema Alignment
@@ -883,7 +883,13 @@ python -m backend.adaptive.dataset convert-ir `
 
 CLI는 이전 `convert-ir --private-output` 결과와 저장소 밖 32바이트 이상 binary key를 사용한다. 예: `python -m backend.adaptive.dataset pseudonymize-ir --input .schema-adaptive/private/cnu-query-ir-v1.jsonl --dataset-id cnu-original-v1 --profile backend/adaptive/dataset/profiles/cnu-pseudonymization-v1.yaml --ontology backend/adaptive/ontology/course-domain.yaml --key-file C:\private\pseudonym-key.bin --key-id key-v1 --output-dir .schema-adaptive/pseudonymized/cnu-v1`. 출력은 기본 덮어쓰기 금지, `--force`에서만 manifest를 원자 교체한다. 공개 가능 여부와 key 보관·회전은 별도 운영 결정으로 남긴다.
 
-다음 개발 요청 시 **Phase 2 공통 평가 질문 30~50개와 기대 semantic result 계약**부터 시작한다. Phase 1의 수동 검토 684건은 자동 학습 자료로 승인하지 않는다. Query IR 확장, 수동 검토 UI, Phase 5 evaluation runner는 이후 단계로 남긴다. 기존 시스템 baseline 실제 정확도·응답시간은 동일한 공통 질문 집합을 사용해 데스크톱에서 측정한다.
+Phase 2의 synthetic 공통 평가 질문·gold Query IR·기대 semantic 결과 초안을 완료했다. `backend/adaptive/evaluation/data/fixture_v1_cases.yaml`은 `FixtureSeed v1`(개설강좌 6건)의 40개 한국어 질문을 고정한다. 수동으로 선택한 offering key와 typed semantic row를 별도 seed-only 검증기가 확인하며, 같은 gold IR을 flat·normalized·legacy 스키마에서 compile·AST 검사·read-only 실행해 결과 멀티셋을 비교한다. seed·ontology 내용과 현재 Query IR JSON 계약을 각각 fingerprint로 고정한다. 물리 SQL 출력에서 gold를 역생성하지 않는다.
+
+현재 coverage는 15개 field 전체, `equals`·`contains`·네 가지 크기 비교, 정규화 스키마 JOIN 0~4단계, 빈 결과 2건·한 행 14건·여러 행 24건이다. 질문의 과목/분반 단위를 맞추기 위해 course-only projection이 개설강좌를 축약할 수 있는 사례에는 분반을 명시했다. `python -m backend.adaptive.evaluation --format json`은 결정적 machine-readable coverage를, `--format review-table`은 검토 표를 출력한다. 두 출력 모두 모델 정확도가 아니다. 모든 40건은 `NEEDS_HUMAN_REVIEW`이며 독립적인 사람의 질문·정답 승인 전에는 논문의 확정 gold로 간주하지 않는다. seed가 6건뿐이고 연도·학기가 각각 한 값이며, 개발용 세 스키마는 unseen school이 아니다.
+
+질문·IR·기대 결과의 의미가 바뀌면 기존 benchmark version을 조용히 재사용하지 않는다. JSON-schema fingerprint는 Pydantic 사용자 정의 validator의 동작까지 포착하지 않으므로 Query IR validator 의미가 바뀔 때는 Query IR 계약 및 benchmark version을 명시적으로 검토·갱신한다.
+
+다음 개발 요청 시 Phase 5의 **경량 evaluation runner**를 FakeModel·gold IR·SQLite fixture부터 작은 단위로 구현한다. 사람 승인 전에는 이 세트를 개발 회귀용으로만 쓰고 최종 정확도 주장에는 사용하지 않는다. `RecordedModel`, 실제 모델·PostgreSQL 평가와 기존 시스템 baseline 정확도·응답시간 측정은 이후 데스크톱 체크포인트로 남긴다. Phase 1 가명화 review 684건은 자동 학습 자료로 승인하지 않는다.
 
 ## 14. 첫 구현 단위
 
@@ -1178,6 +1184,13 @@ SQLite DB 입력
 - 결정: 승인된 semantic field 정책과 외부 binary secret key를 사용해 NFC 값에 domain-separated HMAC-SHA-256을 적용한다. 동일 surface의 namespace 충돌, 겹침, 질문·instruction·IR 대응 불일치 또는 알려진 원본 값 잔존은 record 전체를 review로 보낸다. 원본 line/hash/group id는 공개 가명 artifact에 복사하지 않고 keyed lineage로 보존하며 private 생성물은 manifest-last bundle로 저장한다. `Course.category`와 `CourseOffering.section`은 초기 보존하되 공개 전 재검토한다.
 - 이유: 단순 hash나 부분 치환은 사전 대입·질문/정답 불일치·원본 데이터 연결 위험이 있다. 보수적 실패와 keyed lineage는 재현성을 유지하면서 식별값 노출을 줄이지만, filter에 없는 고유명사나 외부 데이터에 의한 재식별까지 제거하지는 못한다.
 
+### ADR-020: Synthetic gold는 seed 기반 독립 정답과 사람 승인 상태를 분리
+
+- 날짜: 2026-09-13
+- 상태: 채택
+- 결정: Phase 2 평가 세트는 `FixtureSeed v1`, ontology 내용, Query IR JSON 계약 fingerprint에 고정한다. 각 한국어 질문에 gold Query IR, 사람이 선택한 개설강좌 key, typed semantic row를 기록하고 seed-only 해석기와 세 물리 스키마 실행으로 각각 검증한다. 결과는 행 순서가 아닌 중복을 보존한 multiset으로 비교한다. 자동 검증 성공과 독립 사람의 의미 승인은 별도 상태이며 현재 모든 사례는 `NEEDS_HUMAN_REVIEW`다.
+- 이유: compiler 실행 결과를 정답으로 복제하면 같은 구현 오류를 놓칠 수 있고, 6건 synthetic fixture에서 테스트 통과를 실제 대학 일반화나 최종 사람 승인으로 오인하기 쉽다. 정답 근거·한계·검토 상태를 분리해야 후속 모델 비교 수치가 해석 가능하다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -1275,3 +1288,11 @@ SQLite DB 입력
 - aggregate summary, 로컬 review, 불변 generation과 manifest-last 저장, `pseudonymize-ir` CLI 구현
 - 실제 3,212개 변환 record를 메모리에서 검증: 출력 가능 2,528개, review 684개, 알려진 값 잔존 0개
 - 다음 시작점을 Phase 2 공통 평가 질문·기대 semantic result 계약으로 이동
+- Phase 2 공통 평가 질문·기대 semantic result의 범위와 완료 기준을 `docs/prompts/phase2-01-common-evaluation-questions.md`에 기록
+
+### 2026-09-13
+
+- `FixtureSeed v1`의 40개 한국어 공통 질문과 gold Query IR·기대 semantic row·offering provenance 초안 작성
+- seed·ontology·Query IR 계약 fingerprint 고정, 독립 seed-only filter/정답 검증, 세 SQLite 스키마의 gold 결과 multiset 동등성 검증
+- 15개 field 전체와 JOIN 0~4단계, 빈 결과 2건·한 행 14건·여러 행 24건을 coverage report로 기록
+- 40건 모두 `NEEDS_HUMAN_REVIEW`로 유지하고 다음 시작점을 경량 evaluation runner로 이동
