@@ -590,7 +590,7 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 - [x] `FakeModel` 구현
 - [ ] `RecordedModel` 구현
 - [x] 모델 응답 JSON schema 검증
-- [ ] evaluation runner 구현
+- [x] 경량 evaluation runner 구현(FakeModel·SQLite fixture, 실제 모델 평가 아님)
 - [ ] 기존 fine-tuned 모델 평가
 - [ ] base instruct 모델 평가
 - [ ] 동적 스키마 prompt 평가
@@ -889,7 +889,11 @@ Phase 2의 synthetic 공통 평가 질문·gold Query IR·기대 semantic 결과
 
 질문·IR·기대 결과의 의미가 바뀌면 기존 benchmark version을 조용히 재사용하지 않는다. JSON-schema fingerprint는 Pydantic 사용자 정의 validator의 동작까지 포착하지 않으므로 Query IR validator 의미가 바뀔 때는 Query IR 계약 및 benchmark version을 명시적으로 검토·갱신한다.
 
-다음 개발 요청 시 Phase 5의 **경량 evaluation runner**를 FakeModel·gold IR·SQLite fixture부터 작은 단위로 구현한다. 사람 승인 전에는 이 세트를 개발 회귀용으로만 쓰고 최종 정확도 주장에는 사용하지 않는다. `RecordedModel`, 실제 모델·PostgreSQL 평가와 기존 시스템 baseline 정확도·응답시간 측정은 이후 데스크톱 체크포인트로 남긴다. Phase 1 가명화 review 684건은 자동 학습 자료로 승인하지 않는다.
+Phase 5의 경량 evaluation runner를 FakeModel·gold IR·세 SQLite fixture에 연결했다. `backend/adaptive/evaluation/runner.py`는 기존 `ExecutionHarness`의 schema-adaptive compiler, AST policy, read-only executor를 그대로 통과시킨다. gold·ontology·Query IR 계약과 실제 DB Catalog/Published Mapping의 fingerprint drift는 실행 전 차단한다. 사례×스키마별 결정적 request ID, typed IR 구조 일치, 중복을 보존한 semantic row 결과, 모델·하네스 오류 단계와 코드를 기록하되 기본 report에는 SQL·모델 응답 원문·결과 행·실행 시간·임시 경로를 저장하지 않는다.
+
+분모는 예정된 모든 `(case_id, variant)` attempt다. 구조적 IR 일치, 하네스 실행 성공, semantic 정답, projection 불일치·비교 오류는 서로 다른 지표이며, semantic 정답은 전체 예정 attempt와 비교 가능 attempt 두 분모로 함께 기록한다. 세 스키마의 모델 IR 및 semantic 결과 일관성은 case 단위로 따로 보고하고 불완전 실행은 미평가로 남긴다. coverage tag별 집계는 field·operator·JOIN·cardinality 등 서로 겹치는 축이므로 모든 tag의 수를 합산해 전체 분모로 해석하지 않는다.
+
+gold를 그대로 반환하는 CLI `python -m backend.adaptive.evaluation run-smoke --output .schema-adaptive/reports/fixture-runner-smoke.json`은 **oracle smoke**이며 모델 정확도 측정이 아니다. 40개 gold 모두 사람 검토 대기 상태라 이 report를 논문의 확정 성능으로 쓰지 않는다. 다음 개발 요청 시 `RecordedModel`의 안전한 재생 계약부터 진행하고, 실제 모델·PostgreSQL 평가와 기존 시스템 baseline 정확도·응답시간 측정은 데스크톱 체크포인트로 남긴다. Phase 1 가명화 review 684건은 자동 학습 자료로 승인하지 않는다.
 
 ## 14. 첫 구현 단위
 
@@ -1191,6 +1195,13 @@ SQLite DB 입력
 - 결정: Phase 2 평가 세트는 `FixtureSeed v1`, ontology 내용, Query IR JSON 계약 fingerprint에 고정한다. 각 한국어 질문에 gold Query IR, 사람이 선택한 개설강좌 key, typed semantic row를 기록하고 seed-only 해석기와 세 물리 스키마 실행으로 각각 검증한다. 결과는 행 순서가 아닌 중복을 보존한 multiset으로 비교한다. 자동 검증 성공과 독립 사람의 의미 승인은 별도 상태이며 현재 모든 사례는 `NEEDS_HUMAN_REVIEW`다.
 - 이유: compiler 실행 결과를 정답으로 복제하면 같은 구현 오류를 놓칠 수 있고, 6건 synthetic fixture에서 테스트 통과를 실제 대학 일반화나 최종 사람 승인으로 오인하기 쉽다. 정답 근거·한계·검토 상태를 분리해야 후속 모델 비교 수치가 해석 가능하다.
 
+### ADR-021: 경량 runner는 전체 attempt 분모와 oracle 표기를 고정
+
+- 날짜: 2026-09-13
+- 상태: 채택
+- 결정: 모든 사례×스키마 attempt를 분모에 포함하고 구조적 IR, semantic 정답, 실행 성공, 비교 불가와 실패 단계를 분리한다. row 순서는 무시하되 typed 값과 중복 행 수는 보존한다. gold를 응답으로 제공하는 FakeModel 실행은 `oracle_smoke`로만 표시하며, gold 사람 승인 전에는 연구 성능 지표로 사용하지 않는다. report core에서 SQL·응답 원문·행·측정 시간·임시 경로를 제외한다.
+- 이유: 성공 사례만 집계하거나 oracle 재생을 모델 성능으로 오인하면 실제 일반화 능력이 과대평가된다. 결정적·비공개 기본 report가 있어야 이후 동일 조건의 모델 응답을 안전하게 비교할 수 있다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -1296,3 +1307,6 @@ SQLite DB 입력
 - seed·ontology·Query IR 계약 fingerprint 고정, 독립 seed-only filter/정답 검증, 세 SQLite 스키마의 gold 결과 multiset 동등성 검증
 - 15개 field 전체와 JOIN 0~4단계, 빈 결과 2건·한 행 14건·여러 행 24건을 coverage report로 기록
 - 40건 모두 `NEEDS_HUMAN_REVIEW`로 유지하고 다음 시작점을 경량 evaluation runner로 이동
+- Phase 5 경량 evaluation runner의 지표 분모, oracle smoke와 실제 모델 성능의 구분, 실패·비교 불가 처리 범위를 `docs/prompts/phase5-01-lightweight-evaluation-runner.md`에 기록
+- FakeModel 주입 runner와 `run-smoke` CLI, 40×3 attempt의 구조적 IR·semantic 결과·실행 상태·일관성 집계 및 기본 비공개 report 구현
+- oracle smoke와 사람 검토 대기를 명시하고 다음 시작점을 `RecordedModel` 안전 재생 계약으로 이동
