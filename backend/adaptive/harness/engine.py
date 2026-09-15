@@ -77,7 +77,7 @@ class ExecutionHarness:
             except ValidationError as exc:
                 raise HarnessFailure(
                     HarnessErrorCode.MODEL_INVALID_OUTPUT,
-                    f"model output is not valid QueryIR: {exc.errors(include_url=False)}",
+                    "model output is not valid QueryIR",
                     stage=HarnessStage.IR_GENERATED,
                 ) from exc
 

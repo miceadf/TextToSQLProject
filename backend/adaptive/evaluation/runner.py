@@ -26,6 +26,7 @@ from ..harness.engine import ExecutionHarness
 from ..harness.executor import SQLiteReadOnlyExecutor
 from ..harness.executor import SQLiteReadOnlyExecutor as _PreflightExecutor
 from ..harness.model import FakeModel, QueryModel
+from ..harness.recorded import RecordedModelReplayError
 from ..mapping import to_harness_mapping
 from ..mapping.contracts import PublishedMappingProfile
 from ..ontology.contracts import DomainOntology
@@ -50,7 +51,11 @@ from .validator import validate_evaluation_set
 
 
 class _ModelInvocationFailure(Exception):
-    """Only a marker: never expose the provider exception text in the report."""
+    """Carry a controlled code, never provider exception text, into the report."""
+
+    def __init__(self, code: str = "MODEL_EXCEPTION") -> None:
+        self.code = code
+        super().__init__(code)
 
 
 class _ModelOutputFailure(Exception):
@@ -68,6 +73,8 @@ class _SafeModel:
                 ontology.model_copy(deep=True),
                 mapping.model_copy(deep=True),
             )
+        except RecordedModelReplayError as exc:
+            raise _ModelInvocationFailure(exc.code.value) from exc
         except Exception as exc:
             raise _ModelInvocationFailure() from exc
         try:
@@ -245,7 +252,7 @@ def run_evaluation(
                 result = harnesses[variant].run(
                     request, runtime_ontology, to_harness_mapping(published)
                 )
-            except _ModelInvocationFailure:
+            except _ModelInvocationFailure as exc:
                 attempts.append(CaseAttempt(
                     case_id=case.case_id,
                     variant=variant.value,
@@ -257,7 +264,7 @@ def run_evaluation(
                     semantic_correct=None,
                     result_fingerprint=None,
                     failure_stage=HarnessStage.IR_GENERATED,
-                    failure_code="MODEL_EXCEPTION",
+                    failure_code=exc.code,
                 ))
                 continue
             except _ModelOutputFailure:

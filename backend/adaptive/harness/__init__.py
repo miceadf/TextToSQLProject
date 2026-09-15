@@ -21,6 +21,19 @@ from .compiler import SingleTableSQLiteCompiler
 from .engine import ExecutionHarness
 from .executor import SQLiteReadOnlyExecutor
 from .model import FakeModel
+from .recorded import (
+    ModelRecording,
+    RecordedFailure,
+    RecordedFailureCode,
+    RecordedModel,
+    RecordedModelReplayError,
+    RecordedReplayErrorCode,
+    RecordedSuccess,
+    RecordingLoadError,
+    load_model_recording,
+    mapping_fingerprint,
+    question_fingerprint,
+)
 from .policy import ConservativeSqlPolicy
 
 __all__ = [
@@ -42,6 +55,17 @@ __all__ = [
     "OntologyField",
     "Operator",
     "QueryIR",
+    "ModelRecording",
+    "RecordedFailure",
+    "RecordedFailureCode",
+    "RecordedModel",
+    "RecordedModelReplayError",
+    "RecordedReplayErrorCode",
+    "RecordedSuccess",
+    "RecordingLoadError",
     "SingleTableSQLiteCompiler",
     "SQLiteReadOnlyExecutor",
+    "load_model_recording",
+    "mapping_fingerprint",
+    "question_fingerprint",
 ]
