@@ -592,7 +592,7 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 
 - [x] `TextToSQLModel` 역할의 `QueryModel` 인터페이스 정의
 - [x] `FakeModel` 구현
-- [ ] `RecordedModel` 구현
+- [x] `RecordedModel` 구현(오프라인 재생 코어; 수집·실행 CLI 제외)
 - [x] 모델 응답 JSON schema 검증
 - [x] 경량 evaluation runner 구현(FakeModel·SQLite fixture, 실제 모델 평가 아님)
 - [ ] 기존 fine-tuned 모델 평가
@@ -897,7 +897,11 @@ Phase 5의 경량 evaluation runner를 FakeModel·gold IR·세 SQLite fixture에
 
 분모는 예정된 모든 `(case_id, variant)` attempt다. 구조적 IR 일치, 하네스 실행 성공, semantic 정답, projection 불일치·비교 오류는 서로 다른 지표이며, semantic 정답은 전체 예정 attempt와 비교 가능 attempt 두 분모로 함께 기록한다. 세 스키마의 모델 IR 및 semantic 결과 일관성은 case 단위로 따로 보고하고 불완전 실행은 미평가로 남긴다. coverage tag별 집계는 field·operator·JOIN·cardinality 등 서로 겹치는 축이므로 모든 tag의 수를 합산해 전체 분모로 해석하지 않는다.
 
-gold를 그대로 반환하는 CLI `python -m backend.adaptive.evaluation run-smoke --output .schema-adaptive/reports/fixture-runner-smoke.json`은 **oracle smoke**이며 모델 정확도 측정이 아니다. 40개 gold 모두 사람 검토 대기 상태라 이 report를 논문의 확정 성능으로 쓰지 않는다. 다음 개발 요청 시 `RecordedModel`의 안전한 재생 계약부터 진행하고, 실제 모델·PostgreSQL 평가와 기존 시스템 baseline 정확도·응답시간 측정은 데스크톱 체크포인트로 남긴다. Phase 1 가명화 review 684건은 자동 학습 자료로 승인하지 않는다.
+gold를 그대로 반환하는 CLI `python -m backend.adaptive.evaluation run-smoke --output .schema-adaptive/reports/fixture-runner-smoke.json`은 **oracle smoke**이며 모델 정확도 측정이 아니다. 40개 gold 모두 사람 검토 대기 상태라 이 report를 논문의 확정 성능으로 쓰지 않는다. 실제 모델·PostgreSQL 평가와 기존 시스템 baseline 정확도·응답시간 측정은 데스크톱 체크포인트로 남긴다. Phase 1 가명화 review 684건은 자동 학습 자료로 승인하지 않는다.
+
+`backend/adaptive/harness/recorded.py`에 versioned JSON recording 계약과 `RecordedModel` 오프라인 재생 코어를 구현했다. 각 response는 결정적 request ID, database ID, 질문 원문의 UTF-8 SHA-256, 전체 runtime Mapping Profile의 canonical JSON SHA-256과 일치할 때만 원래 JSON 타입 그대로 재생된다. 누락, context 불일치, 기록된 provider 실패는 원문을 포함하지 않는 `RECORDED_*` code로 runner에 남는다. malformed JSON, 중복 object key·request ID, non-finite number, 잘못된 version과 field type은 전체 파일 load 단계에서 거부한다. 실제 recording 수집·내보내기와 실행 CLI는 아직 없으며, `oracle_smoke=False` 또는 recording 재생만으로 실제 모델 provenance와 성능을 증명하지 않는다.
+
+다음 개발 시작점은 recording 수집·실행 CLI와 model/config provenance 검증을 별도 작은 단계로 구현하는 것이다. 실제 응답을 기록하거나 성능 수치를 확정하기 전에는 `docs/human-validation-checkpoints.md`의 E3·L1·L3·L5 관문을 적용한다.
 
 ## 14. 첫 구현 단위
 
@@ -1213,6 +1217,13 @@ SQLite DB 입력
 - 결정: 도메인 의미·데이터 사용 조건·독립 평가 스키마 확보 가능성은 조기에 소수 사례로 확인한다. 40개 gold의 정식 독립 승인과 실제 DB mapping·보안·사용자 검증은 각각 모델 성능 확정, 운영 질의, 외부 공개 전에 완료한다. 자동 테스트와 AI의 자체 검토를 사람 승인으로 대체하지 않는다. 세부 항목과 기록 형식은 `docs/human-validation-checkpoints.md`에 둔다.
 - 이유: 모든 검토를 개발 시작 전 요구하면 진행이 불필요하게 막히지만, 모든 검토를 논문 직전으로 미루면 잘못된 의미·자료 사용·일반화 주장을 늦게 발견해 재작업과 위험이 커진다.
 
+### ADR-023: RecordedModel은 exact context-bound JSON을 보수적으로 재생
+
+- 날짜: 2026-09-15
+- 상태: 채택
+- 결정: recording은 request ID·database ID·질문 SHA-256·전체 runtime mapping SHA-256에 묶고, 성공 응답의 JSON 값은 수정하지 않고 재생한다. 누락·불일치·기록된 실패는 gold fallback 없이 통제된 오류로 남긴다. loader는 엄격한 version·type·중복·유한값 검증을 수행하며 실제 recording은 private artifact로 취급한다.
+- 이유: 다른 질문이나 mapping에서 과거 응답을 재사용하면 평가 결과가 오염되고, 잘못된 Query IR을 자동 보정하면 실제 모델 실패를 숨긴다. 원문 비노출 실패와 exact replay가 있어야 노트북에서 모델 동작을 안전하게 재현할 수 있다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -1326,3 +1337,9 @@ SQLite DB 입력
 
 - 후속 프롬프트는 작은 완료 단위로 분할하고, 서브 에이전트는 독립 구현·리뷰가 실질적으로 필요한 경우에만 사용하도록 로드맵 실행 원칙 갱신
 - 조기 설계 확인과 완료 후 필수 승인 관문을 나눈 `docs/human-validation-checkpoints.md` 작성; 후속 프롬프트·중간 점검의 사람 검증 안내 원칙 및 ADR-022 추가
+
+### 2026-09-15
+
+- strict versioned recording 계약, privacy-safe loader와 exact context-bound `RecordedModel` 오프라인 재생 코어 구현
+- 기록 성공 JSON 타입 보존, missing/context mismatch/provider failure의 통제된 runner code와 invalid output 원문 비노출 검증
+- 다음 시작점을 recording 수집·실행 CLI 및 model/config provenance 검증으로 이동; 실제 모델·PostgreSQL 실행은 데스크톱 단계로 유지
