@@ -594,6 +594,7 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 - [x] `FakeModel` 구현
 - [x] `RecordedModel` 구현(오프라인 재생 코어와 read-only evaluation CLI; live 수집 제외)
 - [x] recording capture session 코어 구현(메모리 내 조립; storage·provider 제외)
+- [x] private recording bundle storage와 선언형 provenance manifest 구현(provider 수집 제외)
 - [x] 모델 응답 JSON schema 검증
 - [x] 경량 evaluation runner 구현(FakeModel·SQLite fixture, 실제 모델 평가 아님)
 - [ ] 기존 fine-tuned 모델 평가
@@ -906,7 +907,9 @@ gold를 그대로 반환하는 CLI `python -m backend.adaptive.evaluation run-sm
 
 `RecordingCaptureSession`은 provider나 파일 I/O 없이 명시적 성공 JSON·실패 코드를 기존 `ModelRecording`으로 조립한다. request와 runtime mapping에서 context fingerprint를 직접 계산하고 capture 순서를 보존한다. JSON으로 재현할 수 없는 값, 비유한 숫자, 잘못된 실패 코드, 중복 request ID와 finalize 이후 변경을 안전한 code로 거부한다. 성공 payload는 보정하지 않고 방어적으로 복사하며, finalize 결과는 기존 `RecordedModel`에서 그대로 재생할 수 있다. 이 코어는 provider provenance를 증명하거나 예외를 실패 종류로 추측하지 않는다.
 
-다음 개발 시작점은 private recording atomic storage와 provenance manifest 계약이다. 그 이후에 provider adapter와 실제 수집 CLI를 연결한다. Ollama 호출 자체와 실제 모델 수치 측정은 데스크톱 단계로 유지한다. 실제 응답을 기록하거나 성능 수치를 확정하기 전에는 `docs/human-validation-checkpoints.md`의 E3·L1·L3·L5 관문을 적용한다.
+`recording-bundle-v1`은 완성된 `ModelRecording`을 `.schema-adaptive` 아래 content-addressed immutable generation에 저장하고 `manifest.json`을 마지막 commit marker로 게시한다. manifest에는 payload 대신 byte hash·크기·record count·model run ID와 `DECLARED_UNVERIFIED` provenance만 기록한다. strict loader는 recording 계약과 generation/provenance fingerprint를 다시 계산하며 path traversal, symlink·Windows junction/reparse point, hardlink, git-tracked target, 불완전·변조 bundle을 차단한다. 이 provenance는 caller의 선언을 재현 가능하게 묶을 뿐 모델 출처를 독립적으로 증명하지 않는다.
+
+다음 개발 시작점은 provider-neutral capture orchestrator와 명시적 실패 분류 계약이다. provider 호출을 추상화한 작은 코어에서 request 순서, 성공 JSON 보존, typed 실패의 capture 및 실패 후 계속 진행까지만 구현한다. 파일 저장·CLI·Ollama adapter는 포함하지 않고, 실제 provider adapter와 수집 CLI는 이후 데스크톱 단계에서 연결한다. 실제 응답을 저장하거나 성능 수치를 확정하기 전에는 `docs/human-validation-checkpoints.md`의 E3·L1·L3·L5 관문을 적용한다.
 
 ## 14. 첫 구현 단위
 
@@ -1229,6 +1232,13 @@ SQLite DB 입력
 - 결정: recording은 request ID·database ID·질문 SHA-256·전체 runtime mapping SHA-256에 묶고, 성공 응답의 JSON 값은 수정하지 않고 재생한다. 누락·불일치·기록된 실패는 gold fallback 없이 통제된 오류로 남긴다. loader는 엄격한 version·type·중복·유한값 검증을 수행하며 실제 recording은 private artifact로 취급한다.
 - 이유: 다른 질문이나 mapping에서 과거 응답을 재사용하면 평가 결과가 오염되고, 잘못된 Query IR을 자동 보정하면 실제 모델 실패를 숨긴다. 원문 비노출 실패와 exact replay가 있어야 노트북에서 모델 동작을 안전하게 재현할 수 있다.
 
+### ADR-024: private recording은 불변 generation과 선언형 provenance로 저장
+
+- 날짜: 2026-09-18
+- 상태: 채택
+- 결정: recording bytes와 canonical provenance를 content-addressed generation에 저장하고 검증 완료 후 manifest를 마지막에 원자 게시한다. provenance는 `DECLARED_UNVERIFIED`로 고정하며 prompt·설정 원문 대신 SHA-256만 보존한다. loader는 bundle 경계, Git 비추적 private 경로, symlink·junction·hardlink와 모든 hash·count·version을 다시 검증한다.
+- 이유: 실제 모델 응답을 private artifact로 유지하면서도 부분 저장과 변조·경로 탈출을 탐지하고 동일 입력을 재현해야 한다. 선언 metadata를 출처 증명으로 과장하지 않아야 이후 평가 결과의 신뢰 범위를 명확히 설명할 수 있다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -1360,3 +1370,7 @@ SQLite DB 입력
 - `recorded-model-v1`과 호환되는 메모리 내 `RecordingCaptureSession` 구현
 - JSON 타입·capture 순서·context hash 보존, 방어적 복사, 중복·비정상 payload·sealed session의 안전한 거부 검증
 - 다음 시작점을 private recording atomic storage와 provenance manifest 계약으로 이동
+- private storage·선언형 provenance manifest의 범위와 안전 조건을 `docs/prompts/phase5-05-private-recording-storage-provenance.md`에 기록
+- `recording-bundle-v1` 계약과 content-addressed immutable generation, manifest-last private storage 및 strict loader 구현
+- recording·manifest 변조, path traversal, symlink·Windows junction/reparse point, hardlink, tracked target과 부분 저장을 차단하는 합성 회귀 테스트 추가
+- provenance를 `DECLARED_UNVERIFIED` 선언 metadata로 제한하고 다음 시작점을 provider-neutral capture orchestrator와 명시적 실패 분류 계약으로 이동
