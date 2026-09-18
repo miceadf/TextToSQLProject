@@ -35,6 +35,11 @@ from .recorded import (
     question_fingerprint,
 )
 from .policy import ConservativeSqlPolicy
+from .recording_capture import (
+    RecordingCaptureError,
+    RecordingCaptureErrorCode,
+    RecordingCaptureSession,
+)
 
 __all__ = [
     "CompiledQuery",
@@ -55,6 +60,9 @@ __all__ = [
     "OntologyField",
     "Operator",
     "QueryIR",
+    "RecordingCaptureError",
+    "RecordingCaptureErrorCode",
+    "RecordingCaptureSession",
     "ModelRecording",
     "RecordedFailure",
     "RecordedFailureCode",

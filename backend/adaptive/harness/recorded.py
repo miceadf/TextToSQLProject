@@ -15,6 +15,7 @@ from .contracts import HarnessRequest, MappingProfile, Ontology
 
 
 RECORDING_SCHEMA_VERSION = "recorded-model-v1"
+MODEL_RUN_ID_PATTERN = r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$"
 
 
 class RecordedFailureCode(str, Enum):
@@ -71,7 +72,7 @@ class ModelRecording(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
 
     schema_version: Literal["recorded-model-v1"] = RECORDING_SCHEMA_VERSION
-    model_run_id: str = Field(pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$")
+    model_run_id: str = Field(pattern=MODEL_RUN_ID_PATTERN)
     records: list[RecordedEntry] = Field(min_length=1)
 
     @model_validator(mode="after")
