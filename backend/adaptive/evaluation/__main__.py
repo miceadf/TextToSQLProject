@@ -26,6 +26,10 @@ def main(argv: list[str] | None = None) -> int:
         from .run_cli import main as run_smoke
 
         return run_smoke(effective_argv[1:])
+    if effective_argv and effective_argv[0] == "run-recorded":
+        from .recorded_cli import main as run_recorded
+
+        return run_recorded(effective_argv[1:])
 
     parser = argparse.ArgumentParser(description="Inspect synthetic fixture gold coverage")
     parser.add_argument("--input", type=Path, default=DEFAULT_GOLD_PATH)
