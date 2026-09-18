@@ -595,6 +595,7 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 - [x] `RecordedModel` 구현(오프라인 재생 코어와 read-only evaluation CLI; live 수집 제외)
 - [x] recording capture session 코어 구현(메모리 내 조립; storage·provider 제외)
 - [x] private recording bundle storage와 선언형 provenance manifest 구현(provider 수집 제외)
+- [x] provider-neutral capture orchestrator와 typed failure 분류 구현(실제 provider 제외)
 - [x] 모델 응답 JSON schema 검증
 - [x] 경량 evaluation runner 구현(FakeModel·SQLite fixture, 실제 모델 평가 아님)
 - [ ] 기존 fine-tuned 모델 평가
@@ -909,7 +910,9 @@ gold를 그대로 반환하는 CLI `python -m backend.adaptive.evaluation run-sm
 
 `recording-bundle-v1`은 완성된 `ModelRecording`을 `.schema-adaptive` 아래 content-addressed immutable generation에 저장하고 `manifest.json`을 마지막 commit marker로 게시한다. manifest에는 payload 대신 byte hash·크기·record count·model run ID와 `DECLARED_UNVERIFIED` provenance만 기록한다. strict loader는 recording 계약과 generation/provenance fingerprint를 다시 계산하며 path traversal, symlink·Windows junction/reparse point, hardlink, git-tracked target, 불완전·변조 bundle을 차단한다. 이 provenance는 caller의 선언을 재현 가능하게 묶을 뿐 모델 출처를 독립적으로 증명하지 않는다.
 
-다음 개발 시작점은 provider-neutral capture orchestrator와 명시적 실패 분류 계약이다. provider 호출을 추상화한 작은 코어에서 request 순서, 성공 JSON 보존, typed 실패의 capture 및 실패 후 계속 진행까지만 구현한다. 파일 저장·CLI·Ollama adapter는 포함하지 않고, 실제 provider adapter와 수집 CLI는 이후 데스크톱 단계에서 연결한다. 실제 응답을 저장하거나 성능 수치를 확정하기 전에는 `docs/human-validation-checkpoints.md`의 E3·L1·L3·L5 관문을 적용한다.
+`capture_recording()`은 기존 `QueryModel`을 provider-neutral 호출 경계로 재사용한다. 전체 target의 type·request ID 중복·request/mapping database 일치를 호출 전에 검증하고, 입력 순서대로 provider를 정확히 한 번씩 호출한다. 성공 JSON은 보정 없이 capture session에 전달하고 typed timeout·empty·cancelled·provider failure와 예상 밖 예외·비 JSON 반환은 payload 비노출 실패로 기록한 뒤 다음 target을 계속한다. provider에는 request·ontology·mapping의 깊은 복사본을 전달하며 gold fallback, retry, concurrency, 저장과 provenance 생성은 수행하지 않는다.
+
+다음 개발 시작점은 Ollama adapter의 최소 호출·오류 변환 계약이다. 실제 HTTP 경계에서 timeout·empty response·cancelled·provider error를 typed failure로 바꾸고 JSON 값만 orchestrator에 전달하되, 저장 CLI와 전체 benchmark는 분리한다. 노트북에서 실제 Ollama를 실행할 수 없다면 합성 transport 단위 테스트까지만 구현하고 live capture와 40×3 평가는 데스크톱 체크포인트로 남긴다. 실제 응답을 저장하거나 성능 수치를 확정하기 전에는 `docs/human-validation-checkpoints.md`의 E3·L1·L3·L5 관문을 적용한다.
 
 ## 14. 첫 구현 단위
 
@@ -1374,3 +1377,7 @@ SQLite DB 입력
 - `recording-bundle-v1` 계약과 content-addressed immutable generation, manifest-last private storage 및 strict loader 구현
 - recording·manifest 변조, path traversal, symlink·Windows junction/reparse point, hardlink, tracked target과 부분 저장을 차단하는 합성 회귀 테스트 추가
 - provenance를 `DECLARED_UNVERIFIED` 선언 metadata로 제한하고 다음 시작점을 provider-neutral capture orchestrator와 명시적 실패 분류 계약으로 이동
+- provider 호출·storage·CLI를 제외한 작은 후속 범위를 `docs/prompts/phase5-06-provider-neutral-capture-orchestrator.md`에 기록
+- 기존 `QueryModel`과 `RecordingCaptureSession`을 연결하는 provider-neutral `capture_recording()` orchestration 코어 구현
+- batch preflight, target당 단일 호출, JSON 타입·순서 보존, typed/예상 밖 실패 후 계속 진행과 caller context 불변성 검증
+- 다음 시작점을 실제 저장·CLI와 분리된 Ollama adapter의 최소 호출·오류 변환 계약으로 이동
