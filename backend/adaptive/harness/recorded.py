@@ -111,22 +111,28 @@ def _reject_non_finite_constant(_: str) -> None:
     raise ValueError("non-finite JSON number")
 
 
-def load_model_recording(path: str | Path) -> ModelRecording:
-    """Read one strict UTF-8 JSON recording without changing the source file."""
-
+def parse_model_recording_bytes(raw: bytes) -> ModelRecording:
+    """Validate exact recording bytes without exposing a rejected payload."""
     try:
-        raw = Path(path).read_text(encoding="utf-8-sig")
-    except (OSError, UnicodeError):
-        raise RecordingLoadError("recording file could not be read as UTF-8") from None
-    try:
+        text = raw.decode("utf-8-sig")
         payload = json.loads(
-            raw,
+            text,
             object_pairs_hook=_reject_duplicate_keys,
             parse_constant=_reject_non_finite_constant,
         )
         return ModelRecording.model_validate(payload)
-    except (json.JSONDecodeError, ValidationError, ValueError, TypeError):
+    except (UnicodeError, json.JSONDecodeError, ValidationError, ValueError, TypeError):
         raise RecordingLoadError("recording file does not match the required JSON contract") from None
+
+
+def load_model_recording(path: str | Path) -> ModelRecording:
+    """Read one strict UTF-8 JSON recording without changing the source file."""
+
+    try:
+        raw = Path(path).read_bytes()
+    except OSError:
+        raise RecordingLoadError("recording file could not be read as UTF-8") from None
+    return parse_model_recording_bytes(raw)
 
 
 _FAILURE_TO_REPLAY = {
