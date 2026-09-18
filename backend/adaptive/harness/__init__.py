@@ -40,6 +40,20 @@ from .recording_capture import (
     RecordingCaptureErrorCode,
     RecordingCaptureSession,
 )
+from .recording_bundle_contracts import (
+    LoadedRecordingBundle,
+    ProviderKind,
+    RecordingArtifactMetadata,
+    RecordingBundleManifest,
+    RecordingProvenance,
+)
+from .recording_bundle_storage import (
+    RecordingBundleError,
+    RecordingBundleErrorCode,
+    load_recording_bundle,
+    provenance_fingerprint,
+    write_recording_bundle,
+)
 
 __all__ = [
     "CompiledQuery",
@@ -60,9 +74,16 @@ __all__ = [
     "OntologyField",
     "Operator",
     "QueryIR",
+    "LoadedRecordingBundle",
+    "ProviderKind",
+    "RecordingArtifactMetadata",
+    "RecordingBundleError",
+    "RecordingBundleErrorCode",
+    "RecordingBundleManifest",
     "RecordingCaptureError",
     "RecordingCaptureErrorCode",
     "RecordingCaptureSession",
+    "RecordingProvenance",
     "ModelRecording",
     "RecordedFailure",
     "RecordedFailureCode",
@@ -75,5 +96,8 @@ __all__ = [
     "SQLiteReadOnlyExecutor",
     "load_model_recording",
     "mapping_fingerprint",
+    "load_recording_bundle",
+    "provenance_fingerprint",
     "question_fingerprint",
+    "write_recording_bundle",
 ]
