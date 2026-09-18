@@ -593,6 +593,7 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 - [x] `TextToSQLModel` 역할의 `QueryModel` 인터페이스 정의
 - [x] `FakeModel` 구현
 - [x] `RecordedModel` 구현(오프라인 재생 코어와 read-only evaluation CLI; live 수집 제외)
+- [x] recording capture session 코어 구현(메모리 내 조립; storage·provider 제외)
 - [x] 모델 응답 JSON schema 검증
 - [x] 경량 evaluation runner 구현(FakeModel·SQLite fixture, 실제 모델 평가 아님)
 - [ ] 기존 fine-tuned 모델 평가
@@ -903,7 +904,9 @@ gold를 그대로 반환하는 CLI `python -m backend.adaptive.evaluation run-sm
 
 `python -m backend.adaptive.evaluation run-recorded`는 기존 private recording을 읽기 전용으로 불러와 같은 evaluation runner에서 재생한다. `model_run_id`는 recording에서만 가져오고 `oracle_smoke=False`로 고정한다. 누락·기록 실패·context 불일치는 전체 실행을 중단하지 않고 각 attempt에 남기며, report와 summary에는 offline replay 및 recording provenance 미검증 경고를 기록한다. 입력·출력 same-file과 덮어쓰기를 차단하고 실제 payload·경로는 report에 복제하지 않는다. 이 CLI도 live 모델 실행, recording 출처 또는 모델 성능을 증명하지 않는다.
 
-다음 개발 시작점은 live provider 응답을 안전하게 recording으로 생성하는 writer/capture 계약과 수집 provenance다. Ollama 호출 자체와 실제 모델 수치 측정은 데스크톱 단계로 유지한다. 실제 응답을 기록하거나 성능 수치를 확정하기 전에는 `docs/human-validation-checkpoints.md`의 E3·L1·L3·L5 관문을 적용한다.
+`RecordingCaptureSession`은 provider나 파일 I/O 없이 명시적 성공 JSON·실패 코드를 기존 `ModelRecording`으로 조립한다. request와 runtime mapping에서 context fingerprint를 직접 계산하고 capture 순서를 보존한다. JSON으로 재현할 수 없는 값, 비유한 숫자, 잘못된 실패 코드, 중복 request ID와 finalize 이후 변경을 안전한 code로 거부한다. 성공 payload는 보정하지 않고 방어적으로 복사하며, finalize 결과는 기존 `RecordedModel`에서 그대로 재생할 수 있다. 이 코어는 provider provenance를 증명하거나 예외를 실패 종류로 추측하지 않는다.
+
+다음 개발 시작점은 private recording atomic storage와 provenance manifest 계약이다. 그 이후에 provider adapter와 실제 수집 CLI를 연결한다. Ollama 호출 자체와 실제 모델 수치 측정은 데스크톱 단계로 유지한다. 실제 응답을 기록하거나 성능 수치를 확정하기 전에는 `docs/human-validation-checkpoints.md`의 E3·L1·L3·L5 관문을 적용한다.
 
 ## 14. 첫 구현 단위
 
@@ -1353,3 +1356,7 @@ SQLite DB 입력
 - recording의 run ID 강제 사용, offline replay·provenance 미검증 경고, 입력·출력 same-file 및 원자 저장 정책 검증
 - 누락·기록 실패·context mismatch가 예정 attempt에서 유지되는 합성 CLI 회귀 테스트 추가
 - 다음 시작점을 live recording writer/capture 계약과 수집 provenance로 이동
+- 다음 작업을 메모리 내 capture session, private storage·provenance manifest, provider 수집 CLI로 추가 분할하고 `docs/prompts/phase5-04-recording-capture-session-core.md` 작성
+- `recorded-model-v1`과 호환되는 메모리 내 `RecordingCaptureSession` 구현
+- JSON 타입·capture 순서·context hash 보존, 방어적 복사, 중복·비정상 payload·sealed session의 안전한 거부 검증
+- 다음 시작점을 private recording atomic storage와 provenance manifest 계약으로 이동
