@@ -54,10 +54,18 @@ from .recording_bundle_storage import (
     provenance_fingerprint,
     write_recording_bundle,
 )
+from .recording_orchestrator import (
+    CaptureTarget,
+    RecordingOrchestrationError,
+    RecordingOrchestrationErrorCode,
+    RecordingProviderError,
+    capture_recording,
+)
 
 __all__ = [
     "CompiledQuery",
     "ConservativeSqlPolicy",
+    "CaptureTarget",
     "DataType",
     "ExecutionHarness",
     "FakeModel",
@@ -84,6 +92,9 @@ __all__ = [
     "RecordingCaptureErrorCode",
     "RecordingCaptureSession",
     "RecordingProvenance",
+    "RecordingOrchestrationError",
+    "RecordingOrchestrationErrorCode",
+    "RecordingProviderError",
     "ModelRecording",
     "RecordedFailure",
     "RecordedFailureCode",
@@ -100,4 +111,5 @@ __all__ = [
     "provenance_fingerprint",
     "question_fingerprint",
     "write_recording_bundle",
+    "capture_recording",
 ]
