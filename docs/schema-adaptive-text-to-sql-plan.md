@@ -592,7 +592,7 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 
 - [x] `TextToSQLModel` 역할의 `QueryModel` 인터페이스 정의
 - [x] `FakeModel` 구현
-- [x] `RecordedModel` 구현(오프라인 재생 코어; 수집·실행 CLI 제외)
+- [x] `RecordedModel` 구현(오프라인 재생 코어와 read-only evaluation CLI; live 수집 제외)
 - [x] 모델 응답 JSON schema 검증
 - [x] 경량 evaluation runner 구현(FakeModel·SQLite fixture, 실제 모델 평가 아님)
 - [ ] 기존 fine-tuned 모델 평가
@@ -899,9 +899,11 @@ Phase 5의 경량 evaluation runner를 FakeModel·gold IR·세 SQLite fixture에
 
 gold를 그대로 반환하는 CLI `python -m backend.adaptive.evaluation run-smoke --output .schema-adaptive/reports/fixture-runner-smoke.json`은 **oracle smoke**이며 모델 정확도 측정이 아니다. 40개 gold 모두 사람 검토 대기 상태라 이 report를 논문의 확정 성능으로 쓰지 않는다. 실제 모델·PostgreSQL 평가와 기존 시스템 baseline 정확도·응답시간 측정은 데스크톱 체크포인트로 남긴다. Phase 1 가명화 review 684건은 자동 학습 자료로 승인하지 않는다.
 
-`backend/adaptive/harness/recorded.py`에 versioned JSON recording 계약과 `RecordedModel` 오프라인 재생 코어를 구현했다. 각 response는 결정적 request ID, database ID, 질문 원문의 UTF-8 SHA-256, 전체 runtime Mapping Profile의 canonical JSON SHA-256과 일치할 때만 원래 JSON 타입 그대로 재생된다. 누락, context 불일치, 기록된 provider 실패는 원문을 포함하지 않는 `RECORDED_*` code로 runner에 남는다. malformed JSON, 중복 object key·request ID, non-finite number, 잘못된 version과 field type은 전체 파일 load 단계에서 거부한다. 실제 recording 수집·내보내기와 실행 CLI는 아직 없으며, `oracle_smoke=False` 또는 recording 재생만으로 실제 모델 provenance와 성능을 증명하지 않는다.
+`backend/adaptive/harness/recorded.py`에 versioned JSON recording 계약과 `RecordedModel` 오프라인 재생 코어를 구현했다. 각 response는 결정적 request ID, database ID, 질문 원문의 UTF-8 SHA-256, 전체 runtime Mapping Profile의 canonical JSON SHA-256과 일치할 때만 원래 JSON 타입 그대로 재생된다. 누락, context 불일치, 기록된 provider 실패는 원문을 포함하지 않는 `RECORDED_*` code로 runner에 남는다. malformed JSON, 중복 object key·request ID, non-finite number, 잘못된 version과 field type은 전체 파일 load 단계에서 거부한다.
 
-다음 개발 시작점은 recording 수집·실행 CLI와 model/config provenance 검증을 별도 작은 단계로 구현하는 것이다. 실제 응답을 기록하거나 성능 수치를 확정하기 전에는 `docs/human-validation-checkpoints.md`의 E3·L1·L3·L5 관문을 적용한다.
+`python -m backend.adaptive.evaluation run-recorded`는 기존 private recording을 읽기 전용으로 불러와 같은 evaluation runner에서 재생한다. `model_run_id`는 recording에서만 가져오고 `oracle_smoke=False`로 고정한다. 누락·기록 실패·context 불일치는 전체 실행을 중단하지 않고 각 attempt에 남기며, report와 summary에는 offline replay 및 recording provenance 미검증 경고를 기록한다. 입력·출력 same-file과 덮어쓰기를 차단하고 실제 payload·경로는 report에 복제하지 않는다. 이 CLI도 live 모델 실행, recording 출처 또는 모델 성능을 증명하지 않는다.
+
+다음 개발 시작점은 live provider 응답을 안전하게 recording으로 생성하는 writer/capture 계약과 수집 provenance다. Ollama 호출 자체와 실제 모델 수치 측정은 데스크톱 단계로 유지한다. 실제 응답을 기록하거나 성능 수치를 확정하기 전에는 `docs/human-validation-checkpoints.md`의 E3·L1·L3·L5 관문을 적용한다.
 
 ## 14. 첫 구현 단위
 
@@ -1343,3 +1345,11 @@ SQLite DB 입력
 - strict versioned recording 계약, privacy-safe loader와 exact context-bound `RecordedModel` 오프라인 재생 코어 구현
 - 기록 성공 JSON 타입 보존, missing/context mismatch/provider failure의 통제된 runner code와 invalid output 원문 비노출 검증
 - 다음 시작점을 recording 수집·실행 CLI 및 model/config provenance 검증으로 이동; 실제 모델·PostgreSQL 실행은 데스크톱 단계로 유지
+- 다음 작업을 읽기 전용 recorded evaluation CLI와 이후 live recording 수집기로 분할하고 `docs/prompts/phase5-03-recorded-evaluation-cli.md` 작성
+
+### 2026-09-18
+
+- `run-recorded` 읽기 전용 CLI로 private recording, `RecordedModel`, 기존 evaluation runner 연결
+- recording의 run ID 강제 사용, offline replay·provenance 미검증 경고, 입력·출력 same-file 및 원자 저장 정책 검증
+- 누락·기록 실패·context mismatch가 예정 attempt에서 유지되는 합성 CLI 회귀 테스트 추가
+- 다음 시작점을 live recording writer/capture 계약과 수집 provenance로 이동
