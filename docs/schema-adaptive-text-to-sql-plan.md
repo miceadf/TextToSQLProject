@@ -599,6 +599,7 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 - [x] Ollama `QueryModel` adapter 최소 호출·오류 변환 구현(합성 transport만 검증)
 - [x] 데스크톱 Ollama adapter 합성 live smoke 2건(형식·검증 경계만 확인; 성능 평가 제외)
 - [x] 합성 provider private capture→bundle→strict load 연결과 Ollama 선언 provenance hash 계약
+- [x] Phase 5-10 private target 파일과 opt-in live capture 경계 구현(합성 transport만 검증; 실제 recording 미실행)
 - [x] 모델 응답 JSON schema 검증
 - [x] 경량 evaluation runner 구현(FakeModel·SQLite fixture, 실제 모델 평가 아님)
 - [ ] 기존 fine-tuned 모델 평가
@@ -923,7 +924,9 @@ gold를 그대로 반환하는 CLI `python -m backend.adaptive.evaluation run-sm
 
 `OllamaQueryModel.declared_provenance()`는 실제 adapter의 versioned prompt template UTF-8 bytes를 SHA-256으로 해시한다. 전송 설정 hash는 `{"options":{"temperature":0},"stream":false,"timeout_seconds":<float>}`의 UTF-8 canonical JSON(`sort_keys=True`, `ensure_ascii=False`, 공백 없는 separator, `allow_nan=False`)에서 계산한다. 모델 tag는 `model_id`, 호출자가 제공한 Ollama version은 `provider_version`, 선택적 `/api/tags` digest는 `model_artifact_sha256`에 별도로 둔다. base URL과 요청별 질문·ontology·mapping·응답은 provenance에 넣지 않는다. 모든 값은 `DECLARED_UNVERIFIED`이며 모델 artifact를 독립 증명하지 않는다.
 
-다음 개발 시작점은 실제 live capture 입력·opt-in 경계를 별도 설계하는 것이다. **실제 Ollama 응답을 기록·저장·공유하기 전 E3·L5**에서 데이터·보안 범위를 확인하고, 40×3 모델 성능을 확정하기 전 L1·L3를 확인한다. PostgreSQL 통합은 별도 단계로 남긴다. Phase 5-09의 범위는 [`docs/prompts/phase5-09-private-capture-provenance-synthetic.md`](prompts/phase5-09-private-capture-provenance-synthetic.md)에 둔다.
+Phase 5-10에서 `python -m backend.adaptive.harness.live_capture` 수동 진입점을 추가했다. `--live`가 없으면 호출·저장이 없으며, 입력은 `.schema-adaptive` 아래 Git 비추적 JSON 파일의 `capture-targets-v1` 계약으로 제한한다. 최상위 key는 `schema_version`, `targets`이고 각 target은 기존 `CaptureTarget`의 `request`·`ontology`·`mapping` JSON이다. 필수 field와 타입, 중복 JSON key·request ID, 전체 batch의 database 일치와 `PUBLISHED` 상태, model run ID·선언 provenance·private output/overwrite 정책을 첫 호출 전에 검사한다. 성공 시 target당 한 번만 Ollama adapter를 호출하고 기존 private bundle에 게시한다. CLI는 고정 상태·code, 건수와 선언 provenance fingerprint만 출력한다. synthetic CLI와 legacy 경로는 유지했다. 구현 범위는 [`docs/prompts/phase5-10-live-capture-boundary.md`](prompts/phase5-10-live-capture-boundary.md)에 둔다.
+
+**실제 `--live` 실행과 실제 응답 저장은 아직 수행하지 않았다.** 다음 작은 작업은 E3·L5의 데이터 사용·접근·보관·반출·삭제·recording 노출 경로를 사람과 문서로 확인한 뒤, 허용된 합성 또는 승인 자료로 제한된 수집 절차를 정하는 것이다. 40×3 모델 성능 확정 전 L1·L3를 확인하고 gold 40건의 `NEEDS_HUMAN_REVIEW`를 유지한다. PostgreSQL 통합은 별도 단계다. Phase 5-09 범위는 [`docs/prompts/phase5-09-private-capture-provenance-synthetic.md`](prompts/phase5-09-private-capture-provenance-synthetic.md)에 둔다.
 
 완료된 adapter 계약은 [`docs/prompts/phase5-07-ollama-querymodel-adapter.md`](prompts/phase5-07-ollama-querymodel-adapter.md)에, 합성 live smoke의 수행 지침은 [`docs/prompts/phase5-08-ollama-adapter-live-smoke.md`](prompts/phase5-08-ollama-adapter-live-smoke.md)에 둔다. 모델이 반환한 SQL 등 비 JSON 텍스트는 원문 문자열로 보존해 후속 Query IR 검증 실패로 드러내며, provider 호출 실패와 혼합하지 않는다.
 
@@ -1256,6 +1259,13 @@ SQLite DB 입력
 - Phase 5-09 보충: Ollama prompt hash는 요청 값을 채우기 전의 versioned template bytes, generation config hash는 실제 `stream`·`options`·timeout의 canonical JSON bytes를 사용한다. model tag와 선언 digest는 별도 provenance field이며 base URL은 포함하지 않는다.
 - 이유: 실제 모델 응답을 private artifact로 유지하면서도 부분 저장과 변조·경로 탈출을 탐지하고 동일 입력을 재현해야 한다. 선언 metadata를 출처 증명으로 과장하지 않아야 이후 평가 결과의 신뢰 범위를 명확히 설명할 수 있다.
 
+### ADR-025: live capture는 private target 파일과 명시적 실행 flag로 한정
+
+- 날짜: 2026-09-19
+- 상태: 채택
+- 결정: `capture-targets-v1` 입력은 `.schema-adaptive` 아래 Git 비추적 파일에서만 읽는다. caller가 정확한 모델 tag·URL·timeout·Ollama version·선택적 digest·run ID·출력 경로를 제공하고 `--live`를 명시해야 호출한다. 전체 batch·provenance·저장 경로를 첫 호출 전에 검사하고 기존 bundle의 기본 덮어쓰기를 금지한다. 실행 flag는 E3·L5 사람 승인이 아니며 이번 단계의 검증은 합성 transport로만 수행한다.
+- 이유: 실제 질문·응답의 우발적 전송·저장을 막고, 모델 추측이나 부분 batch 저장이 recording의 비교 조건을 흐리지 않게 한다. 입력과 결과의 private 경계를 명확히 유지한다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -1405,3 +1415,5 @@ SQLite DB 입력
 - opt-in 합성 Ollama smoke 진입점과 비저장 형식 관찰값을 구현하고 합성 transport 검증 후 로컬 모델을 2회 호출. 두 응답 모두 JSON object·QueryIR 구조·semantic field/operator 검증 통과; 정확도·40×3·DB 실행으로 해석하지 않음. 결과는 `docs/ollama-adapter-live-smoke-results-2026-09-19.md`에 안전한 요약만 기록
 - 다음 시작점을 합성 provider의 private capture→bundle 연결과 Ollama provenance hash 계약으로 좁히고 `docs/prompts/phase5-09-private-capture-provenance-synthetic.md`에 범위·테스트·E3/L5 관문을 기록. 실제 응답 저장은 미실행
 - Phase 5-09 합성 provider capture→private bundle→strict load 연결과 동일 storage path preflight, synthetic-only opt-in CLI 구현. Ollama versioned template·실제 전송 설정의 선언 provenance hash를 고정하고 실제 Ollama·CNU 응답 저장 없이 검증. 다음 시작점을 승인 관문이 있는 live capture 입력·실행 경계로 이동
+- Phase 5-10의 private target 입력·명시적 live 실행 경계를 합성 테스트로만 구현하는 범위를 `docs/prompts/phase5-10-live-capture-boundary.md`에 기록하고 새 대화용 최신 인수인계를 `docs/next-session-handoff.md`에 정리. 실제 응답 수집 전 E3·L5 관문 유지
+- Phase 5-10 `capture-targets-v1` private 입력 loader와 별도 opt-in Ollama capture CLI 구현. 전체 batch·provenance·저장 경로 사전 검증, 합성 transport의 정확한 단일 호출·typed failure·strict load·비노출 출력을 확인. 실제 Ollama 호출과 실제 응답 저장 0회; E3·L5 확인은 후속 단계로 유지
