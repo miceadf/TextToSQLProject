@@ -21,6 +21,7 @@ from .compiler import SingleTableSQLiteCompiler
 from .engine import ExecutionHarness
 from .executor import SQLiteReadOnlyExecutor
 from .model import FakeModel
+from .ollama import OllamaQueryModel
 from .recorded import (
     ModelRecording,
     RecordedFailure,
@@ -80,6 +81,7 @@ __all__ = [
     "MappingStatus",
     "Ontology",
     "OntologyField",
+    "OllamaQueryModel",
     "Operator",
     "QueryIR",
     "LoadedRecordingBundle",

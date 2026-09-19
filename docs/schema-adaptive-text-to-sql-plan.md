@@ -596,6 +596,7 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 - [x] recording capture session 코어 구현(메모리 내 조립; storage·provider 제외)
 - [x] private recording bundle storage와 선언형 provenance manifest 구현(provider 수집 제외)
 - [x] provider-neutral capture orchestrator와 typed failure 분류 구현(실제 provider 제외)
+- [x] Ollama `QueryModel` adapter 최소 호출·오류 변환 구현(합성 transport만 검증)
 - [x] 모델 응답 JSON schema 검증
 - [x] 경량 evaluation runner 구현(FakeModel·SQLite fixture, 실제 모델 평가 아님)
 - [ ] 기존 fine-tuned 모델 평가
@@ -912,7 +913,11 @@ gold를 그대로 반환하는 CLI `python -m backend.adaptive.evaluation run-sm
 
 `capture_recording()`은 기존 `QueryModel`을 provider-neutral 호출 경계로 재사용한다. 전체 target의 type·request ID 중복·request/mapping database 일치를 호출 전에 검증하고, 입력 순서대로 provider를 정확히 한 번씩 호출한다. 성공 JSON은 보정 없이 capture session에 전달하고 typed timeout·empty·cancelled·provider failure와 예상 밖 예외·비 JSON 반환은 payload 비노출 실패로 기록한 뒤 다음 target을 계속한다. provider에는 request·ontology·mapping의 깊은 복사본을 전달하며 gold fallback, retry, concurrency, 저장과 provenance 생성은 수행하지 않는다.
 
-다음 개발 시작점은 Ollama adapter의 최소 호출·오류 변환 계약이다. 실제 HTTP 경계에서 timeout·empty response·cancelled·provider error를 typed failure로 바꾸고 JSON 값만 orchestrator에 전달하되, 저장 CLI와 전체 benchmark는 분리한다. 노트북에서 실제 Ollama를 실행할 수 없다면 합성 transport 단위 테스트까지만 구현하고 live capture와 40×3 평가는 데스크톱 체크포인트로 남긴다. 실제 응답을 저장하거나 성능 수치를 확정하기 전에는 `docs/human-validation-checkpoints.md`의 E3·L1·L3·L5 관문을 적용한다.
+`OllamaQueryModel`은 명시적 base URL·모델 tag·timeout으로 `/api/generate`를 한 번 호출한다. `query-ir-v1` 결정적 프롬프트에는 질문, runtime ontology의 entity·field·타입·허용 연산자, Published Mapping과 교집합인 semantic field 이름만 넣는다. `stream: false`, `temperature: 0`을 고정하고 물리 mapping은 보내지 않는다. 성공 envelope의 JSON 값은 타입 그대로 반환하며 비 JSON SQL·설명문은 원문 문자열로 반환해 후속 Query IR 검증에서 판정한다. 중복 key·비유한 JSON, malformed envelope와 HTTP 오류는 안전한 `PROVIDER_ERROR`, 빈 응답은 `EMPTY_RESPONSE`, timeout은 `TIMEOUT`으로 분류한다. 주입 transport가 실제 cancellation을 알릴 때만 `CANCELLED`로 기록한다. 기본 동기 urllib transport는 능동 취소 신호를 지원하지 않는다. 합성 transport와 orchestrator·harness 연계만 검증했으며 실제 Ollama 호출, 응답 저장, 모델 성능 측정은 하지 않았다.
+
+다음 개발 시작점은 데스크톱에서 소수의 **합성 질문**으로 adapter live 호출 형식과 안전한 오류 분류를 확인하는 작은 smoke test다. 실제 응답을 기록·저장·공유하기 전에는 E3·L5를 확인하고, 40×3 모델 성능을 확정하기 전에는 L1·L3를 확인한다. PostgreSQL 통합과 private capture CLI는 별도 단계로 남긴다.
+
+다음 작은 구현 지침은 [`docs/prompts/phase5-07-ollama-querymodel-adapter.md`](prompts/phase5-07-ollama-querymodel-adapter.md)에 둔다. 모델이 반환한 SQL 등 비 JSON 텍스트는 원문 문자열로 보존해 후속 Query IR 검증 실패로 드러내며, provider 호출 실패와 혼합하지 않는다.
 
 ## 14. 첫 구현 단위
 
@@ -1385,3 +1390,5 @@ SQLite DB 입력
 ### 2026-09-19
 
 - 데스크톱 이전 시 프로젝트 목적, 구현·미검증 경계, Ollama·PostgreSQL의 분리 smoke test, 사람 승인 관문과 기록 양식을 `docs/desktop-test-handoff.md`에 정리
+- Phase 5-07 Ollama `QueryModel` adapter의 최소 호출·오류 변환과 합성 transport 검증 범위를 `docs/prompts/phase5-07-ollama-querymodel-adapter.md`에 기록. SQL 텍스트를 provider 실패나 유효 Query IR로 보정하지 않는 경계를 명시
+- Phase 5-07 Ollama `QueryModel` adapter를 별도 구현하고 합성 transport의 단일 호출·JSON 타입·비 JSON 문자열·typed failure·orchestrator 및 harness 연계를 검증. 다음 시작점을 소수 합성 질문 live smoke로 이동; 실제 Ollama·DB·40×3 평가는 미실행
