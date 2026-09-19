@@ -53,7 +53,8 @@ class RecordingProviderError(RuntimeError):
         super().__init__(failure_code.value)
 
 
-def _preflight(provider: QueryModel, targets: Sequence[CaptureTarget]) -> None:
+def preflight_capture(provider: QueryModel, targets: Sequence[CaptureTarget]) -> None:
+    """Validate a complete batch before provider invocation."""
     try:
         provider_call = getattr(provider, "generate_ir", None)
     except Exception:
@@ -100,7 +101,7 @@ def capture_recording(
     """Invoke a provider once per target and retain every attempt in order."""
 
     materialized_targets = list(targets)
-    _preflight(provider, materialized_targets)
+    preflight_capture(provider, materialized_targets)
     session = RecordingCaptureSession(model_run_id)
 
     for target in materialized_targets:

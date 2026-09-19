@@ -369,6 +369,37 @@ def _fsync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
+def _preflight_bundle_target(
+    output_dir: str | Path,
+    *,
+    repository_root: str | Path,
+    overwrite: bool,
+) -> Path:
+    root = _validate_repository(repository_root)
+    target = _validate_target(output_dir, root)
+    _validate_root_layout(target, manifest_required=False)
+    if (target / MANIFEST_FILENAME).exists() and not overwrite:
+        raise FileExistsError("recording bundle already exists; use overwrite")
+    return target
+
+
+def preflight_recording_bundle(
+    output_dir: str | Path,
+    *,
+    repository_root: str | Path,
+    overwrite: bool = False,
+) -> None:
+    """Check the same private target policy used by the writer, without writes."""
+    try:
+        _preflight_bundle_target(
+            output_dir, repository_root=repository_root, overwrite=overwrite
+        )
+    except (FileExistsError, RecordingBundleError):
+        raise
+    except (OSError, RuntimeError, subprocess.SubprocessError, ValueError, TypeError):
+        raise RecordingBundleError(RecordingBundleErrorCode.INVALID_PATH) from None
+
+
 def _write_recording_bundle(
     output_dir: str | Path,
     recording: ModelRecording,
@@ -391,16 +422,14 @@ def _write_recording_bundle(
     except Exception:
         raise RecordingBundleError(RecordingBundleErrorCode.INVALID_CONTRACT) from None
     try:
-        root = _validate_repository(repository_root)
-        target = _validate_target(output_dir, root)
-        _validate_root_layout(target, manifest_required=False)
-    except RecordingBundleError:
+        target = _preflight_bundle_target(
+            output_dir, repository_root=repository_root, overwrite=overwrite
+        )
+    except (FileExistsError, RecordingBundleError):
         raise
     except OSError:
         raise RecordingBundleError(RecordingBundleErrorCode.INVALID_PATH) from None
     manifest_path = target / MANIFEST_FILENAME
-    if manifest_path.exists() and not overwrite:
-        raise FileExistsError("recording bundle already exists; use overwrite")
 
     manifest, recording_bytes = _build_manifest(recording, provenance)
     manifest_bytes = _json_bytes(_json_data(manifest))

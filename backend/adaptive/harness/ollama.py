@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import math
+import re
 import socket
 from collections.abc import Callable
 from concurrent.futures import CancelledError
@@ -13,12 +15,32 @@ from urllib import error, parse, request
 
 from .contracts import HarnessRequest, MappingProfile, MappingStatus, Ontology
 from .recorded import RecordedFailureCode
+from .recording_bundle_contracts import (
+    ProviderKind,
+    RecordingProvenance,
+    SAFE_LABEL_PATTERN,
+    SHA256_PATTERN,
+)
 from .recording_orchestrator import RecordingProviderError
 
 
 PROMPT_VERSION = "query-ir-v1"
 GENERATION_OPTIONS = {"temperature": 0}
+PROMPT_TEMPLATE = (
+    "Prompt version: {prompt_version}\n"
+    "Return only one JSON value matching QueryIR: "
+    '{"entity":"Entity","select":["Entity.field"],'
+    '"filters":[{"field":"Entity.field","operator":"equals","value":"text"}],'
+    '"limit":50}. Use only available semantic fields and allowed operators. '
+    "Do not return SQL, Markdown, or an explanation.\n"
+    "Context: {context}\n"
+    "Question: {question}"
+)
 OllamaTransport = Callable[[str, dict[str, object], float], object]
+
+
+def _versioned_template() -> str:
+    return PROMPT_TEMPLATE.replace("{prompt_version}", PROMPT_VERSION)
 
 
 @dataclass(frozen=True)
@@ -78,16 +100,12 @@ def _prompt(question: str, ontology: Ontology, mapping: MappingProfile) -> str:
         ],
         "available_fields": semantic_fields,
     }
-    return (
-        f"Prompt version: {PROMPT_VERSION}\n"
-        "Return only one JSON value matching QueryIR: "
-        '{"entity":"Entity","select":["Entity.field"],'
-        '"filters":[{"field":"Entity.field","operator":"equals","value":"text"}],'
-        '"limit":50}. Use only available semantic fields and allowed operators. '
-        "Do not return SQL, Markdown, or an explanation.\n"
-        f"Context: {json.dumps(context, ensure_ascii=False, sort_keys=True, separators=(',', ':'))}\n"
-        f"Question: {question}"
+    encoded_context = json.dumps(
+        context, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     )
+    prefix, _, remainder = _versioned_template().partition("{context}")
+    between, _, suffix = remainder.partition("{question}")
+    return prefix + encoded_context + between + question + suffix
 
 
 class OllamaQueryModel:
@@ -129,6 +147,45 @@ class OllamaQueryModel:
         self._model_tag = model_tag
         self._timeout = float(timeout)
         self._transport = transport
+
+    def declared_provenance(
+        self, provider_version: str, model_digest: str | None = None
+    ) -> RecordingProvenance:
+        """Declare reproducible metadata; this does not attest model identity."""
+        if (
+            not isinstance(provider_version, str)
+            or re.fullmatch(SAFE_LABEL_PATTERN, provider_version) is None
+            or re.fullmatch(SAFE_LABEL_PATTERN, self._model_tag) is None
+            or (model_digest is not None and (
+                not isinstance(model_digest, str)
+                or re.fullmatch(SHA256_PATTERN, model_digest) is None
+            ))
+        ):
+            raise ValueError("INVALID_OLLAMA_PROVENANCE")
+        generation_config = {
+            "stream": False,
+            "options": dict(GENERATION_OPTIONS),
+            "timeout_seconds": self._timeout,
+        }
+        config_bytes = json.dumps(
+            generation_config,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+        return RecordingProvenance(
+            provider_kind=ProviderKind.OLLAMA,
+            provider_id="ollama-api-generate",
+            provider_version=provider_version,
+            model_id=self._model_tag,
+            model_artifact_sha256=model_digest,
+            prompt_template_sha256=hashlib.sha256(
+                _versioned_template().encode("utf-8")
+            ).hexdigest(),
+            generation_config_sha256=hashlib.sha256(config_bytes).hexdigest(),
+            collector_version="ollama-capture-v1",
+        )
 
     def generate_ir(
         self, request: HarnessRequest, ontology: Ontology, mapping: MappingProfile

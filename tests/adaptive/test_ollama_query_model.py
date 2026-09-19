@@ -106,6 +106,23 @@ class OllamaQueryModelTests(unittest.TestCase):
         self.assertNotIn("PRIVATE_COLUMN", prompt)
         self.assertNotIn("synthetic-db", prompt)
 
+    def test_placeholder_text_in_context_or_question_is_not_expanded(self) -> None:
+        special_field = "Course.{question}"
+        ontology = self.ontology.model_copy(deep=True)
+        ontology.fields[special_field] = OntologyField(
+            name=special_field,
+            data_type=DataType.STRING,
+            allowed_operators={Operator.EQUALS},
+        )
+        mapping = self.mapping.model_copy(deep=True)
+        mapping.fields[special_field] = FieldMapping(table="synthetic", column="synthetic")
+        question = self.request.model_copy(update={"question": "literal {context}"})
+        transport = SequenceTransport([{"response": "null"}])
+        self.model(transport).generate_ir(question, ontology, mapping)
+        prompt = transport.calls[0][1]["prompt"]
+        self.assertIn(special_field, prompt)
+        self.assertTrue(prompt.endswith("Question: literal {context}"))
+
     def test_all_json_types_and_non_json_text_preserved(self) -> None:
         values = [
             ('{"entity":"Course","select":["Course.name"]}', dict),

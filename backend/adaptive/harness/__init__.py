@@ -22,6 +22,7 @@ from .engine import ExecutionHarness
 from .executor import SQLiteReadOnlyExecutor
 from .model import FakeModel
 from .ollama import OllamaQueryModel
+from .private_capture import capture_private_bundle
 from .recorded import (
     ModelRecording,
     RecordedFailure,
@@ -53,6 +54,7 @@ from .recording_bundle_storage import (
     RecordingBundleErrorCode,
     load_recording_bundle,
     provenance_fingerprint,
+    preflight_recording_bundle,
     write_recording_bundle,
 )
 from .recording_orchestrator import (
@@ -61,6 +63,7 @@ from .recording_orchestrator import (
     RecordingOrchestrationErrorCode,
     RecordingProviderError,
     capture_recording,
+    preflight_capture,
 )
 
 __all__ = [
@@ -97,6 +100,9 @@ __all__ = [
     "RecordingOrchestrationError",
     "RecordingOrchestrationErrorCode",
     "RecordingProviderError",
+    "capture_private_bundle",
+    "preflight_capture",
+    "preflight_recording_bundle",
     "ModelRecording",
     "RecordedFailure",
     "RecordedFailureCode",
