@@ -604,6 +604,7 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 - [x] Phase 5-10 private target 파일과 opt-in live capture 경계 구현(합성 transport만 검증; 실제 recording 미실행)
 - [x] Phase 5-11 호출·저장 없는 `--check` 공통 preflight와 E3·L5 미기입 검토 양식 구현
 - [x] Phase 5-12 완전 합성 질문 2건의 로컬 Ollama private capture·strict replay 형식 검증(성능 평가 제외)
+- [x] Phase 5-13 fine-tuned tag의 합성 40×3 잠정 capture·offline 평가 연결(gold 사람 승인 전, 확정 성능 제외)
 - [x] 모델 응답 JSON schema 검증
 - [x] 경량 evaluation runner 구현(FakeModel·SQLite fixture, 실제 모델 평가 아님)
 - [ ] 기존 fine-tuned 모델 평가
@@ -934,7 +935,9 @@ Phase 5-11에서 `--check`를 추가하고 `--live`와 상호 배타적으로 �
 
 Phase 5-12에서 완전 합성 target 2건의 `--check`를 먼저 통과시킨 뒤 로컬 `text2sql_qwen:latest`에 `--live`를 한 번 실행했다. 성공 2건·실패 0건을 Git 비추적 private bundle에만 기록했다. strict loader가 manifest·hash·건수·선언 provenance를 검증했고 `RecordedModel`이 두 응답을 입력 순서로 재생했다. 둘 다 JSON object와 현재 QueryIR 구조·semantic 검증을 통과했다. 이는 합성 입력의 전송·저장·재생 형식 검증이며 정확도 또는 40×3 점수가 아니다. 공개 가능한 요약은 [`docs/phase5-12-synthetic-live-capture-results-2026-09-19.md`](phase5-12-synthetic-live-capture-results-2026-09-19.md)에 둔다.
 
-다음 작은 작업은 합성 recording의 제한된 오프라인 평가 연결과 결과 비노출 경계를 검증하는 것이다. 합성 개발은 E3·L5 결정 대기와 병행한다. **실제 CNU 자료의 추가 사용·공유와 실제 데이터 배포·외부 시연 전**에는 각각 E3·L5의 팀 결정을 확인한다. 40×3 모델 성능 확정 전 L1·L3를 확인하고 gold 40건의 `NEEDS_HUMAN_REVIEW`를 유지한다. PostgreSQL 통합은 별도 단계다. Phase 5-12 범위는 [`docs/prompts/phase5-12-synthetic-live-private-capture.md`](prompts/phase5-12-synthetic-live-private-capture.md)에 둔다.
+Phase 5-13에서 기존 benchmark v1과 세 합성 fixture의 검증된 runtime context로 `capture-targets-v1` 120건을 생성하는 작은 도구를 추가했다. runner의 결정적 request ID와 case×variant 순서를 그대로 사용하며 gold IR·기대 결과는 target에 넣지 않는다. 로컬 `text2sql_qwen:latest`에 `--check` 후 `--live` 1회로 120건을 수집했고 전부 capture 성공했다. Private bundle strict load 후 합성 SQLite fixture에서 `run-recorded`를 오프라인 재생해 120 attempt를 모두 분모에 남겼다. 탐색 집계는 구조 exact 51/120, 하네스 실행 99/120, semantic 일치 90/120이며 `UNKNOWN_FIELD` 21건·`SEMANTIC_MISMATCH` 9건이다. **Gold 40건은 모두 `NEEDS_HUMAN_REVIEW`이고 이 수치는 확정 fine-tuned 모델 성능이 아니다.** 안전한 요약은 [`docs/phase5-13-finetuned-synthetic-exploratory-results-2026-09-19.md`](phase5-13-finetuned-synthetic-exploratory-results-2026-09-19.md)에 둔다. 기존 fine-tuned 모델 평가 로드맵 항목은 미완료로 유지한다.
+
+다음 작은 작업은 잠정 실패 유형을 private 응답 비노출 상태로 분석하고 QueryIR field 호환성 경계를 점검하는 것이다. 합성 개발은 E3·L5 결정 대기와 병행한다. **실제 CNU 자료의 추가 사용·공유와 실제 데이터 배포·외부 시연 전**에는 각각 E3·L5의 팀 결정을 확인한다. 모델 성능 확정 전 L1·L3를 확인한다. PostgreSQL 통합은 별도 단계다. Phase 5-13 범위는 [`docs/prompts/phase5-13-finetuned-synthetic-evaluation.md`](prompts/phase5-13-finetuned-synthetic-evaluation.md)에 둔다.
 
 완료된 adapter 계약은 [`docs/prompts/phase5-07-ollama-querymodel-adapter.md`](prompts/phase5-07-ollama-querymodel-adapter.md)에, 합성 live smoke의 수행 지침은 [`docs/prompts/phase5-08-ollama-adapter-live-smoke.md`](prompts/phase5-08-ollama-adapter-live-smoke.md)에 둔다. 모델이 반환한 SQL 등 비 JSON 텍스트는 원문 문자열로 보존해 후속 Query IR 검증 실패로 드러내며, provider 호출 실패와 혼합하지 않는다.
 
@@ -1433,3 +1436,6 @@ SQLite DB 입력
 - 팀 결정은 개발 중 모든 단계의 중단점이 아니라는 기존 체크포인트를 재확인. Phase 5-12의 합성 로컬 수집을 E3·L5 선행 승인 대상으로 과도하게 묶은 문구를 수정하고 실제 CNU 자료 사용·공유 및 배포·외부 시연 관문으로 한정
 - 사용자의 팀 협업 순서를 반영해 합성 개발 중 사람 판단을 조기 요청하지 않는 운영 원칙을 `AGENTS.md`, 계획 문서, 새 대화 인수인계에 명시. E3/L5와 L1/L3는 해당 실제 사용·공유·성능 주장 직전의 미완료 관문으로 유지
 - Phase 5-12 완전 합성 target 2건으로 `--check` 후 로컬 Ollama `--live` 1회 실행. private recording 성공 2건을 strict loader·`RecordedModel`로 검증하고 JSON object·현재 QueryIR 구조/semantic 유효 상태를 안전한 집계로 기록. 실제 CNU 자료·DB·40×3 평가는 사용하지 않았고 사람 관문은 대기 유지
+- Phase 5-12 공개 요약과 현 private bundle의 선언 provenance fingerprint·strict load 건수(2건 성공)를 재확인하고 관련 테스트 33개 및 전체 `tests` 298개 통과·3개 건너뜀을 확인. 다음 단계를 기존 fine-tuned 모델의 합성 40×3 잠정 평가 연결로 수정; 실제 모델 정확도 확정은 미완료
+- Phase 5의 미완료 비교 실험보다 오프라인 재생 smoke를 먼저 제안한 우선순위를 재검토. 수집·strict load·`run-recorded` 기반이 이미 있으므로 Phase 5-13을 첫 미완료 항목의 합성 탐색 평가로 이동하고 사람 검토 전 확정 성능 주장 금지를 유지
+- Phase 5-13 합성 fixture 40건×3스키마의 deterministic private target 생성, `--check` 후 로컬 Ollama 120건 capture, strict bundle load와 `run-recorded` 오프라인 평가 연결. 전체 120 attempt에서 구조 exact 51, 실행 성공 99, semantic 일치 90; gold 전부 사람 검토 대기로 유지하고 fine-tuned 모델 평가 완료 체크는 보류

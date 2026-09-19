@@ -1,6 +1,6 @@
 # 새 Codex 대화용 짧은 인수인계
 
-현재 기준: 2026-09-19, Phase 5-12 완료. 최신 상태는 항상 Git과 코드로 다시 확인한다. 설계와 로드맵의 원본은 [`schema-adaptive-text-to-sql-plan.md`](schema-adaptive-text-to-sql-plan.md), 안전한 수집 결과는 [`phase5-12-synthetic-live-capture-results-2026-09-19.md`](phase5-12-synthetic-live-capture-results-2026-09-19.md), E3·L5 검토 양식은 [`live-capture-human-review.md`](live-capture-human-review.md)다.
+현재 기준: 2026-09-19, Phase 5-13 합성 탐색 평가 완료. 최신 상태는 항상 Git과 코드로 다시 확인한다. 설계와 로드맵의 원본은 [`schema-adaptive-text-to-sql-plan.md`](schema-adaptive-text-to-sql-plan.md), 안전한 잠정 결과는 [`phase5-13-finetuned-synthetic-exploratory-results-2026-09-19.md`](phase5-13-finetuned-synthetic-exploratory-results-2026-09-19.md)다.
 
 ## 프로젝트와 현재 경계
 
@@ -12,7 +12,8 @@
 - Phase 5-10: `.schema-adaptive`의 versioned private target 파일을 읽는 별도 `backend.adaptive.harness.live_capture` CLI 구현. 명시적 `--live`와 전체 사전 검증, 선언 provenance, 기존 private bundle을 연결했다. 합성 transport 테스트만 실행했다. **실제 Ollama 응답 recording은 아직 없다.**
 - Phase 5-11: `--check`와 `--live`가 동일한 preflight 결과를 사용한다. `--check`는 호출·저장 0회이고 합성 테스트로 경계를 검증했다. E3·L5 미기입 양식은 `PENDING_HUMAN_REVIEW`다. **실제 Ollama 응답 recording은 아직 없다.**
 - Phase 5-12: 완전 합성 질문 2건을 로컬 Ollama에 `--live` 1회로 전송하고 응답 2건을 Git 비추적 private bundle에 저장했다. strict load·`RecordedModel` 재생과 JSON object·QueryIR 검증을 통과했다. 실제 CNU 응답 recording과 모델 성능 평가는 없다.
-- 다음 작업은 합성 recording의 제한된 오프라인 평가 연결과 결과 비노출 경계 검증이다. E3·L5 팀 결정 대기와 합성 개발은 병행한다. 실제 CNU 자료 사용·공유 및 실제 데이터 배포·외부 시연에는 해당 결정을 먼저 확인한다. 모델 성능 확정 전 L1·L3 확인이 필요하고, gold 40건은 모두 `NEEDS_HUMAN_REVIEW`다.
+- Phase 5-13: 합성 benchmark v1 40×3 target을 결정적으로 생성해 정확한 로컬 fine-tuned tag로 120건을 한 번씩 수집했다. strict load와 `run-recorded` 120 attempt 오프라인 재생 완료. 잠정 집계는 구조 exact 51, 실행 성공 99, semantic 일치 90이다. Gold 40건은 모두 `NEEDS_HUMAN_REVIEW`이므로 확정 성능 아님. Private target·bundle·상세 report는 Git 비추적 상태다.
+- 다음 작업은 잠정 실패 유형의 private 응답 비노출 분석과 QueryIR field 호환성 점검이다. E3·L5 팀 결정 대기와 합성 개발은 병행한다. 실제 CNU 자료 사용·공유 및 실제 데이터 배포·외부 시연에는 해당 결정을 먼저 확인한다. 모델 성능 확정 전 L1·L3 확인이 필요하다.
 - `docs/desktop-test-handoff.md`는 초기 데스크톱 이전 시점의 기록이다. 그 안의 “adapter 없음” 및 Phase 5-06 상태는 현재 상태가 아니다.
 
 ## 새 대화의 최소 시작 순서
