@@ -106,6 +106,34 @@ class OllamaQueryModelTests(unittest.TestCase):
         self.assertNotIn("PRIVATE_COLUMN", prompt)
         self.assertNotIn("synthetic-db", prompt)
 
+    def test_explicit_v2_uses_exact_available_fields_and_distinct_template(self) -> None:
+        v1_transport = SequenceTransport([{"response": "null"}])
+        v2_transport = SequenceTransport([{"response": "null"}])
+        v1 = self.model(v1_transport)
+        v2 = OllamaQueryModel(
+            "http://localhost:11434/", "exact-model:tag", 7.5,
+            transport=v2_transport, prompt_version="query-ir-v2",
+        )
+        self.generate(v1)
+        self.generate(v2)
+        first = v1.declared_provenance("0.34.2")
+        second = v2.declared_provenance("0.34.2")
+        self.assertNotEqual(first.prompt_template_sha256, second.prompt_template_sha256)
+        self.assertEqual(first.generation_config_sha256, second.generation_config_sha256)
+        self.assertEqual(second, v2.declared_provenance("0.34.2"))
+        prompt = v2_transport.calls[0][1]["prompt"]
+        self.assertIn("query-ir-v2", prompt)
+        self.assertIn("copy a complete string exactly", prompt)
+        self.assertEqual(json.loads(prompt.split("Context: ", 1)[1].split("\nQuestion:", 1)[0])["available_fields"], ["Course.name"])
+        for secret in ("PRIVATE_TABLE", "PRIVATE_COLUMN", "gold_query_ir", "EXPECTED_RESULT"):
+            self.assertNotIn(secret, prompt)
+        self.assertEqual(v1_transport.calls[0][1]["options"], v2_transport.calls[0][1]["options"])
+        self.assertEqual(len(v2_transport.calls), 1)
+
+    def test_unknown_prompt_version_rejected_before_transport(self) -> None:
+        with self.assertRaisesRegex(ValueError, "^INVALID_PROMPT_VERSION$"):
+            OllamaQueryModel("http://localhost:11434", "exact", 7, prompt_version="private")
+
     def test_placeholder_text_in_context_or_question_is_not_expanded(self) -> None:
         special_field = "Course.{question}"
         ontology = self.ontology.model_copy(deep=True)

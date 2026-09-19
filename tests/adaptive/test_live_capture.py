@@ -275,6 +275,47 @@ def test_check_mode_has_no_provider_call_or_output_file(repository: Path, caplog
         assert secret not in caplog.text
 
 
+def test_v2_check_rejects_invalid_version_without_call_or_bundle(repository: Path) -> None:
+    path = _write_targets(repository)
+    transport = SequenceTransport([])
+    options = dict(
+        target_file=path, model_tag="exact-model:tag", base_url="http://localhost:11434",
+        timeout=7.5, ollama_version="0.34.2", model_digest=None,
+        model_run_id="private-run-v2", repository_root=repository,
+        output=repository / ".schema-adaptive" / "bundle", transport=transport,
+    )
+    prepared = preflight_live_capture(**options, prompt_version="query-ir-v2")
+    assert len(prepared.private.targets) == 8
+    assert prepared.model.prompt_version == "query-ir-v2"
+    with pytest.raises(ValueError, match="^INVALID_PROMPT_VERSION$"):
+        preflight_live_capture(**options, prompt_version="bad")
+    assert transport.calls == []
+    assert not options["output"].exists()
+
+
+def test_v2_capture_calls_once_per_target_and_strict_loads(repository: Path) -> None:
+    path = _write_targets(repository)
+    transport = SequenceTransport([{"response": "null"}] * 8)
+    assert _capture(
+        repository, path, transport,
+        model_run_id="private-run-v2", prompt_version="query-ir-v2",
+    )[:3] == (8, 8, 0)
+    assert len(transport.calls) == 8
+    assert all("query-ir-v2" in call[1]["prompt"] for call in transport.calls)
+    bundle = load_recording_bundle(
+        repository / ".schema-adaptive" / "bundle" / "manifest.json",
+        repository_root=repository,
+    )
+    assert len(bundle.recording.records) == 8
+    assert bundle.manifest.provenance.prompt_template_sha256 == preflight_live_capture(
+        target_file=path, model_tag="exact-model:tag", base_url="http://localhost:11434",
+        timeout=7.5, ollama_version="0.34.2", model_digest="a" * 64,
+        model_run_id="private-run-v3", repository_root=repository,
+        output=repository / ".schema-adaptive" / "another-bundle",
+        prompt_version="query-ir-v2",
+    ).private.provenance.prompt_template_sha256
+
+
 def test_check_and_live_share_preflight_and_preserve_existing_manifest(repository: Path) -> None:
     path = _write_targets(repository)
     transport = SequenceTransport([])

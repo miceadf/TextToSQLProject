@@ -145,10 +145,11 @@ def preflight_live_capture(
     repository_root: str | Path,
     output: str | Path,
     transport: OllamaTransport | None = None,
+    prompt_version: str = "query-ir-v1",
 ) -> PreparedLiveCapture:
     """Validate live settings and private inputs without calling or writing."""
     targets = load_private_targets(target_file, repository_root=repository_root)
-    model = OllamaQueryModel(base_url, model_tag, timeout, transport=transport or _default_transport)
+    model = OllamaQueryModel(base_url, model_tag, timeout, transport=transport or _default_transport, prompt_version=prompt_version)
     provenance = model.declared_provenance(ollama_version, model_digest)
     prepared = preflight_private_capture(
         model_run_id, model, targets, provenance, output, repository_root=repository_root
@@ -168,13 +169,14 @@ def capture_live(
     repository_root: str | Path,
     output: str | Path,
     transport: OllamaTransport | None = None,
+    prompt_version: str = "query-ir-v1",
 ) -> tuple[int, int, int, str]:
     """Capture only after full input, provenance, and storage preflight."""
     prepared = preflight_live_capture(
         target_file=target_file, model_tag=model_tag, base_url=base_url,
         timeout=timeout, ollama_version=ollama_version, model_digest=model_digest,
         model_run_id=model_run_id, repository_root=repository_root,
-        output=output, transport=transport,
+        output=output, transport=transport, prompt_version=prompt_version,
     )
     manifest_path = capture_preflighted_private_bundle(prepared.private, prepared.model)
     manifest = load_recording_bundle(manifest_path, repository_root=repository_root).manifest
@@ -202,6 +204,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--timeout", type=float, required=True)
     parser.add_argument("--ollama-version", required=True)
     parser.add_argument("--model-digest")
+    parser.add_argument("--prompt-version", choices=("query-ir-v1", "query-ir-v2"), default="query-ir-v1")
     parser.add_argument("--model-run-id", required=True)
     parser.add_argument("--repository-root", required=True)
     parser.add_argument("--output", required=True)
@@ -220,6 +223,7 @@ def main(argv: list[str] | None = None) -> int:
             model_run_id=args.model_run_id,
             repository_root=args.repository_root,
             output=args.output,
+            prompt_version=args.prompt_version,
         )
         if args.check:
             prepared = preflight_live_capture(**settings)

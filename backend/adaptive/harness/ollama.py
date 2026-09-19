@@ -36,11 +36,26 @@ PROMPT_TEMPLATE = (
     "Context: {context}\n"
     "Question: {question}"
 )
+PROMPT_TEMPLATE_V2 = (
+    "Prompt version: {prompt_version}\n"
+    "Return exactly one JSON QueryIR object with entity, select, filters, and limit. "
+    "For every select entry and every filter.field, copy a complete string exactly "
+    "from Context.available_fields. Do not invent a field, change its entity prefix, "
+    "use a physical column, or change spelling or case. Use only Context.entities "
+    "and the operators listed for each field in Context.fields. "
+    "Return JSON only; no SQL, Markdown, or explanation.\n"
+    "Context: {context}\n"
+    "Question: {question}"
+)
 OllamaTransport = Callable[[str, dict[str, object], float], object]
 
 
-def _versioned_template() -> str:
-    return PROMPT_TEMPLATE.replace("{prompt_version}", PROMPT_VERSION)
+def _versioned_template(prompt_version: str | None = None) -> str:
+    version = PROMPT_VERSION if prompt_version is None else prompt_version
+    if version not in {"query-ir-v1", "query-ir-v2"}:
+        raise ValueError("INVALID_PROMPT_VERSION")
+    template = PROMPT_TEMPLATE if version == "query-ir-v1" else PROMPT_TEMPLATE_V2
+    return template.replace("{prompt_version}", version)
 
 
 @dataclass(frozen=True)
@@ -85,7 +100,7 @@ def _finite_float(value: str) -> float:
     return parsed
 
 
-def _prompt(question: str, ontology: Ontology, mapping: MappingProfile) -> str:
+def _prompt(question: str, ontology: Ontology, mapping: MappingProfile, prompt_version: str) -> str:
     # Never serialize MappingProfile: it contains physical table and column names.
     semantic_fields = sorted(set(ontology.fields).intersection(mapping.fields))
     context = {
@@ -103,7 +118,7 @@ def _prompt(question: str, ontology: Ontology, mapping: MappingProfile) -> str:
     encoded_context = json.dumps(
         context, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     )
-    prefix, _, remainder = _versioned_template().partition("{context}")
+    prefix, _, remainder = _versioned_template(prompt_version).partition("{context}")
     between, _, suffix = remainder.partition("{question}")
     return prefix + encoded_context + between + question + suffix
 
@@ -122,6 +137,7 @@ class OllamaQueryModel:
         timeout: float,
         *,
         transport: OllamaTransport = _default_transport,
+        prompt_version: str | None = None,
     ) -> None:
         try:
             parsed = parse.urlsplit(base_url)
@@ -143,10 +159,13 @@ class OllamaQueryModel:
             raise ValueError("INVALID_OLLAMA_TIMEOUT")
         if not callable(transport):
             raise ValueError("INVALID_OLLAMA_TRANSPORT")
+        version = PROMPT_VERSION if prompt_version is None else prompt_version
+        _versioned_template(version)
         self._url = base_url.rstrip("/") + "/api/generate"
         self._model_tag = model_tag
         self._timeout = float(timeout)
         self._transport = transport
+        self.prompt_version = version
 
     def declared_provenance(
         self, provider_version: str, model_digest: str | None = None
@@ -181,7 +200,7 @@ class OllamaQueryModel:
             model_id=self._model_tag,
             model_artifact_sha256=model_digest,
             prompt_template_sha256=hashlib.sha256(
-                _versioned_template().encode("utf-8")
+                _versioned_template(self.prompt_version).encode("utf-8")
             ).hexdigest(),
             generation_config_sha256=hashlib.sha256(config_bytes).hexdigest(),
             collector_version="ollama-capture-v1",
@@ -200,7 +219,7 @@ class OllamaQueryModel:
             raise RecordingProviderError(RecordedFailureCode.PROVIDER_ERROR)
         payload: dict[str, object] = {
             "model": self._model_tag,
-            "prompt": _prompt(request.question, ontology, mapping),
+            "prompt": _prompt(request.question, ontology, mapping, self.prompt_version),
             "stream": False,
             "options": dict(GENERATION_OPTIONS),
         }

@@ -284,7 +284,8 @@ def test_ollama_provenance_hashes_actual_template_and_settings(monkeypatch) -> N
     assert changed.generation_config_sha256 == first.generation_config_sha256
     monkeypatch.setattr(ollama, "PROMPT_TEMPLATE", old_template)
     monkeypatch.setattr(ollama, "PROMPT_VERSION", "query-ir-v2")
-    assert model.declared_provenance("0.34.2").prompt_template_sha256 != first.prompt_template_sha256
+    assert model.declared_provenance("0.34.2").prompt_template_sha256 == first.prompt_template_sha256
+    assert OllamaQueryModel("http://localhost:11434", "exact-model:tag", 7).declared_provenance("0.34.2").prompt_template_sha256 != first.prompt_template_sha256
     monkeypatch.setattr(ollama, "GENERATION_OPTIONS", {"temperature": 0.5})
     assert model.declared_provenance("0.34.2").generation_config_sha256 != first.generation_config_sha256
 
