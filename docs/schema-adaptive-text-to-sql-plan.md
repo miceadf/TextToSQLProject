@@ -1381,3 +1381,7 @@ SQLite DB 입력
 - 기존 `QueryModel`과 `RecordingCaptureSession`을 연결하는 provider-neutral `capture_recording()` orchestration 코어 구현
 - batch preflight, target당 단일 호출, JSON 타입·순서 보존, typed/예상 밖 실패 후 계속 진행과 caller context 불변성 검증
 - 다음 시작점을 실제 저장·CLI와 분리된 Ollama adapter의 최소 호출·오류 변환 계약으로 이동
+
+### 2026-09-19
+
+- 데스크톱 이전 시 프로젝트 목적, 구현·미검증 경계, Ollama·PostgreSQL의 분리 smoke test, 사람 승인 관문과 기록 양식을 `docs/desktop-test-handoff.md`에 정리
