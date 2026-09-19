@@ -17,6 +17,7 @@ from backend.adaptive.harness import (
 )
 from backend.adaptive.harness.live_capture import (
     LiveCaptureError, TARGET_SCHEMA_VERSION, capture_live, load_private_targets, main,
+    preflight_live_capture,
 )
 
 
@@ -98,8 +99,15 @@ def test_bad_batch_blocks_all_calls_and_files(repository: Path, mutation) -> Non
     mutation(data)
     path.write_text(json.dumps(data), encoding="utf-8")
     transport = SequenceTransport([])
-    with pytest.raises((LiveCaptureError, RecordingBundleError, ValueError)):
-        _capture(repository, path, transport)
+    for operation in (preflight_live_capture, capture_live):
+        with pytest.raises((LiveCaptureError, RecordingBundleError, ValueError)):
+            operation(
+                target_file=path, model_tag="exact-model:tag",
+                base_url="http://localhost:11434", timeout=7.5,
+                ollama_version="0.34.2", model_digest=None,
+                model_run_id="private-run-v1", repository_root=repository,
+                output=repository / ".schema-adaptive" / "bundle", transport=transport,
+            )
     assert transport.calls == []
     assert not (repository / ".schema-adaptive" / "bundle").exists()
 
@@ -235,3 +243,118 @@ def test_cli_suppresses_transport_error_text(repository: Path) -> None:
     assert "PRIVATE_HTTP_BODY" not in output.getvalue()
     assert "PRIVATE_QUESTION" not in output.getvalue()
     assert str(repository) not in output.getvalue()
+
+
+def _cli_args(repository: Path, path: Path) -> list[str]:
+    return [
+        "--target-file", str(path), "--model-tag", "exact-model:tag",
+        "--base-url", "http://localhost:11434", "--timeout", "7.5",
+        "--ollama-version", "0.34.2", "--model-run-id", "private-run-v1",
+        "--repository-root", str(repository),
+        "--output", str(repository / ".schema-adaptive" / "bundle"),
+    ]
+
+
+def test_check_mode_has_no_provider_call_or_output_file(repository: Path, caplog) -> None:
+    path = _write_targets(repository)
+    output = io.StringIO()
+    transport = SequenceTransport([])
+    with patch("backend.adaptive.harness.live_capture._default_transport", transport):
+        with patch("backend.adaptive.harness.ollama.OllamaQueryModel.generate_ir", side_effect=AssertionError("PROVIDER_CALLED")):
+            with contextlib.redirect_stdout(output):
+                assert main(["--check", *_cli_args(repository, path)]) == 0
+    summary = json.loads(output.getvalue())
+    assert summary["status"] == "CHECKED"
+    assert summary["target_count"] == 8
+    assert len(summary["provenance_sha256"]) == 64
+    assert summary["verification_status"] == "DECLARED_UNVERIFIED"
+    assert transport.calls == []
+    assert not (repository / ".schema-adaptive" / "bundle").exists()
+    for secret in ("PRIVATE_QUESTION", "PRIVATE_TABLE", "PRIVATE_COLUMN", str(repository)):
+        assert secret not in output.getvalue()
+        assert secret not in caplog.text
+
+
+def test_check_and_live_share_preflight_and_preserve_existing_manifest(repository: Path) -> None:
+    path = _write_targets(repository)
+    transport = SequenceTransport([])
+    options = dict(
+        target_file=path, model_tag="exact-model:tag", base_url="http://localhost:11434",
+        timeout=7.5, ollama_version="0.34.2", model_digest=None,
+        model_run_id="private-run-v1", repository_root=repository,
+        output=repository / ".schema-adaptive" / "bundle", transport=transport,
+    )
+    prepared = preflight_live_capture(**options)
+    assert len(prepared.private.targets) == 8
+    assert transport.calls == []
+    assert not options["output"].exists()
+    cases = [
+        {"model_digest": "PRIVATE_INVALID_DIGEST"},
+        {"model_run_id": "INVALID RUN ID"},
+        {"base_url": "PRIVATE_INVALID_URL"},
+        {"output": repository / "outside"},
+    ]
+    for change in cases:
+        for operation in (preflight_live_capture, capture_live):
+            with pytest.raises((ValueError, RecordingBundleError, LiveCaptureError)):
+                operation(**(options | change))
+    assert transport.calls == []
+    assert not options["output"].exists()
+    # An existing manifest must remain untouched even when check fails.
+    live_transport = SequenceTransport([{"response": "null"}] * 8)
+    capture_live(**(options | {"transport": live_transport}))
+    manifest = options["output"] / "manifest.json"
+    original = manifest.read_bytes()
+    for operation in (preflight_live_capture, capture_live):
+        with pytest.raises(FileExistsError):
+            operation(**options)
+    assert transport.calls == []
+    assert manifest.read_bytes() == original
+
+
+def test_check_rejects_bad_batch_and_tracked_output_without_calls(repository: Path) -> None:
+    path = _write_targets(repository)
+    document = json.loads(path.read_text(encoding="utf-8"))
+    document["targets"][1]["request"]["request_id"] = document["targets"][0]["request"]["request_id"]
+    path.write_text(json.dumps(document), encoding="utf-8")
+    transport = SequenceTransport([])
+    output = io.StringIO()
+    with patch("backend.adaptive.harness.live_capture._default_transport", transport):
+        with contextlib.redirect_stdout(output):
+            assert main(["--check", *_cli_args(repository, path)]) == 1
+    assert json.loads(output.getvalue()) == {"status": "FAILED", "code": "DUPLICATE_REQUEST_ID"}
+    assert transport.calls == []
+    assert not (repository / ".schema-adaptive" / "bundle").exists()
+    assert "PRIVATE_QUESTION" not in output.getvalue()
+    assert str(repository) not in output.getvalue()
+    path = _write_targets(repository)
+    tracked = repository / ".schema-adaptive" / "tracked"
+    tracked.mkdir()
+    (tracked / "marker.txt").write_text("tracked", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repository), "add", "-f", ".schema-adaptive/tracked/marker.txt"], check=True)
+    for operation in (preflight_live_capture, capture_live):
+        with pytest.raises(RecordingBundleError):
+            operation(
+                target_file=path, model_tag="exact-model:tag", base_url="http://localhost:11434",
+                timeout=7.5, ollama_version="0.34.2", model_digest=None,
+                model_run_id="private-run-v1", repository_root=repository,
+                output=tracked, transport=transport,
+            )
+    assert transport.calls == []
+
+
+def test_check_live_conflict_and_default_never_call_provider(repository: Path) -> None:
+    path = _write_targets(repository)
+    arguments = _cli_args(repository, path)
+    output = io.StringIO()
+    with patch("backend.adaptive.harness.live_capture.preflight_live_capture", side_effect=AssertionError("CALLED")):
+        with patch("backend.adaptive.harness.live_capture.capture_live", side_effect=AssertionError("CALLED")):
+            with contextlib.redirect_stdout(output):
+                assert main(arguments) == 2
+                assert main(["--check", "--live", *arguments]) == 1
+    lines = [json.loads(line) for line in output.getvalue().splitlines()]
+    assert lines == [
+        {"status": "NOT_RUN"},
+        {"status": "FAILED", "code": "INVALID_INPUT"},
+    ]
+    assert not (repository / ".schema-adaptive" / "bundle").exists()

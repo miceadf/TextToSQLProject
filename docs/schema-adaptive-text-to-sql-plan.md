@@ -600,6 +600,7 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 - [x] 데스크톱 Ollama adapter 합성 live smoke 2건(형식·검증 경계만 확인; 성능 평가 제외)
 - [x] 합성 provider private capture→bundle→strict load 연결과 Ollama 선언 provenance hash 계약
 - [x] Phase 5-10 private target 파일과 opt-in live capture 경계 구현(합성 transport만 검증; 실제 recording 미실행)
+- [x] Phase 5-11 호출·저장 없는 `--check` 공통 preflight와 E3·L5 미기입 검토 양식 구현
 - [x] 모델 응답 JSON schema 검증
 - [x] 경량 evaluation runner 구현(FakeModel·SQLite fixture, 실제 모델 평가 아님)
 - [ ] 기존 fine-tuned 모델 평가
@@ -926,7 +927,9 @@ gold를 그대로 반환하는 CLI `python -m backend.adaptive.evaluation run-sm
 
 Phase 5-10에서 `python -m backend.adaptive.harness.live_capture` 수동 진입점을 추가했다. `--live`가 없으면 호출·저장이 없으며, 입력은 `.schema-adaptive` 아래 Git 비추적 JSON 파일의 `capture-targets-v1` 계약으로 제한한다. 최상위 key는 `schema_version`, `targets`이고 각 target은 기존 `CaptureTarget`의 `request`·`ontology`·`mapping` JSON이다. 필수 field와 타입, 중복 JSON key·request ID, 전체 batch의 database 일치와 `PUBLISHED` 상태, model run ID·선언 provenance·private output/overwrite 정책을 첫 호출 전에 검사한다. 성공 시 target당 한 번만 Ollama adapter를 호출하고 기존 private bundle에 게시한다. CLI는 고정 상태·code, 건수와 선언 provenance fingerprint만 출력한다. synthetic CLI와 legacy 경로는 유지했다. 구현 범위는 [`docs/prompts/phase5-10-live-capture-boundary.md`](prompts/phase5-10-live-capture-boundary.md)에 둔다.
 
-**실제 `--live` 실행과 실제 응답 저장은 아직 수행하지 않았다.** 다음 작은 작업은 E3·L5의 데이터 사용·접근·보관·반출·삭제·recording 노출 경로를 사람과 문서로 확인한 뒤, 허용된 합성 또는 승인 자료로 제한된 수집 절차를 정하는 것이다. 40×3 모델 성능 확정 전 L1·L3를 확인하고 gold 40건의 `NEEDS_HUMAN_REVIEW`를 유지한다. PostgreSQL 통합은 별도 단계다. Phase 5-09 범위는 [`docs/prompts/phase5-09-private-capture-provenance-synthetic.md`](prompts/phase5-09-private-capture-provenance-synthetic.md)에 둔다.
+Phase 5-11에서 `--check`를 추가하고 `--live`와 상호 배타적으로 만들었다. 두 모드는 동일한 `preflight_live_capture()`와 `preflight_private_capture()`에서 private target·모델 설정·선언 provenance·run ID·output 저장 정책을 검증한다. `--check`는 target 건수와 선언 provenance fingerprint만 반환하며 provider 호출이나 파일 생성이 없다. live 경로는 검증된 batch를 기존 capture/storage로 전달하고 writer가 경로를 다시 검사한다. E3·L5 결정 양식은 [`docs/live-capture-human-review.md`](live-capture-human-review.md)에 `PENDING_HUMAN_REVIEW` 상태로 두었다.
+
+**실제 `--live` 실행과 실제 응답 저장은 아직 수행하지 않았다.** 다음 작은 작업은 E3·L5의 데이터 사용·접근·보관·반출·삭제·recording 노출 경로를 책임자와 보안 검토자가 검토하고 결정 근거를 문서화하는 것이다. 승인 범위가 정해진 뒤에만 허용된 자료의 제한 수집 절차를 정한다. 40×3 모델 성능 확정 전 L1·L3를 확인하고 gold 40건의 `NEEDS_HUMAN_REVIEW`를 유지한다. PostgreSQL 통합은 별도 단계다. Phase 5-11 범위는 [`docs/prompts/phase5-11-capture-preflight-approval.md`](prompts/phase5-11-capture-preflight-approval.md)에 둔다.
 
 완료된 adapter 계약은 [`docs/prompts/phase5-07-ollama-querymodel-adapter.md`](prompts/phase5-07-ollama-querymodel-adapter.md)에, 합성 live smoke의 수행 지침은 [`docs/prompts/phase5-08-ollama-adapter-live-smoke.md`](prompts/phase5-08-ollama-adapter-live-smoke.md)에 둔다. 모델이 반환한 SQL 등 비 JSON 텍스트는 원문 문자열로 보존해 후속 Query IR 검증 실패로 드러내며, provider 호출 실패와 혼합하지 않는다.
 
@@ -1265,6 +1268,7 @@ SQLite DB 입력
 - 상태: 채택
 - 결정: `capture-targets-v1` 입력은 `.schema-adaptive` 아래 Git 비추적 파일에서만 읽는다. caller가 정확한 모델 tag·URL·timeout·Ollama version·선택적 digest·run ID·출력 경로를 제공하고 `--live`를 명시해야 호출한다. 전체 batch·provenance·저장 경로를 첫 호출 전에 검사하고 기존 bundle의 기본 덮어쓰기를 금지한다. 실행 flag는 E3·L5 사람 승인이 아니며 이번 단계의 검증은 합성 transport로만 수행한다.
 - 이유: 실제 질문·응답의 우발적 전송·저장을 막고, 모델 추측이나 부분 batch 저장이 recording의 비교 조건을 흐리지 않게 한다. 입력과 결과의 private 경계를 명확히 유지한다.
+- Phase 5-11 보충: `--check`와 `--live`는 같은 preflight 결과를 사용한다. `--check`는 호출·저장 없이 계약만 확인하며 E3·L5 사람 승인을 대체하지 않는다.
 
 ## 21. 변경 이력
 
@@ -1417,3 +1421,5 @@ SQLite DB 입력
 - Phase 5-09 합성 provider capture→private bundle→strict load 연결과 동일 storage path preflight, synthetic-only opt-in CLI 구현. Ollama versioned template·실제 전송 설정의 선언 provenance hash를 고정하고 실제 Ollama·CNU 응답 저장 없이 검증. 다음 시작점을 승인 관문이 있는 live capture 입력·실행 경계로 이동
 - Phase 5-10의 private target 입력·명시적 live 실행 경계를 합성 테스트로만 구현하는 범위를 `docs/prompts/phase5-10-live-capture-boundary.md`에 기록하고 새 대화용 최신 인수인계를 `docs/next-session-handoff.md`에 정리. 실제 응답 수집 전 E3·L5 관문 유지
 - Phase 5-10 `capture-targets-v1` private 입력 loader와 별도 opt-in Ollama capture CLI 구현. 전체 batch·provenance·저장 경로 사전 검증, 합성 transport의 정확한 단일 호출·typed failure·strict load·비노출 출력을 확인. 실제 Ollama 호출과 실제 응답 저장 0회; E3·L5 확인은 후속 단계로 유지
+- Phase 5-10의 커밋·전용 테스트 14개를 가볍게 재확인하고, Phase 5-11의 호출·저장 없는 사전 점검과 E3·L5 사람 검토 자료 범위를 `docs/prompts/phase5-11-capture-preflight-approval.md`에 기록. 실제 수집 승인과 모델 성능 검증은 미완료
+- Phase 5-11 `--check`/`--live` 공통 preflight와 상호 배타적 CLI 모드 구현. 합성 transport로 호출·저장 없는 점검, 사전 오류 차단, 기존 manifest 보존과 live 회귀 확인. E3·L5 미기입 검토 양식 작성; 실제 Ollama 호출·응답 저장 없이 `PENDING_HUMAN_REVIEW` 유지

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
@@ -11,7 +12,11 @@ from pydantic import ValidationError
 
 from .contracts import MappingStatus
 from .ollama import OllamaQueryModel, OllamaTransport, _default_transport
-from .private_capture import capture_private_bundle
+from .private_capture import (
+    PreparedPrivateCapture,
+    capture_preflighted_private_bundle,
+    preflight_private_capture,
+)
 from .recording_bundle_storage import (
     RecordingBundleError,
     RecordingBundleErrorCode,
@@ -22,11 +27,7 @@ from .recording_bundle_storage import (
     provenance_fingerprint,
 )
 from .recording_capture import RecordingCaptureError
-from .recording_orchestrator import (
-    CaptureTarget,
-    RecordingOrchestrationError,
-    preflight_capture,
-)
+from .recording_orchestrator import CaptureTarget, RecordingOrchestrationError
 
 
 TARGET_SCHEMA_VERSION = "capture-targets-v1"
@@ -122,6 +123,39 @@ def load_private_targets(path: str | Path, *, repository_root: str | Path) -> li
     return targets
 
 
+@dataclass(frozen=True, repr=False)
+class PreparedLiveCapture:
+    model: OllamaQueryModel
+    private: PreparedPrivateCapture
+
+    @property
+    def provenance_sha256(self) -> str:
+        return provenance_fingerprint(self.private.provenance)
+
+
+def preflight_live_capture(
+    *,
+    target_file: str | Path,
+    model_tag: str,
+    base_url: str,
+    timeout: float,
+    ollama_version: str,
+    model_digest: str | None,
+    model_run_id: str,
+    repository_root: str | Path,
+    output: str | Path,
+    transport: OllamaTransport | None = None,
+) -> PreparedLiveCapture:
+    """Validate live settings and private inputs without calling or writing."""
+    targets = load_private_targets(target_file, repository_root=repository_root)
+    model = OllamaQueryModel(base_url, model_tag, timeout, transport=transport or _default_transport)
+    provenance = model.declared_provenance(ollama_version, model_digest)
+    prepared = preflight_private_capture(
+        model_run_id, model, targets, provenance, output, repository_root=repository_root
+    )
+    return PreparedLiveCapture(model=model, private=prepared)
+
+
 def capture_live(
     *,
     target_file: str | Path,
@@ -136,19 +170,19 @@ def capture_live(
     transport: OllamaTransport | None = None,
 ) -> tuple[int, int, int, str]:
     """Capture only after full input, provenance, and storage preflight."""
-    targets = load_private_targets(target_file, repository_root=repository_root)
-    model = OllamaQueryModel(base_url, model_tag, timeout, transport=transport or _default_transport)
-    provenance = model.declared_provenance(ollama_version, model_digest)
-    preflight_capture(model, targets)
-    manifest_path = capture_private_bundle(
-        model_run_id, model, targets, provenance, output, repository_root=repository_root
+    prepared = preflight_live_capture(
+        target_file=target_file, model_tag=model_tag, base_url=base_url,
+        timeout=timeout, ollama_version=ollama_version, model_digest=model_digest,
+        model_run_id=model_run_id, repository_root=repository_root,
+        output=output, transport=transport,
     )
+    manifest_path = capture_preflighted_private_bundle(prepared.private, prepared.model)
     manifest = load_recording_bundle(manifest_path, repository_root=repository_root).manifest
     return (
         manifest.record_count,
         manifest.success_count,
         manifest.failure_count,
-        provenance_fingerprint(provenance),
+        prepared.provenance_sha256,
     )
 
 
@@ -159,7 +193,9 @@ class _SafeParser(argparse.ArgumentParser):
 
 def main(argv: list[str] | None = None) -> int:
     parser = _SafeParser(description="Manual private Ollama capture")
-    parser.add_argument("--live", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--live", action="store_true")
+    mode.add_argument("--check", action="store_true")
     parser.add_argument("--target-file", required=True)
     parser.add_argument("--model-tag", required=True)
     parser.add_argument("--base-url", required=True)
@@ -171,10 +207,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", required=True)
     try:
         args = parser.parse_args(argv)
-        if not args.live:
+        if not (args.live or args.check):
             print('{"status":"NOT_RUN"}')
             return 2
-        count, successes, failures, fingerprint = capture_live(
+        settings = dict(
             target_file=args.target_file,
             model_tag=args.model_tag,
             base_url=args.base_url,
@@ -185,6 +221,16 @@ def main(argv: list[str] | None = None) -> int:
             repository_root=args.repository_root,
             output=args.output,
         )
+        if args.check:
+            prepared = preflight_live_capture(**settings)
+            print(json.dumps({
+                "status": "CHECKED",
+                "target_count": len(prepared.private.targets),
+                "provenance_sha256": prepared.provenance_sha256,
+                "verification_status": "DECLARED_UNVERIFIED",
+            }, separators=(",", ":")))
+            return 0
+        count, successes, failures, fingerprint = capture_live(**settings)
     except (LiveCaptureError, RecordingBundleError, RecordingCaptureError, RecordingOrchestrationError) as failure:
         print(json.dumps({"status": "FAILED", "code": failure.code.value}, separators=(",", ":")))
         return 1

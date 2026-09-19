@@ -1,6 +1,6 @@
 # 새 Codex 대화용 짧은 인수인계
 
-현재 기준: 2026-09-19, Phase 5-10 완료. 최신 상태는 항상 Git과 코드로 다시 확인한다. 설계와 로드맵의 원본은 [`schema-adaptive-text-to-sql-plan.md`](schema-adaptive-text-to-sql-plan.md), 완료 범위는 [`prompts/phase5-10-live-capture-boundary.md`](prompts/phase5-10-live-capture-boundary.md)다.
+현재 기준: 2026-09-19, Phase 5-11 완료. 최신 상태는 항상 Git과 코드로 다시 확인한다. 설계와 로드맵의 원본은 [`schema-adaptive-text-to-sql-plan.md`](schema-adaptive-text-to-sql-plan.md), E3·L5 검토 양식은 [`live-capture-human-review.md`](live-capture-human-review.md)다.
 
 ## 프로젝트와 현재 경계
 
@@ -8,7 +8,8 @@
 - Phase 5-07: Ollama `QueryModel` adapter와 합성 transport 테스트 완료. Phase 5-08: 로컬 `text2sql_qwen:latest`에 합성 질문 2건만 비저장 호출했고 둘 다 JSON object/현재 QueryIR 검증을 통과했다. 모델 정확도 증거는 아니다.
 - Phase 5-09: 합성 provider의 capture→private bundle→strict load, 저장 전 preflight, synthetic-only CLI, Ollama 선언형 provenance hash 완료.
 - Phase 5-10: `.schema-adaptive`의 versioned private target 파일을 읽는 별도 `backend.adaptive.harness.live_capture` CLI 구현. 명시적 `--live`와 전체 사전 검증, 선언 provenance, 기존 private bundle을 연결했다. 합성 transport 테스트만 실행했다. **실제 Ollama 응답 recording은 아직 없다.**
-- 다음 작업은 실제 live 실행 전 E3·L5의 데이터 사용·접근·보관·반출·삭제·recording 노출 경로를 사람과 문서로 확인하는 것이다. 모델 성능 확정 전 L1·L3 확인이 필요하고, gold 40건은 모두 `NEEDS_HUMAN_REVIEW`다.
+- Phase 5-11: `--check`와 `--live`가 동일한 preflight 결과를 사용한다. `--check`는 호출·저장 0회이고 합성 테스트로 경계를 검증했다. E3·L5 미기입 양식은 `PENDING_HUMAN_REVIEW`다. **실제 Ollama 응답 recording은 아직 없다.**
+- 다음 작업은 실제 live 실행 전 데이터 사용·접근·보관·반출·삭제·recording 노출 경로를 사람이 확인하고 문서화하는 것이다. 모델 성능 확정 전 L1·L3 확인이 필요하고, gold 40건은 모두 `NEEDS_HUMAN_REVIEW`다.
 - `docs/desktop-test-handoff.md`는 초기 데스크톱 이전 시점의 기록이다. 그 안의 “adapter 없음” 및 Phase 5-06 상태는 현재 상태가 아니다.
 
 ## 새 대화의 최소 시작 순서
