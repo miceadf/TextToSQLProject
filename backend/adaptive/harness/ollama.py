@@ -8,6 +8,7 @@ import math
 import socket
 from collections.abc import Callable
 from concurrent.futures import CancelledError
+from dataclasses import dataclass, field
 from urllib import error, parse, request
 
 from .contracts import HarnessRequest, MappingProfile, MappingStatus, Ontology
@@ -18,6 +19,14 @@ from .recording_orchestrator import RecordingProviderError
 PROMPT_VERSION = "query-ir-v1"
 GENERATION_OPTIONS = {"temperature": 0}
 OllamaTransport = Callable[[str, dict[str, object], float], object]
+
+
+@dataclass(frozen=True)
+class OllamaGeneration:
+    """In-memory format observation; never persist or print value by default."""
+
+    value: object = field(repr=False)
+    json_parsed: bool
 
 
 def _default_transport(url: str, payload: dict[str, object], timeout: float) -> object:
@@ -124,6 +133,12 @@ class OllamaQueryModel:
     def generate_ir(
         self, request: HarnessRequest, ontology: Ontology, mapping: MappingProfile
     ) -> object:
+        return self.generate_observed(request, ontology, mapping).value
+
+    def generate_observed(
+        self, request: HarnessRequest, ontology: Ontology, mapping: MappingProfile
+    ) -> OllamaGeneration:
+        """Invoke once and expose parse status for private, in-memory diagnostics."""
         if mapping.status is not MappingStatus.PUBLISHED or mapping.database_id != request.database_id:
             raise RecordingProviderError(RecordedFailureCode.PROVIDER_ERROR)
         payload: dict[str, object] = {
@@ -168,9 +183,9 @@ class OllamaQueryModel:
                 parse_float=_finite_float,
             )
         except json.JSONDecodeError:
-            return output
+            return OllamaGeneration(value=output, json_parsed=False)
         except ValueError:
             pass
         else:
-            return parsed_output
+            return OllamaGeneration(value=parsed_output, json_parsed=True)
         raise RecordingProviderError(RecordedFailureCode.PROVIDER_ERROR)
