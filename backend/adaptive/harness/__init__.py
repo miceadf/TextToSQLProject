@@ -18,6 +18,14 @@ from .contracts import (
     QueryIR,
 )
 from .compiler import SingleTableSQLiteCompiler
+from .critique import (
+    CRITIQUE_DISPOSITION_VERSION,
+    CRITIQUE_INVALID_SUMMARY,
+    CritiqueDisposition,
+    CritiqueError,
+    CritiqueResult,
+    critique_repair_summary,
+)
 from .engine import ExecutionHarness
 from .executor import SQLiteReadOnlyExecutor
 from .model import FakeModel
@@ -76,9 +84,14 @@ from .repair import (
 
 __all__ = [
     "BoundedRepairCoordinator",
+    "CRITIQUE_DISPOSITION_VERSION",
+    "CRITIQUE_INVALID_SUMMARY",
     "CompiledQuery",
     "ConservativeSqlPolicy",
     "CaptureTarget",
+    "CritiqueDisposition",
+    "CritiqueError",
+    "CritiqueResult",
     "DataType",
     "ExecutionHarness",
     "FakeModel",
@@ -133,5 +146,6 @@ __all__ = [
     "question_fingerprint",
     "write_recording_bundle",
     "capture_recording",
+    "critique_repair_summary",
     "is_repairable",
 ]

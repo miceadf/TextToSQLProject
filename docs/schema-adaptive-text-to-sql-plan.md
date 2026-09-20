@@ -620,7 +620,8 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 ### Phase 6. Agent와 사용자 상호작용
 
 - [x] 실행 오류 taxonomy 정의
-- [x] Phase 6-01 합성 입력의 제한된 QueryIR repair 경계(최초 1회 + 검증 실패 시 repair 1회; critique·사용자 확인·관리자 검토 큐는 미구현)
+- [x] Phase 6-01 합성 입력의 제한된 QueryIR repair 경계(최초 1회 + 검증 실패 시 repair 1회; 사용자 확인·관리자 검토 큐는 미구현)
+- [x] Phase 6-02 합성 결과의 결정적 critique 분류(`RepairSummary` 전용 순수 함수; 성공은 `EXECUTED_UNVERIFIED`, 실패는 code·stage 고정 분류; 사용자 확인·관리자 검토 큐는 미구현)
 - [ ] validate → execute → critique → repair loop 구현
 - [ ] 모호한 질문 감지 및 사용자 확인
 - [ ] 운영 실패를 관리자 검토 큐에 저장
@@ -944,7 +945,9 @@ Phase 5-13에서 기존 benchmark v1과 세 합성 fixture의 검증된 runtime 
 
 Phase 5-14에서 v1 private `UNKNOWN_FIELD` 21건을 비노출로 분류했다. ontology 밖 12, entity 접두사 불일치 5, 물리 column 형태 4건이었다. 허용 semantic field의 정확한 복사를 강조한 명시적 `query-ir-v2`를 한 번 시험했다. 동일 합성 40×3 개발 세트에서 v2의 구조 exact 0/120, 실행 42/120, semantic 일치 36/120, `UNKNOWN_FIELD` 72/120으로 v1보다 악화했다. V1을 기본값으로 유지하고 이 가설은 채택하지 않는다. 세부 paired 집계와 한계는 [`docs/phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md`](phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md)에 둔다. 기존 fine-tuned 모델 평가와 동적 스키마 prompt 평가의 확정 완료 항목은 여전히 미완료다.
 
-다음 작은 작업은 새 30건 초안의 사람 검토(L1·E2)·동결과 Phase 6 critique·사용자 확인·관리자 검토 큐 설계이다. 새 prompt 탐색이나 live 호출은 하지 않는다. v1이 기본값이며 현재 로컬에는 fine-tuned tag만 확인되었으므로 base instruct 평가는 정확한 별도 tag가 준비될 때 진행한다. 합성 개발은 E3·L5 결정 대기와 병행한다. **실제 CNU 자료의 추가 사용·공유와 실제 데이터 배포·외부 시연 전**에는 각각 E3·L5의 팀 결정을 확인한다. 모델 성능 확정 전 L1·L3를 확인한다. PostgreSQL 통합은 별도 단계다. Phase 5-14 범위는 [`docs/prompts/phase5-14-versioned-queryir-prompt-trial.md`](prompts/phase5-14-versioned-queryir-prompt-trial.md)에 둔다.
+Phase 6-02에서 `RepairSummary` 전용 결정적 critique 분류(`critique-disposition-v1`)를 합성 입력으로 구현했다. 성공(최초·repair 후·0행 포함)은 `EXECUTED_UNVERIFIED`로만 분류하고 `repair_attempted`·`recovered_after_repair`로 최초 성공·repair 회복·repair 후 실패를 구분하며 정답·만족·정확도를 추론하지 않는다. 실패는 최종 code·stage 허용 조합으로 `REQUEST_INVALID`·`MODEL_REVIEW`(IR 오류 및 `REPAIR_PROVIDER_ERROR`의 stage 없음 포함)·`CONTEXT_REVIEW`(DB·mapping·JOIN)·`SAFETY_BLOCKED`(SQL 정책)·`EXECUTION_FAILURE`(timeout·실행·결과 검증)·`INTERNAL_REVIEW`(`SQL_COMPILE_ERROR` 등)로 분류한다. 위조 stage·알 수 없는 code·모순 status·code·repair 횟수는 고정 code(`CRITIQUE_INVALID_SUMMARY`)로 거부한다. repair 없이 최종 결과가 초기 결과와 다르면 위조로 거부하고, repair가 표시된 요약은 초기 실패가 Phase 6-01 재시도 허용 쌍일 때만 받는다. 자동 사용자 확인·관리자 queue 등록은 하지 않으며, `INVALID_REQUEST`를 질문 모호성으로 취급하지 않는다. Phase 6-01 재시도 목록·최대 1회·context 격리와 `ExecutionHarness`·`QueryModel`·legacy 경로는 변경하지 않았다. 전체 loop·모호 질문 확인·관리자 검토 큐는 미완료다. Phase 6-02 범위는 [`docs/prompts/phase6-02-synthetic-critique-disposition.md`](prompts/phase6-02-synthetic-critique-disposition.md)에 둔다.
+
+다음 작은 작업은 새 30건 초안의 사람 검토(L1·E2)·동결과 Phase 6 사용자 확인·관리자 검토 큐 설계이다. 새 prompt 탐색이나 live 호출은 하지 않는다. v1이 기본값이며 현재 로컬에는 fine-tuned tag만 확인되었으므로 base instruct 평가는 정확한 별도 tag가 준비될 때 진행한다. 합성 개발은 E3·L5 결정 대기와 병행한다. **실제 CNU 자료의 추가 사용·공유와 실제 데이터 배포·외부 시연 전**에는 각각 E3·L5의 팀 결정을 확인한다. 모델 성능 확정 전 L1·L3를 확인한다. PostgreSQL 통합은 별도 단계다. Phase 5-14 범위는 [`docs/prompts/phase5-14-versioned-queryir-prompt-trial.md`](prompts/phase5-14-versioned-queryir-prompt-trial.md)에 둔다.
 
 완료된 adapter 계약은 [`docs/prompts/phase5-07-ollama-querymodel-adapter.md`](prompts/phase5-07-ollama-querymodel-adapter.md)에, 합성 live smoke의 수행 지침은 [`docs/prompts/phase5-08-ollama-adapter-live-smoke.md`](prompts/phase5-08-ollama-adapter-live-smoke.md)에 둔다. 모델이 반환한 SQL 등 비 JSON 텍스트는 원문 문자열로 보존해 후속 Query IR 검증 실패로 드러내며, provider 호출 실패와 혼합하지 않는다.
 
@@ -1317,6 +1320,13 @@ SQLite DB 입력
 - 결정: `BoundedRepairCoordinator`는 기존 `ExecutionHarness`를 그대로 재사용하며 최초 1회 + repair 1회만 실행한다. `MODEL_INVALID_OUTPUT`은 `IR_GENERATED`에서만, `UNKNOWN_ENTITY`·`UNKNOWN_FIELD`·`INVALID_OPERATOR`·`INVALID_VALUE_TYPE`은 `IR_VALIDATED`에서만 repair하며 code와 stage를 함께 검사한다. 그 외 실패·provider 예외·취소는 재시도하지 않는다. 최초 실행 전에 request·ontology·mapping의 깊은 복사 스냅샷을 고정하고, 최초 모델·repair provider·두 번째 실행에는 스냅샷의 복사본만 전달하므로 어느 쪽의 변이도 다른 시도나 호출자 객체에 영향을 주지 않는다. 최초·repair 모델은 격리 래퍼(`_IsolatedModel`)를 거쳐 각 harness 실행의 검증·컴파일·실행 컨텍스트와 분리된 복사본만 받으므로, 모델이 입력을 변이해도 harness가 검증하는 컨텍스트는 원본 스냅샷 그대로이다. repair provider에는 스냅샷 복사본(request·ontology·mapping)과 고정 실패 code만 전달하고, 후보는 전체 안전 경로를 다시 통과해야 한다. 결과 요약에는 SQL·행·원문을 복사하지 않으며 repair 성공을 최초 모델 정확도로 세지 않는다.
 - 이유: 무제한 재시도는 실패 원인을 가리고 안전 검증을 우회할 유인을 만든다. code·stage 쌍으로 재시도 범위를 고정하면 오답 교정 실험이 재현 가능하고, critique·사용자 확인·관리자 검토 큐 등 Phase 6 나머지와 분리된다.
 
+### ADR-030: critique 분류는 성공 여부와 무관하게 고정 code·stage 쌍으로 닫음
+
+- 날짜: 2026-09-20
+- 상태: 채택
+- 결정: `critique_repair_summary()`는 `RepairSummary`만 입력받는 순수 함수로 두고 `critique-disposition-v1`을 고정한다. 성공은 최초·repair 후·0행을 모두 `EXECUTED_UNVERIFIED`로 분류하고 `repair_attempted`·`recovered_after_repair`로 최초 성공·repair 회복·repair 후 실패를 구분하며 정답·만족·정확도를 추론하지 않는다. `repaired`라는 단일 flag는 repair provider 실패나 repair 후 실패를 회복으로 오독하게 하므로 쓰지 않는다. 실패는 `HarnessErrorCode` 28종과 `REPAIR_PROVIDER_ERROR`(stage 없음)의 허용 (code, stage) 조합을 `REQUEST_INVALID`·`MODEL_REVIEW`·`CONTEXT_REVIEW`·`SAFETY_BLOCKED`·`EXECUTION_FAILURE`·`INTERNAL_REVIEW` 중 하나로 명시 분류한다. 위조 stage·알 수 없는 code·모순된 status·code·repair 횟수는 고정 code(`CRITIQUE_INVALID_SUMMARY`)로 거부하며 원문·질문·SQL·행·경로를 반영·기록하지 않는다. repair가 없으면 최종 결과는 초기 결과와 같아야 하고, repair가 표시된 요약은 초기 실패가 Phase 6-01 재시도 허용 쌍(`is_repairable` 기준)일 때만 받는다. 입력·정책·context·실행·내부 실패 뒤의 repair 표시는 위조로 거부한다. 자동 사용자 확인·관리자 queue 등록·재시도 지시·성능 report 경로를 만들지 않고, `INVALID_REQUEST`를 모호성으로 취급하지 않으며 ambiguity 신호와 확인 계약은 다음 단계로 남긴다.
+- 이유: code만 보고 분류하면 stage 위조나 새 code가 조용히 성공·사용자 질문으로 바뀌고, 성공 분류가 정확도 증거로 오용될 수 있다. repair 없는 요약의 최종·초기 불일치나 재시도 불가 실패 뒤의 repair 표시는 coordinator가 만들 수 없는 불가능한 요약이므로 받아주면 위조 입력이 정상 분류로 둔갑한다. 고정 분류표와 fail-closed 거부가 있어야 합성 후속 처리 제안이 재현 가능하고, 전체 loop·모호 질문 확인·관리자 검토 큐와 분리된다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -1488,3 +1498,4 @@ SQLite DB 입력
 - Phase 6-01 합성 입력의 제한된 QueryIR repair 경계(`BoundedRepairCoordinator`, 최초 1회 + 검증 실패 시 repair 1회) 구현. repair provider에는 request 복사본·ontology·mapping·고정 실패 code만 전달하고 후보는 전체 안전 경로를 다시 통과. `MODEL_INVALID_OUTPUT`은 `IR_GENERATED`에서만, 4개 semantic 오류는 `IR_VALIDATED`에서만 허용하고 그 외·provider 예외·취소는 재시도 없음. 합성 테스트에서 호출 횟수·안전성·비노출을 검증. critique·사용자 확인·관리자 검토 큐는 미구현. ADR-029 추가. 기존 40건과 새 30건 `NEEDS_HUMAN_REVIEW` 유지
 - Phase 6-01 결함 수정: repair 경로가 호출자 소유 ontology·mapping 원본을 provider와 두 번째 실행에 그대로 전달해 provider의 변이(`mapping.fields` 비우기 등)가 두 번째 시도를 `MAPPING_MISSING`으로 바꾸던 문제를 수정. 최초 실행 전에 request·ontology·mapping 깊은 복사 스냅샷을 고정하고 세 전달 지점(최초 모델·provider·두 번째 실행)에 스냅샷 복사본만 전달. 최초 모델과 provider가 request·ontology·mapping을 변이해도 원본과 다른 시도가 그대로임을 합성 회귀 테스트로 검증. ADR-029 반영
 - Phase 6-01 결함 추가 수정: 스냅샷 복사본을 harness에 넘겨도 harness가 같은 객체를 모델과 검증에 공유하므로, 유효 IR을 반환하면서 `mapping.fields`를 비우는 최초 모델이 첫 시도를 terminal `MAPPING_MISSING`으로 만들던 문제를 수정. 모델을 격리 래퍼(`_IsolatedModel`)로 감싸 harness 검증 컨텍스트와 분리된 복사본만 모델에 전달. 변이 후 유효 IR 반환 시 원본 컨텍스트로 성공·repair 미호출임을 합성 회귀 테스트로 검증. `ExecutionHarness`·`QueryModel` 계약 변경 없음
+- Phase 6-02 합성 결과의 결정적 critique 분류(`backend/adaptive/harness/critique.py`, `critique-disposition-v1`) 구현. 성공은 `EXECUTED_UNVERIFIED`+`repair_attempted`·`recovered_after_repair` 구분, 실패는 28종 code·`REPAIR_PROVIDER_ERROR`의 허용 (code, stage) 조합으로 6개 disposition 분류, 위조·미지·모순 입력은 `CRITIQUE_INVALID_SUMMARY`로 거부. 실제 coordinator 결과와 전 code 고정 테스트(`tests/adaptive/test_critique_disposition.py`)로 검증. 독립 리뷰에서 repair 없는 요약의 최종·초기 불일치와 repair 호출 없는 `REPAIR_PROVIDER_ERROR` 수락 결함을 발견해 명시적 불변식(repair 없으면 최종=초기, provider 실패는 repair 시도 필요, repair 표시는 Phase 6-01 재시도 허용 쌍에서만)과 회귀 테스트를 추가하고 결과 flag를 `repair_attempted`·`recovered_after_repair`로 바로잡음. 사용자 확인·관리자 큐·재시도 변경 없음. ADR-030 갱신. 기존 40건과 새 30건 `NEEDS_HUMAN_REVIEW` 유지
