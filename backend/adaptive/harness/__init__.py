@@ -65,8 +65,17 @@ from .recording_orchestrator import (
     capture_recording,
     preflight_capture,
 )
+from .repair import (
+    MAX_REPAIR_ATTEMPTS,
+    REPAIR_PROVIDER_ERROR,
+    BoundedRepairCoordinator,
+    RepairProvider,
+    RepairSummary,
+    is_repairable,
+)
 
 __all__ = [
+    "BoundedRepairCoordinator",
     "CompiledQuery",
     "ConservativeSqlPolicy",
     "CaptureTarget",
@@ -82,11 +91,15 @@ __all__ = [
     "HarnessStatus",
     "MappingProfile",
     "MappingStatus",
+    "MAX_REPAIR_ATTEMPTS",
     "Ontology",
     "OntologyField",
     "OllamaQueryModel",
     "Operator",
     "QueryIR",
+    "REPAIR_PROVIDER_ERROR",
+    "RepairProvider",
+    "RepairSummary",
     "LoadedRecordingBundle",
     "ProviderKind",
     "RecordingArtifactMetadata",
@@ -120,4 +133,5 @@ __all__ = [
     "question_fingerprint",
     "write_recording_bundle",
     "capture_recording",
+    "is_repairable",
 ]

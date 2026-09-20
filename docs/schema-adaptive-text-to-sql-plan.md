@@ -620,6 +620,7 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 ### Phase 6. Agent와 사용자 상호작용
 
 - [x] 실행 오류 taxonomy 정의
+- [x] Phase 6-01 합성 입력의 제한된 QueryIR repair 경계(최초 1회 + 검증 실패 시 repair 1회; critique·사용자 확인·관리자 검토 큐는 미구현)
 - [ ] validate → execute → critique → repair loop 구현
 - [ ] 모호한 질문 감지 및 사용자 확인
 - [ ] 운영 실패를 관리자 검토 큐에 저장
@@ -943,7 +944,7 @@ Phase 5-13에서 기존 benchmark v1과 세 합성 fixture의 검증된 runtime 
 
 Phase 5-14에서 v1 private `UNKNOWN_FIELD` 21건을 비노출로 분류했다. ontology 밖 12, entity 접두사 불일치 5, 물리 column 형태 4건이었다. 허용 semantic field의 정확한 복사를 강조한 명시적 `query-ir-v2`를 한 번 시험했다. 동일 합성 40×3 개발 세트에서 v2의 구조 exact 0/120, 실행 42/120, semantic 일치 36/120, `UNKNOWN_FIELD` 72/120으로 v1보다 악화했다. V1을 기본값으로 유지하고 이 가설은 채택하지 않는다. 세부 paired 집계와 한계는 [`docs/phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md`](phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md)에 둔다. 기존 fine-tuned 모델 평가와 동적 스키마 prompt 평가의 확정 완료 항목은 여전히 미완료다.
 
-다음 작은 작업은 새 30건 초안의 사람 검토(L1·E2)·동결이다. 새 prompt 탐색이나 live 호출은 하지 않는다. v1이 기본값이며 현재 로컬에는 fine-tuned tag만 확인되었으므로 base instruct 평가는 정확한 별도 tag가 준비될 때 진행한다. 합성 개발은 E3·L5 결정 대기와 병행한다. **실제 CNU 자료의 추가 사용·공유와 실제 데이터 배포·외부 시연 전**에는 각각 E3·L5의 팀 결정을 확인한다. 모델 성능 확정 전 L1·L3를 확인한다. PostgreSQL 통합은 별도 단계다. Phase 5-14 범위는 [`docs/prompts/phase5-14-versioned-queryir-prompt-trial.md`](prompts/phase5-14-versioned-queryir-prompt-trial.md)에 둔다.
+다음 작은 작업은 새 30건 초안의 사람 검토(L1·E2)·동결과 Phase 6 critique·사용자 확인·관리자 검토 큐 설계이다. 새 prompt 탐색이나 live 호출은 하지 않는다. v1이 기본값이며 현재 로컬에는 fine-tuned tag만 확인되었으므로 base instruct 평가는 정확한 별도 tag가 준비될 때 진행한다. 합성 개발은 E3·L5 결정 대기와 병행한다. **실제 CNU 자료의 추가 사용·공유와 실제 데이터 배포·외부 시연 전**에는 각각 E3·L5의 팀 결정을 확인한다. 모델 성능 확정 전 L1·L3를 확인한다. PostgreSQL 통합은 별도 단계다. Phase 5-14 범위는 [`docs/prompts/phase5-14-versioned-queryir-prompt-trial.md`](prompts/phase5-14-versioned-queryir-prompt-trial.md)에 둔다.
 
 완료된 adapter 계약은 [`docs/prompts/phase5-07-ollama-querymodel-adapter.md`](prompts/phase5-07-ollama-querymodel-adapter.md)에, 합성 live smoke의 수행 지침은 [`docs/prompts/phase5-08-ollama-adapter-live-smoke.md`](prompts/phase5-08-ollama-adapter-live-smoke.md)에 둔다. 모델이 반환한 SQL 등 비 JSON 텍스트는 원문 문자열로 보존해 후속 Query IR 검증 실패로 드러내며, provider 호출 실패와 혼합하지 않는다.
 
@@ -1309,6 +1310,13 @@ SQLite DB 입력
 - 결정: 개발 세트(`fixture-v1-common-questions`, P2-001~040)와 분리된 새 benchmark(`fixture-v1-independent-questions`, P2-041~070) 30건을 초안으로 작성한다. 같은 `FixtureSeed v1`·ontology를 재사용하므로 question holdout이며 unseen school이 아니다. `check_set_isolation()`으로 benchmark ID 분리·case ID·정규화 질문 문장·paraphrase family·`_intent_identity()` 기준 intent 겹침을 고정 code로 거부한다. 자동 검사는 의미 유사 문장을 모두 잡지 못하므로 사람 검토·동결 전 상태를 유지한다.
 - 이유: 개발 세트에서 prompt를 선택한 뒤 같은 세트로 반복 비교하면 과적합 선택이 일반화 성능으로 오인된다. 질문 격리를 자동 검사로 강제하되, 의미 검토와 동결은 사람 관문(L1·E2)으로 남겨야 후속 수치가 해석 가능하다.
 
+### ADR-029: repair 재시도는 검증 실패 code·stage 쌍에만 최대 1회로 제한
+
+- 날짜: 2026-09-20
+- 상태: 채택
+- 결정: `BoundedRepairCoordinator`는 기존 `ExecutionHarness`를 그대로 재사용하며 최초 1회 + repair 1회만 실행한다. `MODEL_INVALID_OUTPUT`은 `IR_GENERATED`에서만, `UNKNOWN_ENTITY`·`UNKNOWN_FIELD`·`INVALID_OPERATOR`·`INVALID_VALUE_TYPE`은 `IR_VALIDATED`에서만 repair하며 code와 stage를 함께 검사한다. 그 외 실패·provider 예외·취소는 재시도하지 않는다. repair provider에는 원본 request 복사본·ontology·mapping·고정 실패 code만 전달하고, 후보는 전체 안전 경로를 다시 통과해야 한다. 결과 요약에는 SQL·행·원문을 복사하지 않으며 repair 성공을 최초 모델 정확도로 세지 않는다.
+- 이유: 무제한 재시도는 실패 원인을 가리고 안전 검증을 우회할 유인을 만든다. code·stage 쌍으로 재시도 범위를 고정하면 오답 교정 실험이 재현 가능하고, critique·사용자 확인·관리자 검토 큐 등 Phase 6 나머지와 분리된다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -1477,3 +1485,4 @@ SQLite DB 입력
 - Phase 5-15 최종 보완으로 비교 recording을 bundle 자신의 `recording`에서만 가져오도록 API를 단순화해 바꿔치기 경로를 제거하고, bundle 내용 변조 거부와 실제 계약 모델 기반 합성 테스트를 추가. Codex 읽기 전용 재검증에서 private bundle 3개 strict load 후 v2 `UNKNOWN_FIELD` 72건 범주 재집계(접두사 불일치 46, ontology 밖 6, 물리 형태 5, 기타 15, 표기 차이 0, 판별 불가 0; 중복 27, 혼합 50)와 실제 bundle 기반 paired 비교(v1 21건·v2 72건)를 확인. 미승인 합성 개발 세트의 진단 집계이며 확정 성능 아님. gold 40건 `NEEDS_HUMAN_REVIEW` 유지
 - Phase 5-16 독립 합성 평가 세트 30건 초안(P2-041~070, `fixture-v1-independent-questions`) 작성. 정식 30~50건 조건·seed/ontology/QueryIR fingerprint·물리 식별자·offering key·기대 행을 기존 validator로 통과하고 flat·normalized·legacy에서 gold IR 90회(30×3) 실행이 기대 semantic 결과와 일치함을 확인. `check_set_isolation()`으로 개발 세트와의 benchmark·case ID·질문 문장·paraphrase family·intent 겹침 분리를 고정 code로 검증. question holdout이며 동결·승인·성능 검증 아님. 기존 40건과 새 30건 모두 `NEEDS_HUMAN_REVIEW` 유지, ADR-028 추가
 - Phase 5-17 독립 세트 문항 정리(P2-057 경계 배타 표현·P2-059 요일 코드 의존 제거, IR·기대 결과 정합 유지, 격리 유지)와 단독 커버리지(30건·15개 field 전부 사용·결과 0/1/여러 건·JOIN 0~3단계·gaps 3건) 및 FakeModel oracle smoke 90건 전건 일치(`oracle_smoke=true`, 모델 점수 아님) 확인. 제품 코드 변경 없음. 새 30건은 사람 검토·동결 전 question holdout 초안 유지
+- Phase 6-01 합성 입력의 제한된 QueryIR repair 경계(`BoundedRepairCoordinator`, 최초 1회 + 검증 실패 시 repair 1회) 구현. repair provider에는 request 복사본·ontology·mapping·고정 실패 code만 전달하고 후보는 전체 안전 경로를 다시 통과. `MODEL_INVALID_OUTPUT`은 `IR_GENERATED`에서만, 4개 semantic 오류는 `IR_VALIDATED`에서만 허용하고 그 외·provider 예외·취소는 재시도 없음. 합성 테스트에서 호출 횟수·안전성·비노출을 검증. critique·사용자 확인·관리자 검토 큐는 미구현. ADR-029 추가. 기존 40건과 새 30건 `NEEDS_HUMAN_REVIEW` 유지
