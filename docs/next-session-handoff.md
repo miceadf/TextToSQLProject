@@ -1,6 +1,6 @@
 # 새 Codex 대화용 짧은 인수인계
 
-현재 기준: 2026-09-20, Phase 6-01 합성 repair 경계 구현·검증 완료. 최신 상태는 항상 Git과 코드로 다시 확인한다. 설계와 로드맵의 원본은 [`schema-adaptive-text-to-sql-plan.md`](schema-adaptive-text-to-sql-plan.md), 독립 평가 세트 설계 기준은 [`independent-evaluation-set-design.md`](independent-evaluation-set-design.md), 안전한 잠정 비교는 [`phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md`](phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md)다.
+현재 기준: 2026-09-20, Phase 6-03 합성 사용자 확인 경계까지 구현·검증 완료. 최신 상태는 항상 Git과 코드로 다시 확인한다. 설계와 로드맵의 원본은 [`schema-adaptive-text-to-sql-plan.md`](schema-adaptive-text-to-sql-plan.md), 독립 평가 세트 설계 기준은 [`independent-evaluation-set-design.md`](independent-evaluation-set-design.md), 안전한 잠정 비교는 [`phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md`](phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md)다.
 
 ## 프로젝트와 현재 경계
 
@@ -19,13 +19,14 @@
 - Phase 5-17: 독립 세트 문항 정리(P2-057·P2-059, 격리 유지)·단독 커버리지(30건·15개 field·결과 0/1/여러 건·JOIN 0~3단계)·FakeModel oracle smoke 90건 전건 일치(모델 점수 아님) 완료. 제품 코드 변경 없음. 새 30건은 사람 검토·동결 전 question holdout 초안 유지. Ollama 호출·성능 평가·승인 없음.
 - Phase 6-01: 합성 입력의 제한된 QueryIR repair 경계(`BoundedRepairCoordinator`, 최초 1회 + repair 1회) 구현·합성 검증 완료. 재시도 허용 code/stage 고정, provider에는 고정 code만 전달, 후보 전체 안전 경로 재통과. request·ontology·mapping은 깊은 복사 스냅샷으로 고정하고, 각 모델은 격리 래퍼를 거쳐 harness 검증 컨텍스트와 분리된 복사본만 받아 모델 변이가 검증·컴파일·실행 컨텍스트에 영향을 주지 않는다. 사용자 확인·관리자 검토 큐는 미구현. 성능·정확도 수치 없음. 새 30건과 기존 40건 `NEEDS_HUMAN_REVIEW` 유지.
 - Phase 6-02: 합성 `RepairSummary` 전용 결정적 critique 분류(`critique-disposition-v1`) 구현·합성 검증 완료. 성공은 `EXECUTED_UNVERIFIED`+`repair_attempted`·`recovered_after_repair` 구분, 실패는 고정 (code, stage) 6개 disposition 분류, 위조·미지·모순은 `CRITIQUE_INVALID_SUMMARY`로 거부. repair 없으면 최종=초기, repair 표시는 Phase 6-01 재시도 허용 쌍에서만 수락. 원문·질문·SQL·행·경로 비노출, 호출 0회. 전체 loop·모호 질문 확인·관리자 검토 큐는 미구현. 성능·정확도 수치 없음.
+- Phase 6-03: 합성 모호성 신호·사용자 확인 경계(`clarification-gate-v1`) 구현·합성 검증 완료. caller 제공 명시적 신호만 pending에 묶고(2개 이상 서로 다른 option ID·semantic 식별자), 신호 없으면 pending·차단 없음. `resolve`는 caller 원본 신호를 재요구해 정렬 option ID·semantic_ref 전체 일치를 확인(일관성 확인이며 암호학적 진위 증명 아님). 정확한 한 선택만 `CONFIRMED`, 명시적 취소는 별도 `CANCELLED`. pending·결과에는 원시 식별자를 저장하지 않고 domain-separated fingerprint만 저장. 전 공개 경계는 dump-then-validate 재검증으로 위조 인스턴스를 고정 code로 거부. 원문·물리·SQL·행·경로·secret 비노출, 모델·DB·네트워크 호출 0회. 자동 감지·QueryIR 보정·하네스 자동 실행·UI·관리자 큐는 미구현. `모호한 질문 감지 및 사용자 확인` 전체 항목은 미완료 유지. 성능·정확도 수치 없음. 실제 CNU 자료·private bundle 미사용.
 - 현재 로컬에는 fine-tuned tag만 확인되어 base instruct 평가는 정확한 tag가 별도로 준비될 때 진행한다. E3·L5 팀 결정 대기와 합성 개발은 병행한다.
 - `docs/desktop-test-handoff.md`는 초기 데스크톱 이전 시점의 기록이다.
 
 ## 다음 작은 작업
 
 1. 새 30건 초안의 사람 검토(L1·E2)·동결
-2. Phase 6 사용자 확인·관리자 검토 큐 설계
+2. Phase 6 전체 loop·관리자 검토 큐 설계(명시적 확인 경계는 합성 완료, 자동 감지·실제 상호작용은 미구현)
 3. base instruct 모델 tag가 준비되면 base instruct 평가
 4. E3/L5·L1/L3 팀 결정이 필요한 실제 사용·공유·성능 확정 관문 도달 시 적용
 

@@ -18,6 +18,22 @@ from .contracts import (
     QueryIR,
 )
 from .compiler import SingleTableSQLiteCompiler
+from .clarification import (
+    CLARIFICATION_CONTRACT_VERSION,
+    AmbiguityOption,
+    AmbiguitySignal,
+    ClarificationChoice,
+    ClarificationError,
+    ClarificationErrorCode,
+    ClarificationResult,
+    ClarificationStatus,
+    PendingClarification,
+    database_id_fingerprint,
+    ontology_fingerprint,
+    request_id_fingerprint,
+    prepare as prepare_clarification,
+    resolve as resolve_clarification,
+)
 from .critique import (
     CRITIQUE_DISPOSITION_VERSION,
     CRITIQUE_INVALID_SUMMARY,
@@ -83,16 +99,25 @@ from .repair import (
 )
 
 __all__ = [
+    "AmbiguityOption",
+    "AmbiguitySignal",
     "BoundedRepairCoordinator",
+    "CLARIFICATION_CONTRACT_VERSION",
     "CRITIQUE_DISPOSITION_VERSION",
     "CRITIQUE_INVALID_SUMMARY",
     "CompiledQuery",
     "ConservativeSqlPolicy",
     "CaptureTarget",
+    "ClarificationChoice",
+    "ClarificationError",
+    "ClarificationErrorCode",
+    "ClarificationResult",
+    "ClarificationStatus",
     "CritiqueDisposition",
     "CritiqueError",
     "CritiqueResult",
     "DataType",
+    "database_id_fingerprint",
     "ExecutionHarness",
     "FakeModel",
     "FieldMapping",
@@ -109,6 +134,7 @@ __all__ = [
     "OntologyField",
     "OllamaQueryModel",
     "Operator",
+    "PendingClarification",
     "QueryIR",
     "REPAIR_PROVIDER_ERROR",
     "RepairProvider",
@@ -148,4 +174,8 @@ __all__ = [
     "capture_recording",
     "critique_repair_summary",
     "is_repairable",
+    "ontology_fingerprint",
+    "prepare_clarification",
+    "request_id_fingerprint",
+    "resolve_clarification",
 ]
