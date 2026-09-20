@@ -2,9 +2,15 @@
 
 The coordinator reuses `ExecutionHarness` without changing its contract.
 At most one repair candidate is accepted, and only for a fixed set of
-(code, stage) pairs. The repair provider receives the original request,
-runtime ontology, published mapping, and the fixed failure code only;
-gold IR, expected rows, SQL, database rows, raw model output, exception
+(code, stage) pairs. Both attempts run on identical deep-copied snapshots
+of the request, runtime ontology, and published mapping, so mutation by the
+initial QueryModel or by the repair provider cannot change the other
+attempt's context or the caller's objects. Each model additionally receives
+separate deep copies from the context its own harness run validates,
+compiles, and executes against, because `ExecutionHarness` otherwise shares
+one object between `generate_ir` and later validation. The repair provider receives
+only a request copy, ontology copy, mapping copy, and the fixed failure
+code; gold IR, expected rows, SQL, database rows, raw model output, exception
 text, and traces are never passed. A candidate must pass the full
 harness path (validator, compiler, policy, read-only executor) again;
 there is no direct SQL edit or execution path.
@@ -80,6 +86,33 @@ class RepairSummary(BaseModel):
     final_stage: HarnessStage | None = Field(default=None, strict=False)
     final_code: str | None = None
     succeeded: bool
+
+
+class _IsolatedModel:
+    """Wrap a model so its mutations cannot reach harness validation context.
+
+    `ExecutionHarness` passes the same request/ontology/mapping objects to
+    `generate_ir` and to later validation/compile/execute steps, so a model
+    that mutates its inputs would otherwise change what the harness
+    validates against. This wrapper hands the wrapped model deep copies and
+    keeps the harness-owned objects pristine, without changing either the
+    `ExecutionHarness` or the `QueryModel` public contract.
+    """
+
+    def __init__(self, model: QueryModel) -> None:
+        self._model = model
+
+    def generate_ir(
+        self,
+        request: HarnessRequest,
+        ontology: Ontology,
+        mapping: MappingProfile,
+    ) -> Any:
+        return self._model.generate_ir(
+            request.model_copy(deep=True),
+            ontology.model_copy(deep=True),
+            mapping.model_copy(deep=True),
+        )
 
 
 class _SingleCandidateModel:
@@ -167,7 +200,19 @@ class BoundedRepairCoordinator:
         model: QueryModel,
         repair_provider: RepairProvider,
     ) -> RepairSummary:
-        initial = self._harness(model).run(request_data, ontology, mapping)
+        # Snapshot caller context first; the harness hands only deep copies
+        # to the initial model, the repair provider, and the second attempt.
+        try:
+            snapshot_request = HarnessRequest.model_validate(request_data)
+        except ValidationError:
+            snapshot_request = None
+        ontology_snapshot = ontology.model_copy(deep=True)
+        mapping_snapshot = mapping.model_copy(deep=True)
+        initial = self._harness(_IsolatedModel(model)).run(
+            snapshot_request.model_copy(deep=True) if snapshot_request is not None else request_data,
+            ontology_snapshot.model_copy(deep=True),
+            mapping_snapshot.model_copy(deep=True),
+        )
         if initial.status is HarnessStatus.SUCCEEDED:
             status, stage, code = _outcome_of(initial)
             return RepairSummary(
@@ -186,19 +231,18 @@ class BoundedRepairCoordinator:
         code, stage = initial.error.code, initial.error.stage
         if (
             stage is None
-            or mapping.status is not MappingStatus.PUBLISHED
+            or mapping_snapshot.status is not MappingStatus.PUBLISHED
             or not is_repairable(code, stage)
         ):
             return self._terminal(initial)
-        try:
-            validated = HarnessRequest.model_validate(request_data)
-        except ValidationError:
+        if snapshot_request is None:
             return self._terminal(initial)
+        validated = snapshot_request.model_copy(deep=True)
         try:
             candidate = repair_provider.propose_repair(
                 validated.model_copy(deep=True),
-                ontology,
-                mapping,
+                ontology_snapshot.model_copy(deep=True),
+                mapping_snapshot.model_copy(deep=True),
                 failure_code=code,
                 failure_stage=stage,
             )
@@ -211,8 +255,10 @@ class BoundedRepairCoordinator:
                 final_code=REPAIR_PROVIDER_ERROR,
                 final_stage=None,
             )
-        final = self._harness(_SingleCandidateModel(candidate)).run(
-            validated, ontology, mapping
+        final = self._harness(_IsolatedModel(_SingleCandidateModel(candidate))).run(
+            snapshot_request.model_copy(deep=True),
+            ontology_snapshot.model_copy(deep=True),
+            mapping_snapshot.model_copy(deep=True),
         )
         final_status, final_stage, final_code = _outcome_of(final)
         initial_status, initial_stage, initial_code = _outcome_of(initial)

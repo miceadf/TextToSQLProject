@@ -370,6 +370,118 @@ def test_original_request_and_context_are_not_mutated(setup) -> None:
     assert request.model_dump(mode="json") == snapshot
 
 
+def test_mutating_initial_model_with_valid_ir_still_uses_original_context(setup) -> None:
+    coordinator, executor, request, ontology, mapping, _ = setup
+    request_before = request.model_dump(mode="json")
+    ontology_before = ontology.model_dump(mode="json")
+    mapping_before = mapping.model_dump(mode="json")
+
+    class MutatingValidModel:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def generate_ir(self, incoming_request, incoming_ontology, incoming_mapping):
+            self.calls += 1
+            incoming_request.question = "바뀐 질문"
+            incoming_request.database_id = "other-db"
+            incoming_ontology.entities.clear()
+            incoming_ontology.fields.clear()
+            incoming_mapping.fields.clear()
+            return dict(GOOD_IR)
+
+    model = MutatingValidModel()
+    provider = RecordingRepairProvider(GOOD_IR)
+    summary = coordinator.run(
+        request, ontology, mapping,
+        model=model, repair_provider=provider,
+    )
+    # The harness must validate/compile/execute against the original context,
+    # not the model's mutated copies: success with no repair call.
+    assert summary.succeeded is True
+    assert summary.initial_code is None
+    assert (summary.repair_attempted, summary.repair_attempts) == (False, 0)
+    assert model.calls == 1 and provider.calls == 0 and executor.calls == 1
+    assert request.model_dump(mode="json") == request_before
+    assert ontology.model_dump(mode="json") == ontology_before
+    assert mapping.model_dump(mode="json") == mapping_before
+
+
+def test_mutating_initial_model_cannot_change_repair_context(setup) -> None:
+    coordinator, executor, request, ontology, mapping, _ = setup
+    request_before = request.model_dump(mode="json")
+    ontology_before = ontology.model_dump(mode="json")
+    mapping_before = mapping.model_dump(mode="json")
+
+    class MutatingInitialModel:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def generate_ir(self, incoming_request, incoming_ontology, incoming_mapping):
+            self.calls += 1
+            incoming_request.question = "바뀐 질문"
+            incoming_request.database_id = "other-db"
+            incoming_ontology.entities.clear()
+            incoming_ontology.fields.clear()
+            incoming_mapping.fields.clear()
+            return {}
+
+    provider = RecordingRepairProvider(GOOD_IR)
+    summary = coordinator.run(
+        request, ontology, mapping,
+        model=MutatingInitialModel(), repair_provider=provider,
+    )
+    assert summary.initial_code == HarnessErrorCode.MODEL_INVALID_OUTPUT.value
+    assert summary.succeeded is True
+    assert summary.final_code is None
+    assert provider.calls == 1
+    assert executor.calls == 1
+    # Caller originals are unchanged.
+    assert request.model_dump(mode="json") == request_before
+    assert ontology.model_dump(mode="json") == ontology_before
+    assert mapping.model_dump(mode="json") == mapping_before
+    # Repair provider and second attempt saw the pristine context.
+    assert provider.seen[0]["request"].model_dump(mode="json") == request_before
+    assert provider.seen[0]["ontology"].model_dump(mode="json") == ontology_before
+    assert provider.seen[0]["mapping"].model_dump(mode="json") == mapping_before
+
+
+def test_mutating_repair_provider_cannot_change_second_attempt(setup) -> None:
+    coordinator, executor, request, ontology, mapping, _ = setup
+    request_before = request.model_dump(mode="json")
+    ontology_before = ontology.model_dump(mode="json")
+    mapping_before = mapping.model_dump(mode="json")
+
+    class ClearingRepairProvider:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def propose_repair(self, incoming_request, incoming_ontology, incoming_mapping,
+                           *, failure_code, failure_stage):
+            self.calls += 1
+            incoming_request.question = "바뀐 질문"
+            incoming_request.database_id = "other-db"
+            incoming_ontology.entities.clear()
+            incoming_ontology.fields.clear()
+            incoming_mapping.fields.clear()
+            return dict(GOOD_IR)
+
+    provider = ClearingRepairProvider()
+    summary = coordinator.run(
+        request, ontology, mapping,
+        model=CountingModel({}), repair_provider=provider,
+    )
+    # Without snapshots the cleared mapping would make the second attempt
+    # fail with MAPPING_MISSING; with snapshots the repair still succeeds.
+    assert summary.succeeded is True
+    assert summary.final_code is None
+    assert provider.calls == 1
+    assert executor.calls == 1
+    assert request.model_dump(mode="json") == request_before
+    assert ontology.model_dump(mode="json") == ontology_before
+    assert mapping.model_dump(mode="json") == mapping_before
+    assert len(mapping.fields) == 3
+
+
 def test_provider_receives_only_request_and_fixed_code(setup) -> None:
     coordinator, _, request, ontology, mapping, _ = setup
     provider = RecordingRepairProvider(GOOD_IR)
