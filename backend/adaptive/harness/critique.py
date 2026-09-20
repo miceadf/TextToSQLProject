@@ -157,6 +157,16 @@ def _is_retryable_initial(code: str, stage: HarnessStage | None) -> bool:
 
 def critique_repair_summary(summary: RepairSummary) -> CritiqueResult:
     """Classify a repair summary without touching models, DB, or files."""
+    try:
+        if not isinstance(summary, RepairSummary):
+            raise TypeError()
+        # model_copy(update=...) and model_construct() skip validation.
+        # Suppress serializer warnings because they can contain forged input.
+        summary = RepairSummary.model_validate(
+            summary.model_dump(mode="json", warnings=False)
+        )
+    except Exception:
+        raise CritiqueError() from None
     if summary.repair_attempted != (summary.repair_attempts > 0):
         raise CritiqueError()
     if summary.succeeded != (summary.final_status is HarnessStatus.SUCCEEDED):

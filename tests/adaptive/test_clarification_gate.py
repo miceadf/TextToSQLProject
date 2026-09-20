@@ -38,6 +38,7 @@ from backend.adaptive.harness.clarification import (
     ClarificationStatus,
     PendingClarification,
     ontology_fingerprint,
+    option_id_fingerprint,
     prepare as prepare_clarification,
     resolve as resolve_clarification,
 )
@@ -136,7 +137,9 @@ def test_signal_with_two_options_creates_pending_and_confirms_one():
     pending = prepare_clarification(_request(), _ontology(), _mapping(), _signal())
     assert pending is not None
     assert pending.clarification_version == CLARIFICATION_CONTRACT_VERSION
-    assert pending.option_ids == ["opt-course", "opt-instructor"]
+    assert pending.option_ids == sorted(
+        [option_id_fingerprint("opt-course"), option_id_fingerprint("opt-instructor")]
+    )
     assert pending.request_id_sha256 == request_id_fingerprint("req-synth-001")
     assert pending.database_id_sha256 == database_id_fingerprint("synth-db")
     result = _resolve(
@@ -148,7 +151,7 @@ def test_signal_with_two_options_creates_pending_and_confirms_one():
         ClarificationChoice(selection=["opt-course"]),
     )
     assert result.status is ClarificationStatus.CONFIRMED
-    assert result.selected_option_id == "opt-course"
+    assert result.selected_option_id == option_id_fingerprint("opt-course")
     assert result.request_id_sha256 == request_id_fingerprint("req-synth-001")
     assert result.database_id_sha256 == database_id_fingerprint("synth-db")
 
@@ -570,6 +573,35 @@ def test_path_like_and_secret_like_ids_are_never_stored_raw(caplog):
         message = record.getMessage()
         for secret in secrets:
             assert secret not in message
+
+
+def test_caller_option_id_is_opaque_in_pending_and_result():
+    raw_id = "SYNTHETICSECRET123"
+    signal = {
+        "options": [
+            {"option_id": raw_id, "semantic_ref": "Course.name"},
+            {"option_id": "other", "semantic_ref": "Instructor.name"},
+        ]
+    }
+    pending = prepare_clarification(_request(), _ontology(), _mapping(), signal)
+    assert pending is not None
+    result = _resolve(
+        _request(), _ontology(), _mapping(), pending, signal,
+        ClarificationChoice(selection=[raw_id]),
+    )
+    assert raw_id not in pending.model_dump_json()
+    assert raw_id not in result.model_dump_json()
+    assert result.selected_option_id == option_id_fingerprint(raw_id)
+
+
+def test_v1_pending_is_rejected_after_option_id_contract_change():
+    old = _pending().model_copy(update={"clarification_version": "clarification-gate-v1"})
+    with pytest.raises(ClarificationError) as exc_info:
+        _resolve(
+            _request(), _ontology(), _mapping(), old, _signal(),
+            ClarificationChoice(selection=["opt-course"]),
+        )
+    assert exc_info.value.code == ClarificationErrorCode.CONTEXT_MISMATCH.value
 
 
 def test_pending_result_errors_expose_no_raw_content(caplog):

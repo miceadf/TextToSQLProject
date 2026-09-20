@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import sqlite3
 import tempfile
+import warnings
 from pathlib import Path
 
 import pytest
@@ -455,6 +456,20 @@ def test_provider_failure_requires_repair_attempt() -> None:
     with pytest.raises(CritiqueError) as exc_info:
         critique_repair_summary(summary)
     assert str(exc_info.value) == CRITIQUE_INVALID_SUMMARY
+
+
+def test_forged_repair_count_and_code_fail_closed_without_warnings() -> None:
+    valid = _failed_summary(HarnessErrorCode.UNKNOWN_FIELD.value, HarnessStage.IR_VALIDATED)
+    for forged in (
+        valid.model_copy(update={"repair_attempts": 2}),
+        valid.model_copy(update={"final_code": ["SYNTHETICSECRET123"]}),
+    ):
+        with warnings.catch_warnings(record=True) as emitted:
+            warnings.simplefilter("always")
+            with pytest.raises(CritiqueError) as exc_info:
+                critique_repair_summary(forged)
+        assert str(exc_info.value) == CRITIQUE_INVALID_SUMMARY
+        assert not emitted
 
 
 @pytest.mark.parametrize(("initial_code", "initial_stage"), [

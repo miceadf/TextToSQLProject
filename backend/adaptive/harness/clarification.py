@@ -56,14 +56,15 @@ from .contracts import HarnessRequest, MappingProfile, MappingStatus, Ontology
 from .recorded import mapping_fingerprint, question_fingerprint
 
 
-CLARIFICATION_CONTRACT_VERSION = "clarification-gate-v1"
+CLARIFICATION_CONTRACT_VERSION = "clarification-gate-v2"
 
 _OPTION_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
 _SEMANTIC_REF_PATTERN = r"^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)?$"
 _HEX64_PATTERN = r"^[0-9a-f]{64}$"
 
-_REQUEST_ID_DOMAIN = "clarification-gate-v1:request-id:"
-_DATABASE_ID_DOMAIN = "clarification-gate-v1:database-id:"
+_REQUEST_ID_DOMAIN = "clarification-gate-v2:request-id:"
+_DATABASE_ID_DOMAIN = "clarification-gate-v2:database-id:"
+_OPTION_ID_DOMAIN = "clarification-gate-v2:option-id:"
 
 
 class ClarificationErrorCode(str, Enum):
@@ -128,7 +129,7 @@ class PendingClarification(BaseModel):
 
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
 
-    clarification_version: str = Field(pattern=r"^clarification-gate-v1$")
+    clarification_version: str = Field(pattern=r"^clarification-gate-v2$")
     request_id_sha256: str = Field(pattern=_HEX64_PATTERN)
     database_id_sha256: str = Field(pattern=_HEX64_PATTERN)
     question_sha256: str = Field(pattern=_HEX64_PATTERN)
@@ -176,7 +177,7 @@ class ClarificationResult(BaseModel):
 
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
 
-    clarification_version: str = Field(pattern=r"^clarification-gate-v1$")
+    clarification_version: str = Field(pattern=r"^clarification-gate-v2$")
     status: ClarificationStatus = Field(strict=False)
     request_id_sha256: str = Field(pattern=_HEX64_PATTERN)
     database_id_sha256: str = Field(pattern=_HEX64_PATTERN)
@@ -203,6 +204,11 @@ def request_id_fingerprint(request_id: str) -> str:
 def database_id_fingerprint(database_id: str) -> str:
     """Domain-separated hash of a raw database identifier (never stored raw)."""
     return _domain_fingerprint(_DATABASE_ID_DOMAIN, database_id)
+
+
+def option_id_fingerprint(option_id: str) -> str:
+    """Opaque ID used in pending state and results; never store caller IDs raw."""
+    return _domain_fingerprint(_OPTION_ID_DOMAIN, option_id)
 
 
 def ontology_fingerprint(ontology: Ontology) -> str:
@@ -254,9 +260,22 @@ def _is_known_semantic_ref(semantic_ref: str, ontology: Ontology) -> bool:
     return semantic_ref in ontology.fields
 
 
-def _sorted_option_pairs(signal: AmbiguitySignal | PendingClarification) -> list[tuple[str, str]]:
+def _safe_options(signal: AmbiguitySignal) -> list[AmbiguityOption]:
     return sorted(
-        ((option.option_id, option.semantic_ref) for option in signal.options),
+        (
+            AmbiguityOption(
+                option_id=option_id_fingerprint(option.option_id),
+                semantic_ref=option.semantic_ref,
+            )
+            for option in signal.options
+        ),
+        key=lambda option: option.option_id,
+    )
+
+
+def _sorted_option_pairs(pending: PendingClarification) -> list[tuple[str, str]]:
+    return sorted(
+        ((option.option_id, option.semantic_ref) for option in pending.options),
         key=lambda pair: pair[0],
     )
 
@@ -291,7 +310,7 @@ def prepare(
     for option in validated_signal.options:
         if not _is_known_semantic_ref(option.semantic_ref, validated_ontology):
             raise ClarificationError(ClarificationErrorCode.INVALID_SIGNAL)
-    ordered = sorted(validated_signal.options, key=lambda option: option.option_id)
+    ordered = _safe_options(validated_signal)
     try:
         return PendingClarification(
             clarification_version=CLARIFICATION_CONTRACT_VERSION,
@@ -350,7 +369,8 @@ def resolve(
     for option in validated_signal.options:
         if not _is_known_semantic_ref(option.semantic_ref, validated_ontology):
             raise ClarificationError(ClarificationErrorCode.INVALID_SIGNAL)
-    if _sorted_option_pairs(validated_signal) != _sorted_option_pairs(validated_pending):
+    expected_pairs = [(option.option_id, option.semantic_ref) for option in _safe_options(validated_signal)]
+    if expected_pairs != _sorted_option_pairs(validated_pending):
         raise ClarificationError(ClarificationErrorCode.CONTEXT_MISMATCH)
     if (
         validated_pending.clarification_version != CLARIFICATION_CONTRACT_VERSION
@@ -378,8 +398,11 @@ def resolve(
             )
         if len(validated_choice.selection) != 1:
             raise ClarificationError(ClarificationErrorCode.INVALID_CHOICE)
-        selected = validated_choice.selection[0]
-        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", selected) or selected not in allowed:
+        raw_selected = validated_choice.selection[0]
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", raw_selected):
+            raise ClarificationError(ClarificationErrorCode.INVALID_CHOICE)
+        selected = option_id_fingerprint(raw_selected)
+        if selected not in allowed:
             raise ClarificationError(ClarificationErrorCode.INVALID_CHOICE)
         return ClarificationResult(
             clarification_version=CLARIFICATION_CONTRACT_VERSION,
