@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from ..harness.recorded import ModelRecording, RecordedFailure
+from ..harness.recording_bundle_contracts import LoadedRecordingBundle
 from .run_contracts import CaseAttempt, EvaluationRunReport
 
 
@@ -13,26 +16,209 @@ def _indexed(report: EvaluationRunReport) -> dict[tuple[str, str], CaseAttempt]:
     return indexed
 
 
+def _provenance_value(value: Any) -> Any:
+    return getattr(value, "value", value)
+
+
+def _require_bundle(bundle: Any) -> Any:
+    manifest = getattr(bundle, "manifest", None)
+    bundled = getattr(bundle, "recording", None)
+    if manifest is None or bundled is None:
+        raise ValueError("PAIRED_PROVENANCE_MISSING")
+    provenance = getattr(manifest, "provenance", None)
+    if provenance is None:
+        raise ValueError("PAIRED_PROVENANCE_MISSING")
+    for field in (
+        "provider_kind", "provider_id", "provider_version", "model_id",
+        "generation_config_sha256",
+    ):
+        if getattr(provenance, field, None) is None:
+            raise ValueError("PAIRED_PROVENANCE_MISSING")
+    if getattr(manifest, "model_run_id", None) is None:
+        raise ValueError("PAIRED_PROVENANCE_MISSING")
+    if getattr(bundled, "model_run_id", None) is None:
+        raise ValueError("PAIRED_PROVENANCE_MISSING")
+    return bundle
+
+
+def _validate_self_consistency(
+    report: EvaluationRunReport,
+    recording: ModelRecording,
+    bundle: Any,
+) -> None:
+    """Each side must bind its own report, recording, and bundle manifest.
+
+    v1 and v2 intentionally use different model_run_id values, so callers
+    must not compare run IDs across sides. Only within-side equality is
+    checked. The passed recording must also match the strict-loaded bundle
+    recording by run ID and request-ID set; otherwise a caller could swap
+    in an unrelated recording while reusing a valid bundle.
+    """
+    _require_bundle(bundle)
+    manifest = bundle.manifest
+    bundled = bundle.recording
+    report_run_id = report.config.model_run_id
+    if (
+        report_run_id != recording.model_run_id
+        or report_run_id != manifest.model_run_id
+        or report_run_id != bundled.model_run_id
+    ):
+        raise ValueError("PAIRED_MODEL_RUN_ID_MISMATCH")
+    recording_ids = [record.request_id for record in recording.records]
+    if len(recording_ids) != len(set(recording_ids)):
+        raise ValueError("PAIRED_RECORDING_DUPLICATE_REQUEST_ID")
+    bundled_ids = [record.request_id for record in bundled.records]
+    if len(bundled_ids) != len(set(bundled_ids)):
+        raise ValueError("PAIRED_RECORDING_DUPLICATE_REQUEST_ID")
+    if set(recording_ids) != set(bundled_ids):
+        raise ValueError("PAIRED_RECORDING_BUNDLE_MISMATCH")
+
+
+def _validate_provenance_comparability(v1_bundle: Any, v2_bundle: Any) -> None:
+    """Check that two bundles describe a comparable model execution.
+
+    The exact model tag comes only from the strict-loaded bundle manifest
+    provenance (never from report model_label). Prompt template hashes are
+    intentionally not compared because v1/v2 use different templates.
+    Provenance stays DECLARED_UNVERIFIED: it binds the caller's declaration
+    reproducibly but never proves model weights independently.
+    """
+    first = v1_bundle.manifest.provenance
+    second = v2_bundle.manifest.provenance
+    if (
+        _provenance_value(first.provider_kind) != _provenance_value(second.provider_kind)
+        or first.provider_id != second.provider_id
+        or first.provider_version != second.provider_version
+    ):
+        raise ValueError("PAIRED_PROVIDER_MISMATCH")
+    if first.model_id != second.model_id:
+        raise ValueError("PAIRED_MODEL_TAG_MISMATCH")
+    first_digest = getattr(first, "model_artifact_sha256", None)
+    second_digest = getattr(second, "model_artifact_sha256", None)
+    if first_digest is None or second_digest is None:
+        raise ValueError("PAIRED_MODEL_DIGEST_UNVERIFIED")
+    if first_digest != second_digest:
+        raise ValueError("PAIRED_MODEL_DIGEST_MISMATCH")
+    if first.generation_config_sha256 != second.generation_config_sha256:
+        raise ValueError("PAIRED_GENERATION_CONFIG_MISMATCH")
+
+
+def _validate_request_id_coverage(
+    report: EvaluationRunReport,
+    recording: ModelRecording,
+) -> dict[str, Any]:
+    """Require exact attempt↔recording request-ID correspondence per side.
+
+    Duplicates, missing IDs, and extra IDs are all rejected with fixed
+    codes. No success aggregation is returned when coverage is unproven.
+    """
+    attempt_ids = [attempt.request_id for attempt in report.attempts]
+    if len(attempt_ids) != len(set(attempt_ids)):
+        raise ValueError("PAIRED_RECORDING_DUPLICATE_REQUEST_ID")
+    record_ids = [record.request_id for record in recording.records]
+    if len(record_ids) != len(set(record_ids)):
+        raise ValueError("PAIRED_RECORDING_DUPLICATE_REQUEST_ID")
+    if set(attempt_ids) != set(record_ids):
+        raise ValueError("PAIRED_REQUEST_ID_MISMATCH")
+    return {record.request_id: record for record in recording.records}
+
+
+def _validate_paired_fingerprints(
+    left: dict[tuple[str, str], CaseAttempt],
+    right: dict[tuple[str, str], CaseAttempt],
+    v1_records: dict[str, Any],
+    v2_records: dict[str, Any],
+) -> None:
+    """Require identical question/mapping/database context per case×variant.
+
+    Pairing across reports uses case×variant keys, never raw request-ID
+    strings. Only fingerprints are compared; original questions, mappings,
+    responses, and paths are never returned or logged here.
+    """
+    for key in sorted(left):
+        first = v1_records[left[key].request_id]
+        second = v2_records[right[key].request_id]
+        if first.question_sha256 != second.question_sha256:
+            raise ValueError("PAIRED_QUESTION_FINGERPRINT_MISMATCH")
+        if first.mapping_sha256 != second.mapping_sha256:
+            raise ValueError("PAIRED_MAPPING_FINGERPRINT_MISMATCH")
+        if first.database_id != second.database_id:
+            raise ValueError("PAIRED_DATABASE_CONTEXT_MISMATCH")
+
+
+def _validate_paired_contracts(
+    v1: EvaluationRunReport,
+    v2: EvaluationRunReport,
+) -> None:
+    """Verify that two reports share every comparison contract dimension.
+
+    Checks benchmark identity, version, gold/ontology/QueryIR fingerprints,
+    fixture metadata fingerprints, variant sets, and attempt key sets.
+    Does not check model_run_id because paired comparison intentionally
+    uses different run IDs for v1 and v2.
+    """
+    if v1.benchmark_id != v2.benchmark_id:
+        raise ValueError("PAIRED_BENCHMARK_ID_MISMATCH")
+    if v1.benchmark_version != v2.benchmark_version:
+        raise ValueError("PAIRED_BENCHMARK_VERSION_MISMATCH")
+    if v1.gold_set_fingerprint != v2.gold_set_fingerprint:
+        raise ValueError("PAIRED_GOLD_SET_FINGERPRINT_MISMATCH")
+    if v1.ontology_fingerprint != v2.ontology_fingerprint:
+        raise ValueError("PAIRED_ONTOLOGY_FINGERPRINT_MISMATCH")
+    if v1.query_ir_fingerprint != v2.query_ir_fingerprint:
+        raise ValueError("PAIRED_QUERY_IR_FINGERPRINT_MISMATCH")
+    if v1.seed_fingerprint != v2.seed_fingerprint:
+        raise ValueError("PAIRED_SEED_FINGERPRINT_MISMATCH")
+    if v1.config.variants != v2.config.variants:
+        raise ValueError("PAIRED_VARIANT_MISMATCH")
+    if len(v1.fixture_metadata) != len(v2.fixture_metadata):
+        raise ValueError("PAIRED_FIXTURE_METADATA_LENGTH_MISMATCH")
+    for fm1, fm2 in zip(v1.fixture_metadata, v2.fixture_metadata):
+        if fm1.variant != fm2.variant:
+            raise ValueError("PAIRED_FIXTURE_VARIANT_ORDER_MISMATCH")
+        if fm1.catalog_fingerprint != fm2.catalog_fingerprint:
+            raise ValueError("PAIRED_FIXTURE_CATALOG_FINGERPRINT_MISMATCH")
+        if fm1.mapping_fingerprint != fm2.mapping_fingerprint:
+            raise ValueError("PAIRED_FIXTURE_MAPPING_FINGERPRINT_MISMATCH")
+        if fm1.mapping_version != fm2.mapping_version:
+            raise ValueError("PAIRED_FIXTURE_MAPPING_VERSION_MISMATCH")
+
+
 def paired_prompt_summary(
     v1: EvaluationRunReport,
     v2: EvaluationRunReport,
     v1_recording: ModelRecording,
     v2_recording: ModelRecording,
+    *,
+    v1_bundle: LoadedRecordingBundle | Any,
+    v2_bundle: LoadedRecordingBundle | Any,
 ) -> dict[str, object]:
-    """Return counts only; no request IDs, questions, responses or paths."""
+    """Return counts only; no request IDs, questions, responses or paths.
+
+    Both strict-loaded bundles are required: without manifest provenance
+    there is no proven model tag, digest, or generation config, so no
+    success aggregation is returned (PAIRED_PROVENANCE_MISSING). The
+    report itself is not cryptographically bound to the bundle manifest;
+    binding is limited to matching model_run_id values, matching
+    request-ID sets, and matching per-case fingerprints. Anything beyond
+    that is a documented limitation, not a verified claim.
+    """
+    if v1_bundle is None or v2_bundle is None:
+        raise ValueError("PAIRED_PROVENANCE_MISSING")
+    _validate_paired_contracts(v1, v2)
+    _validate_self_consistency(v1, v1_recording, v1_bundle)
+    _validate_self_consistency(v2, v2_recording, v2_bundle)
+    _validate_provenance_comparability(v1_bundle, v2_bundle)
     left, right = _indexed(v1), _indexed(v2)
     if left.keys() != right.keys() or not left:
         raise ValueError("PAIRED_TARGET_MISMATCH")
     if len(left) != 120:
         raise ValueError("PAIRED_DENOMINATOR_MISMATCH")
-    if (v1.gold_set_fingerprint != v2.gold_set_fingerprint
-            or v1.ontology_fingerprint != v2.ontology_fingerprint
-            or v1.query_ir_fingerprint != v2.query_ir_fingerprint):
-        raise ValueError("PAIRED_CONTRACT_MISMATCH")
     record_sets = (
-        {item.request_id: item for item in v1_recording.records},
-        {item.request_id: item for item in v2_recording.records},
+        _validate_request_id_coverage(v1, v1_recording),
+        _validate_request_id_coverage(v2, v2_recording),
     )
+    _validate_paired_fingerprints(left, right, record_sets[0], record_sets[1])
     result: dict[str, object] = {"denominator": len(left)}
     for label, predicate in (
         ("structural_exact", lambda attempt: attempt.structural_ir_exact is True),

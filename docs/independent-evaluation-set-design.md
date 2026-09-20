@@ -1,0 +1,99 @@
+# 독립 합성 평가 세트 설계 기준
+
+> 상태: **설계 고정 초안**. 새 세트를 모델에 실행하거나 확정 성능을 발표하지 않는다.
+>
+> 작성: 2026-09-19
+
+## 목적
+
+Phase 5-13/14의 개발 세트(40건)는 v1 결과를 본 뒤 v2를 설계하는 데 사용되었다. 같은 세트에서 반복 비교하면 개발 세트에 과적합된 프롬프트 선택이 일반화 성능으로 오인될 위험이 있다. 독립 합성 평가 세트는 다음을 보장한다:
+
+1. 개발 세트의 질문 문장·paraphrase family를 재사용하지 않는다.
+2. 기존 40건의 질문 의도(intent family)를 완전히 분리하거나, 질문 의도를 재사용하더라도 문장·paraphrase를 독립 생성한다.
+3. gold 사람 승인 절차를 명시적으로 기록한다.
+
+## 독립성 분리 기준
+
+### 질문 격리 (Question Isolation)
+
+- **문장 격리**: 기존 40건의 질문 원문·paraphrase를 그대로 복사하지 않는다.
+- **paraphrase family 격리**: 기존 paraphrase family ID를 재사용하지 않는다.
+- **의도 격리 (선택)**: 가능하면 기존 intent family를 재사용하지 않는다. 재사용할 때는 반드시 문장·paraphrase가 달라야 하며, benchmark version을 올린다.
+
+### 스키마 격리
+
+- 같은 `FixtureSeed`를 사용하면 **question holdout**이지 unseen school이 아니다.
+- 동일 합성 스키마의 질문 분리는 논문에서 "합성 스키마 간 적응"으로 기술한다. "실제 다른 학교 일반화"라고 기술하지 않는다.
+- 실제 unseen school 평가는 `docs/human-validation-checkpoints.md`의 E4/L6 관문을 따른다.
+
+### 모델·프롬프트 격리
+
+- 개발 세트에서 사용한 prompt 버전·전송 설정을 독립 세트 평가에 그대로 쓸 수 있다.
+- 그러나 개발 세트 결과를 본 뒤 prompt를 선택한 경우, 독립 세트에서는 **동시에** 모든 후보 prompt를 평가하거나 선택 기준을 사전에 고정한다.
+- 모델 tag·digest를 개발 세트와 독립 세트에서 각각 기록한다.
+
+## 작성·검토·동결 순서
+
+### 1단계: 작성 (Authoring)
+
+- `FixtureSeed v1`의 offerings과 ontology를 재사용할 수 있다 (question holdout).
+- 새 질문·gold Query IR·기대 결과를 작성한다.
+- 질문은 한국어이며 기존 40건과 다른 문장을 사용한다.
+- gold Query IR의 entity는 `CourseOffering`으로 고정한다 (현재 fixture 범위).
+- 기존 `_intent_identity()`의 intent key 중복을 피한다 (의도 격리 선택 시).
+- 모든 새 case는 `NEEDS_HUMAN_REVIEW` 상태로 시작한다.
+
+### 2단계: 자동 검증
+
+- `validate_evaluation_set()`을 통과해야 한다.
+- fingerprint drift, 중복 질문, 물리 스키마 식별자 노출, offering key 검증을 자동으로 수행한다.
+- `build_fixture_bundle()`로 새 fixture를 생성해 seed-only 정답과 대조한다.
+
+### 3단계: 사람 검토 (Human Review)
+
+- gold 작성자와 다른 팀원이 질문·gold IR·기대 결과를 검토한다.
+- `docs/human-validation-checkpoints.md`의 L1 기준을 따른다.
+- case별 승인·수정·보류를 기록한다.
+- `HUMAN_APPROVED`로 전환할 때 `reviewer_id`를 명시한다.
+
+### 4단계: 동결 (Freeze)
+
+- 검토 완료 후 benchmark version을 확정한다.
+- gold set fingerprint, seed fingerprint, ontology fingerprint, QueryIR contract fingerprint를 기록한다.
+- 동결 후 gold content를 변경하지 않는다. 변경 시 version을 올린다.
+
+## fingerprint 고정 항목
+
+| 항목 | 고정 시점 | 변경 조건 |
+|------|-----------|-----------|
+| `benchmark_id` | 작성 시작 | 새 세트마다 고유 ID |
+| `benchmark_version` | 동결 | gold content 변경 시 +1 |
+| `seed_fingerprint` | 작성 시작 | FixtureSeed 변경 시 갱신 |
+| `ontology_fingerprint` | 작성 시작 | ontology 변경 시 갱신 |
+| `query_ir_fingerprint` | 작성 시작 | QueryIR contract 변경 시 갱신 |
+| `gold_set_fingerprint` | 동결 | case 추가/제거/수정 시 갱신 |
+
+## 모델·prompt version 기록
+
+각 평가 실행 시 다음을 기록한다:
+
+- `model_run_id`: 고유 실행 ID
+- `model_label`: 모델 설명 (예: `fine-tuned-qwen-latest`, `base-instruct-qwen-latest`)
+- `model_tag` + `model_digest`: Ollama `/api/tags`에서 확인한 정확한 tag와 digest
+- `prompt_version`: `query-ir-v1` 또는 `query-ir-v2`
+- `prompt_template_sha256`: versioned template의 UTF-8 SHA-256
+- `generation_config_sha256`: `{"options":{"temperature":0},"stream":false,"timeout_seconds":<float>}`의 canonical JSON SHA-256
+
+## 개발 세트 vs 독립 세트 결과 구분
+
+- 개발 세트 결과는 `phase5-13`/`phase5-14` 보고서로 고정한다.
+- 독립 세트 결과는 별도 문서에 기록한다.
+- 두 세트의 수치를 섞어 보고하지 않는다.
+- 논문에서 두 세트를 모두 보고할 때는 개발 세트를 "development holdout", 독립 세트를 "independent holdout"으로 구분한다.
+
+## 현재 한계와 다음 단계
+
+- 이 문서는 설계 기준을 고정할 뿐 새 세트를 생성하지 않는다.
+- 새 세트의 실제 작성·검토·동결은 별도 작업 단계에서 수행한다.
+- gold 40건의 `NEEDS_HUMAN_REVIEW`는 유지한다.
+- E3/L5·L1/L3 팀 결정은 필요한 실제 사용·공유·성능 확정 관문까지 대기한다.

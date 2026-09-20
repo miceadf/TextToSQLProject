@@ -606,6 +606,8 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 - [x] Phase 5-12 완전 합성 질문 2건의 로컬 Ollama private capture·strict replay 형식 검증(성능 평가 제외)
 - [x] Phase 5-13 fine-tuned tag의 합성 40×3 잠정 capture·offline 평가 연결(gold 사람 승인 전, 확정 성능 제외)
 - [x] Phase 5-14 `UNKNOWN_FIELD` 비노출 분류와 단일 v2 prompt 합성 120쌍 탐색 비교(v1 기본 유지; 확정 성능 제외)
+- [x] Phase 5-15 paired 비교 무결성 계약·합성 테스트·report-level 재집계(아래 미검증 항목 제외)
+- [ ] Phase 5-15 strict-load v2 범주 재감사(`audit_summary()` 72건 재집계; private bundle recording 접근 차단으로 미검증)
 - [x] 모델 응답 JSON schema 검증
 - [x] 경량 evaluation runner 구현(FakeModel·SQLite fixture, 실제 모델 평가 아님)
 - [ ] 기존 fine-tuned 모델 평가
@@ -940,7 +942,7 @@ Phase 5-13에서 기존 benchmark v1과 세 합성 fixture의 검증된 runtime 
 
 Phase 5-14에서 v1 private `UNKNOWN_FIELD` 21건을 비노출로 분류했다. ontology 밖 12, entity 접두사 불일치 5, 물리 column 형태 4건이었다. 허용 semantic field의 정확한 복사를 강조한 명시적 `query-ir-v2`를 한 번 시험했다. 동일 합성 40×3 개발 세트에서 v2의 구조 exact 0/120, 실행 42/120, semantic 일치 36/120, `UNKNOWN_FIELD` 72/120으로 v1보다 악화했다. V1을 기본값으로 유지하고 이 가설은 채택하지 않는다. 세부 paired 집계와 한계는 [`docs/phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md`](phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md)에 둔다. 기존 fine-tuned 모델 평가와 동적 스키마 prompt 평가의 확정 완료 항목은 여전히 미완료다.
 
-다음 작은 작업은 v2의 `UNKNOWN_FIELD` 증가를 private 집계 범주와 합성 테스트에서 분석하고, 미승인 개발 세트에 prompt를 반복 적합시키지 않는 별도 평가 설계를 문서화하는 것이다. v1이 기본값이며 현재 로컬에는 fine-tuned tag만 확인되었으므로 base instruct 평가는 정확한 별도 tag가 준비될 때 진행한다. 합성 개발은 E3·L5 결정 대기와 병행한다. **실제 CNU 자료의 추가 사용·공유와 실제 데이터 배포·외부 시연 전**에는 각각 E3·L5의 팀 결정을 확인한다. 모델 성능 확정 전 L1·L3를 확인한다. PostgreSQL 통합은 별도 단계다. Phase 5-14 범위는 [`docs/prompts/phase5-14-versioned-queryir-prompt-trial.md`](prompts/phase5-14-versioned-queryir-prompt-trial.md)에 둔다.
+다음 작은 작업은 Phase 5-15 strict-load v2 범주 재감사(`PRIVATE_BUNDLE_UNREADABLE` 해소 후 `audit_summary()`로 72건 재집계), 그 다음 [`docs/independent-evaluation-set-design.md`](independent-evaluation-set-design.md)의 순서에 따른 독립 합성 평가 세트 작성·사람 검토·동결이다. 새 prompt 탐색이나 live 호출은 하지 않는다. v1이 기본값이며 현재 로컬에는 fine-tuned tag만 확인되었으므로 base instruct 평가는 정확한 별도 tag가 준비될 때 진행한다. 합성 개발은 E3·L5 결정 대기와 병행한다. **실제 CNU 자료의 추가 사용·공유와 실제 데이터 배포·외부 시연 전**에는 각각 E3·L5의 팀 결정을 확인한다. 모델 성능 확정 전 L1·L3를 확인한다. PostgreSQL 통합은 별도 단계다. Phase 5-14 범위는 [`docs/prompts/phase5-14-versioned-queryir-prompt-trial.md`](prompts/phase5-14-versioned-queryir-prompt-trial.md)에 둔다.
 
 완료된 adapter 계약은 [`docs/prompts/phase5-07-ollama-querymodel-adapter.md`](prompts/phase5-07-ollama-querymodel-adapter.md)에, 합성 live smoke의 수행 지침은 [`docs/prompts/phase5-08-ollama-adapter-live-smoke.md`](prompts/phase5-08-ollama-adapter-live-smoke.md)에 둔다. 모델이 반환한 SQL 등 비 JSON 텍스트는 원문 문자열로 보존해 후속 Query IR 검증 실패로 드러내며, provider 호출 실패와 혼합하지 않는다.
 
@@ -1289,6 +1291,16 @@ SQLite DB 입력
 - 결정: `query-ir-v1` template와 기본 선택을 보존한다. `query-ir-v2`는 명시적 선택일 때만 사용하며 선택한 template bytes로 prompt hash를 계산한다. 실제 동일한 전송 설정의 generation config hash는 버전과 무관하게 같다. V2의 합성 개발 세트 단일 비교가 악화했으므로 기본값을 바꾸지 않는다.
 - 이유: prompt 변형의 provenance를 분리하고, 실패한 탐색 결과를 제품 경로에 자동 적용하지 않기 위해서다. 실제 모델 성능 확정에는 승인 gold와 독립 검토가 필요하다.
 
+### ADR-027: paired 비교 계약은 benchmark·seed·fixture fingerprint까지 확장
+
+- 날짜: 2026-09-19
+- 상태: 채택
+- 결정: `paired_prompt_summary()`의 비교 계약을 gold/ontology/QueryIR fingerprint에서 benchmark_id·benchmark_version·seed_fingerprint·fixture metadata fingerprint·variant 순서까지 확장한다. model_run_id는 의도적으로 검사하지 않는다 (v1/v2는 서로 다른 run ID를 사용한다).
+- 이유: 두 결과가 같은 fixture·benchmark에서 유래했는지를 fingerprint로 독립 검증하지 않으면, 서로 다른 조건의 결과가 우연히 같은 크기(120건)로 묶여 비교될 수 있다. 원문 비노출 error code로 거부한다.
+- Phase 5-15 보충: v2 `UNKNOWN_FIELD` 증가(21→72)의 원인 분류를 고정 범주·집계로 재확인하고, 독립 합성 평가 세트의 설계 기준을 별도 문서에 고정한다.
+- Phase 5-15 보완(2026-09-20): `paired_prompt_summary()`는 strict-loaded bundle 2건을 필수 입력으로 요구한다. 각 실행 안에서 report `config.model_run_id`·recording·manifest·bundle 내 recording의 일치, manifest provenance의 provider kind/id/version·정확한 model tag(`model_id`; report `model_label` 사용 금지)·model digest·generation config hash 비교, case×variant별 `question_sha256`·`mapping_sha256`·database 일치, report↔recording request ID 집합의 정확한 대응을 검증한다. prompt template hash 동일성은 강제하지 않는다(v1/v2가 다르다). 증명 입력이 없으면 고정 code(`PAIRED_PROVENANCE_MISSING` 등)로 거부하고 성공 집계를 반환하지 않는다. 종전의 누락 집계 허용 permissive 경로는 제거했다. 한계: provenance는 `DECLARED_UNVERIFIED`이며 모델 weight를 독립 증명하지 않는다. report는 bundle manifest에 암호학적으로 결합되지 않으며, 결합은 run ID·request ID 집합·fingerprint 일치에 한정된다. 불일치 오류에는 원문·경로를 포함하지 않는다.
+- 미검증(2026-09-20): 실제 private bundle 2건의 strict load 재감사는 환경 차단(`PRIVATE_BUNDLE_UNREADABLE`: generation 디렉터리 읽기 `PermissionError`)으로 미수행했다. report-level 재집계(v1 21건·v2 72건 `UNKNOWN_FIELD`, manifest 각 120건, target 각 120건)만 확인했다. v2 범주 분리(46/6/5/15/0, 중복 27, 혼합 50)는 재집계하지 못했으므로 확정 수치로 인용하지 않는다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -1451,3 +1463,6 @@ SQLite DB 입력
 - Phase 5-13 합성 fixture 40건×3스키마의 deterministic private target 생성, `--check` 후 로컬 Ollama 120건 capture, strict bundle load와 `run-recorded` 오프라인 평가 연결. 전체 120 attempt에서 구조 exact 51, 실행 성공 99, semantic 일치 90; gold 전부 사람 검토 대기로 유지하고 fine-tuned 모델 평가 완료 체크는 보류
 - Phase 5-13 커밋·공개 잠정 집계와 private bundle strict load 120건 성공·0건 provider 실패를 재확인하고 관련 테스트 8개, 전체 `tests` 303개 통과·3개 건너뜀을 확인. 로컬에는 fine-tuned tag만 있어 Phase 5-14를 `UNKNOWN_FIELD` 비노출 분류와 단일 versioned 동적 schema prompt 탐색 비교로 정의; 확정 성능·base instruct 비교는 미실행
 - Phase 5-14 v1 `UNKNOWN_FIELD` 21건을 private 비노출로 분류(ontology 밖 12, 접두사 5, 물리 형태 4). 명시적 `query-ir-v2`를 같은 합성 40×3 target에 `--check` 후 120회 수집·strict load·offline paired 비교. 구조 exact 51→0, 실행 99→42, semantic 90→36, `UNKNOWN_FIELD` 21→72로 악화해 v1 기본 유지. Gold 승인·확정 성능·사람 관문은 미완료 유지
+- Phase 5-14 공개 비교와 private v1/v2 bundle의 각 120건 strict load, 잠정 상세 report 집계를 재확인하고 관련 테스트 34개·전체 `tests` 309개 통과, 3개 건너뜀을 확인. Phase 5-15를 v2 실패 비노출 감사·paired 비교 context 검증·독립 합성 평가 기준 고정으로 정의; 새 모델 호출과 확정 성능 주장은 미실행
+- Phase 5-15 v2 `UNKNOWN_FIELD` 비노출 감사 범주(6개 고정 상수)와 `audit_summary()` 함수 추가, paired 비교 계약을 benchmark_id·version·seed_fingerprint·fixture metadata fingerprint까지 보강. 독립 합성 평가 세트 설계 기준 문서 작성. 관련 테스트 17개·전체 `tests` 315개 통과, 3개 건너뜀. ADR-027 추가. gold 40건 `NEEDS_HUMAN_REVIEW` 유지, 새 prompt 탐색·live 호출·확정 성능 발표 없음
+- Phase 5-15 보완 paired 비교 무결성 계약(bundle 필수·model_run_id 자기일치·provenance 비교·fingerprint·request ID 정확대응)과 합성 테스트를 추가하고 관련 테스트로 회귀를 확인. report-level 재집계로 v1 `UNKNOWN_FIELD` 21건·v2 72건, manifest 각 120건, target 각 120건을 확인. strict-load v2 범주 재감사는 private bundle recording 접근 차단(`PRIVATE_BUNDLE_UNREADABLE`)으로 미검증으로 남긴다. gold 40건 `NEEDS_HUMAN_REVIEW` 유지, 새 prompt 탐색·live 호출·확정 성능 발표 없음

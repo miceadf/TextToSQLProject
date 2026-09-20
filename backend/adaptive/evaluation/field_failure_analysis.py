@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from typing import Literal
 
 from ..harness.recorded import ModelRecording, RecordedSuccess
 from ..harness.recording_orchestrator import CaptureTarget
@@ -13,6 +14,13 @@ CATEGORIES = (
     "OUTSIDE_ONTOLOGY", "ENTITY_PREFIX_MISMATCH", "PHYSICAL_COLUMN_FORM",
     "CASING_NOTATION", "OTHER", "UNCLASSIFIABLE",
 )
+
+FIXED_REFERENCE_CATEGORIES: frozenset[str] = frozenset(CATEGORIES)
+
+FailureCategory = Literal[
+    "OUTSIDE_ONTOLOGY", "ENTITY_PREFIX_MISMATCH", "PHYSICAL_COLUMN_FORM",
+    "CASING_NOTATION", "OTHER", "UNCLASSIFIABLE",
+]
 
 
 def _normalized(value: str) -> str:
@@ -77,3 +85,35 @@ def classify_unknown_field_attempts(
     counts["MIXED_CATEGORY_ATTEMPTS"] = mixed
     counts["TOTAL_UNKNOWN_FIELD_ATTEMPTS"] = sum(counts[key] for key in CATEGORIES)
     return dict(counts)
+
+
+def audit_summary(
+    report: EvaluationRunReport,
+    recording: ModelRecording,
+    targets: list[CaptureTarget],
+) -> dict[str, object]:
+    """Deterministic audit summary; never returns original field names or responses.
+
+    Returns a dictionary with:
+      - category_counts: per-category attempt counts (from FIXED_REFERENCE_CATEGORIES)
+      - duplicate_references: count of repeated unknown field references per attempt
+      - mixed_category_attempts: attempts with multiple distinct failure categories
+      - total_unknown_field_attempts: sum of category-attributed attempts
+      - total_attempts: total attempts in report
+      - unknown_field_attempts: attempts with UNKNOWN_FIELD failure code
+      - categories: the fixed set of allowed category names
+    """
+    counts = classify_unknown_field_attempts(report, recording, targets)
+    total_attempts = len(report.attempts)
+    unknown_field_attempts = sum(
+        1 for attempt in report.attempts if attempt.failure_code == "UNKNOWN_FIELD"
+    )
+    return {
+        "category_counts": {k: counts[k] for k in CATEGORIES},
+        "duplicate_references": counts["DUPLICATE_REFERENCES"],
+        "mixed_category_attempts": counts["MIXED_CATEGORY_ATTEMPTS"],
+        "total_unknown_field_attempts": counts["TOTAL_UNKNOWN_FIELD_ATTEMPTS"],
+        "total_attempts": total_attempts,
+        "unknown_field_attempts": unknown_field_attempts,
+        "categories": sorted(FIXED_REFERENCE_CATEGORIES),
+    }
