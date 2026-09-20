@@ -1,6 +1,6 @@
 # 새 Codex 대화용 짧은 인수인계
 
-현재 기준: 2026-09-20, Phase 6-03 합성 사용자 확인 경계까지 구현·검증 완료. 최신 상태는 항상 Git과 코드로 다시 확인한다. 설계와 로드맵의 원본은 [`schema-adaptive-text-to-sql-plan.md`](schema-adaptive-text-to-sql-plan.md), 독립 평가 세트 설계 기준은 [`independent-evaluation-set-design.md`](independent-evaluation-set-design.md), 안전한 잠정 비교는 [`phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md`](phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md)다.
+현재 기준: 2026-09-20, Phase 6-04 합성 관리자 검토 큐 경계까지 구현·검증 완료. 최신 상태는 항상 Git과 코드로 다시 확인한다. 설계와 로드맵의 원본은 [`schema-adaptive-text-to-sql-plan.md`](schema-adaptive-text-to-sql-plan.md), 독립 평가 세트 설계 기준은 [`independent-evaluation-set-design.md`](independent-evaluation-set-design.md), 안전한 잠정 비교는 [`phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md`](phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md)다.
 
 ## 프로젝트와 현재 경계
 
@@ -21,20 +21,21 @@
 - Phase 6-02: 합성 `RepairSummary` 전용 결정적 critique 분류(`critique-disposition-v1`) 구현·합성 검증 완료. 성공은 `EXECUTED_UNVERIFIED`+`repair_attempted`·`recovered_after_repair` 구분, 실패는 고정 (code, stage) 6개 disposition 분류, 위조·미지·모순은 `CRITIQUE_INVALID_SUMMARY`로 거부. repair 없으면 최종=초기, repair 표시는 Phase 6-01 재시도 허용 쌍에서만 수락. 원문·질문·SQL·행·경로 비노출, 호출 0회. 전체 loop·모호 질문 확인·관리자 검토 큐는 미구현. 성능·정확도 수치 없음.
 - Phase 6-03: 합성 모호성 신호·사용자 확인 경계(`clarification-gate-v2`) 구현·합성 검증 완료. caller 제공 명시적 신호만 pending에 묶고(2개 이상 서로 다른 option ID·semantic 식별자), 신호 없으면 pending·차단 없음. `resolve`는 caller 원본 신호를 재요구해 정렬 option ID·semantic_ref 전체 일치를 확인(일관성 확인이며 암호학적 진위 증명 아님). 정확한 한 선택만 `CONFIRMED`, 명시적 취소는 별도 `CANCELLED`. pending·결과에는 원시 식별자를 저장하지 않고 domain-separated fingerprint만 저장. 전 공개 경계는 dump-then-validate 재검증으로 위조 인스턴스를 고정 code로 거부. 원문·물리·SQL·행·경로·secret 비노출, 모델·DB·네트워크 호출 0회. 자동 감지·QueryIR 보정·하네스 자동 실행·UI·관리자 큐는 미구현. `모호한 질문 감지 및 사용자 확인` 전체 항목은 미완료 유지. 성능·정확도 수치 없음. 실제 CNU 자료·private bundle 미사용.
 - 중간 점검 결함 수정: critique는 위조된 repair 횟수·code 타입을 고정 오류로 거부한다. clarification은 `clarification-gate-v2`에서 caller option ID를 fingerprint로 바꿔 pending·결과에 원문을 보관하지 않는다. v1 pending은 수락하지 않는다. 실제 UI·저장소 migration은 없다.
+- Phase 6-04: 합성 관리자 검토 큐 경계(`review-queue-v1`) 구현·합성 검증 완료. 원본 `RepairSummary`를 내부 `critique_repair_summary()`로 분류해 운영 실패 5개 disposition만 메모리 등록하고 성공·`REQUEST_INVALID`은 `NOT_ELIGIBLE` 미등록. 항목은 version·run/request fingerprint·고정 code/stage/disposition·repair flag·idempotency key만 저장. 동일 재등록은 `ALREADY_PRESENT`, 같은 키 다른 결과는 `REVIEW_QUEUE_CONFLICT` 거부, ID 오류는 `REVIEW_QUEUE_INVALID_INPUT` 차단, 위조 요약은 `CRITIQUE_INVALID_SUMMARY` 그대로 차단. 반환·목록 방어적 복사, 첫 등록 순서. coordinator·critique·clarification·harness 변경 없음, disk/DB/network/Ollama/private 접근 0회. 실제 운영 저장·UI·승인·full loop는 미완료. 성능·정확도 수치 없음. 실제 CNU 자료·private bundle 미사용.
 - 현재 로컬에는 fine-tuned tag만 확인되어 base instruct 평가는 정확한 tag가 별도로 준비될 때 진행한다. E3·L5 팀 결정 대기와 합성 개발은 병행한다.
 - `docs/desktop-test-handoff.md`는 초기 데스크톱 이전 시점의 기록이다.
 
 ## 다음 작은 작업
 
 1. 새 30건 초안의 사람 검토(L1·E2)·동결
-2. Phase 6 전체 loop·관리자 검토 큐 설계(명시적 확인 경계는 합성 완료, 자동 감지·실제 상호작용은 미구현)
+2. Phase 6 전체 loop·실제 운영 검토 큐 저장 설계(명시적 확인 경계와 합성 메모리 검토 후보 등록은 합성 완료, 자동 감지·실제 상호작용·영속 큐·승인 흐름은 미구현)
 3. base instruct 모델 tag가 준비되면 base instruct 평가
 4. E3/L5·L1/L3 팀 결정이 필요한 실제 사용·공유·성능 확정 관문 도달 시 적용
 
 ## 새 대화의 최소 시작 순서
 
-1. 저장소 루트에서 `AGENTS.md`와 이 문서, 계획 문서의 **Phase 5·6 현재 체크포인트·ADR-023/024/025/027/028/029/030·다음 시작점**, `docs/human-validation-checkpoints.md`의 E3/L1/L3/L5를 읽는다.
-2. `git status --short`, 최근 commit, 관련 코드·테스트를 확인한다. 문서는 방향을 알려주지만 구현 상태와 테스트 통과를 대신하지 않는다.
+1. 저장소 루트에서 `AGENTS.md`와 이 문서, 계획 문서의 **Phase 5·6 현재 체크포인트·ADR-023/024/025/027/028/029/030/031/032·다음 시작점**, `docs/human-validation-checkpoints.md`의 E3/L1/L3/L5를 읽는다.
+2. `git status --short`, 최근 commit, 관련 코드·테스트를 확인한다. 문서는 방향을 알려주지만 구현 상태와 테스트 통과를 대신하지 않는다. Phase 6-04 범위는 `docs/prompts/phase6-04-synthetic-review-queue.md`에 둔다.
 3. 현재 작업에 필요한 파일만 더 읽고 해당 범위의 테스트부터 실행한다. 이전 대화 전체나 저장소 전체를 다시 요약할 필요는 없다.
 
 실제 질문·응답, DB 행·dump, 모델 weight, 비밀값, private recording은 Git이나 공개 문서에 복사하지 않는다.

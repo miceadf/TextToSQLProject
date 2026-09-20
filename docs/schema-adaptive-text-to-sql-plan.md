@@ -623,6 +623,7 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 - [x] Phase 6-01 합성 입력의 제한된 QueryIR repair 경계(최초 1회 + 검증 실패 시 repair 1회; 사용자 확인·관리자 검토 큐는 미구현)
 - [x] Phase 6-02 합성 결과의 결정적 critique 분류(`RepairSummary` 전용 순수 함수; 성공은 `EXECUTED_UNVERIFIED`, 실패는 code·stage 고정 분류; 사용자 확인·관리자 검토 큐는 미구현)
 - [x] Phase 6-03 합성 모호성 신호·사용자 확인 경계(`clarification-gate-v2`; caller 제공 명시적 신호만 pending, 정확한 한 선택 확인·별도 취소; 자동 감지·QueryIR 보정·하네스 자동 실행 없음)
+- [x] Phase 6-04 합성 관리자 검토 큐 경계(`review-queue-v1`; `RepairSummary`를 내부 critique 분류 후 운영 실패 후보만 메모리 등록; 성공·입력 실패는 미등록; 영속성·UI·승인 없음)
 - [ ] validate → execute → critique → repair loop 구현
 - [ ] 모호한 질문 감지 및 사용자 확인
 - [ ] 운영 실패를 관리자 검토 큐에 저장
@@ -948,7 +949,9 @@ Phase 5-14에서 v1 private `UNKNOWN_FIELD` 21건을 비노출로 분류했다. 
 
 Phase 6-02에서 `RepairSummary` 전용 결정적 critique 분류(`critique-disposition-v1`)를 합성 입력으로 구현했다. 성공(최초·repair 후·0행 포함)은 `EXECUTED_UNVERIFIED`로만 분류하고 `repair_attempted`·`recovered_after_repair`로 최초 성공·repair 회복·repair 후 실패를 구분하며 정답·만족·정확도를 추론하지 않는다. 실패는 최종 code·stage 허용 조합으로 `REQUEST_INVALID`·`MODEL_REVIEW`(IR 오류 및 `REPAIR_PROVIDER_ERROR`의 stage 없음 포함)·`CONTEXT_REVIEW`(DB·mapping·JOIN)·`SAFETY_BLOCKED`(SQL 정책)·`EXECUTION_FAILURE`(timeout·실행·결과 검증)·`INTERNAL_REVIEW`(`SQL_COMPILE_ERROR` 등)로 분류한다. 위조 stage·알 수 없는 code·모순 status·code·repair 횟수는 고정 code(`CRITIQUE_INVALID_SUMMARY`)로 거부한다. repair 없이 최종 결과가 초기 결과와 다르면 위조로 거부하고, repair가 표시된 요약은 초기 실패가 Phase 6-01 재시도 허용 쌍일 때만 받는다. 자동 사용자 확인·관리자 queue 등록은 하지 않으며, `INVALID_REQUEST`를 질문 모호성으로 취급하지 않는다. Phase 6-01 재시도 목록·최대 1회·context 격리와 `ExecutionHarness`·`QueryModel`·legacy 경로는 변경하지 않았다. 전체 loop·모호 질문 확인·관리자 검토 큐는 미완료다. Phase 6-02 범위는 [`docs/prompts/phase6-02-synthetic-critique-disposition.md`](prompts/phase6-02-synthetic-critique-disposition.md)에 둔다.
 
-다음 작은 작업은 새 30건 초안의 사람 검토(L1·E2)·동결과 Phase 6 전체 loop·관리자 검토 큐 설계이다. 명시적 신호 기반 확인 경계(Phase 6-03)는 합성 범위로 완료했으며, 자동 모호성 감지와 실제 사용자 상호작용은 미구현으로 남긴다. 새 prompt 탐색이나 live 호출은 하지 않는다. v1이 기본값이며 현재 로컬에는 fine-tuned tag만 확인되었으므로 base instruct 평가는 정확한 별도 tag가 준비될 때 진행한다. 합성 개발은 E3·L5 결정 대기와 병행한다. **실제 CNU 자료의 추가 사용·공유와 실제 데이터 배포·외부 시연 전**에는 각각 E3·L5의 팀 결정을 확인한다. 모델 성능 확정 전 L1·L3를 확인한다. PostgreSQL 통합은 별도 단계다. Phase 5-14 범위는 [`docs/prompts/phase5-14-versioned-queryir-prompt-trial.md`](prompts/phase5-14-versioned-queryir-prompt-trial.md)에 둔다.
+Phase 6-04에서 `RepairSummary`와 내부 `critique_repair_summary()` 호출을 연결해 운영 실패 후보만 등록하는 메모리 전용 검토 큐(`backend/adaptive/harness/review_queue.py`, `review-queue-v1`)를 합성 범위로 구현했다. `InMemoryReviewQueue.enqueue()`는 원본 `RepairSummary`와 명시적 run/request ID를 받아 내부에서 critique 분류하며, caller가 `CritiqueResult`를 주입하거나 disposition을 조작하는 API는 없다. `EXECUTED_UNVERIFIED`·`REQUEST_INVALID`은 `NOT_ELIGIBLE`로 미등록하고 `MODEL_REVIEW`·`CONTEXT_REVIEW`·`SAFETY_BLOCKED`·`EXECUTION_FAILURE`·`INTERNAL_REVIEW`만 `ENQUEUED` 후보로 둔다(`REPAIR_PROVIDER_ERROR`는 기존 critique 분류인 `MODEL_REVIEW`를 따른다). 항목은 version, run/request ID의 domain-separated SHA-256(canonical UTF-8), 최종 고정 code·stage·disposition, repair 시도/회복 flag, 안정 idempotency key만 가지며 질문·QueryIR·SQL·행·원문 예외·물리 mapping·path·secret·raw ID는 저장·반환·로그하지 않는다. 같은 run/request의 같은 결과는 `ALREADY_PRESENT`로 1개 유지, 다른 결과는 고정 `REVIEW_QUEUE_CONFLICT`로 거부하며 기존 항목을 덮어쓰지 않는다. 입력 ID 오류는 `REVIEW_QUEUE_INVALID_INPUT`로 등록 전 차단하고, critique 실패는 기존 `CRITIQUE_INVALID_SUMMARY` 그대로 전파하며 큐는 변하지 않는다. 반환·목록은 방어적 복사이며 첫 등록 순서를 유지한다. disk/DB/network/Ollama/private bundle 접근 0회이며 영속성·동시성·다프로세스 dedupe·관리자 작업 상태·승인·publish·재시도 지시를 보장하지 않는다. 실제 운영 큐 저장과 전체 loop 체크박스는 미완료로 유지한다. Phase 6-04 범위는 [`docs/prompts/phase6-04-synthetic-review-queue.md`](prompts/phase6-04-synthetic-review-queue.md)에 둔다.
+
+다음 작은 작업은 새 30건 초안의 사람 검토(L1·E2)·동결과 Phase 6 전체 loop·실제 운영 검토 큐 저장 설계이다. 명시적 신호 기반 확인 경계(Phase 6-03)와 합성 메모리 검토 후보 등록(Phase 6-04)은 합성 범위로 완료했으며, 자동 모호성 감지·실제 사용자 상호작용·영속 큐·승인 흐름은 미구현으로 남긴다. 새 prompt 탐색이나 live 호출은 하지 않는다. v1이 기본값이며 현재 로컬에는 fine-tuned tag만 확인되었으므로 base instruct 평가는 정확한 별도 tag가 준비될 때 진행한다. 합성 개발은 E3·L5 결정 대기와 병행한다. **실제 CNU 자료의 추가 사용·공유와 실제 데이터 배포·외부 시연 전**에는 각각 E3·L5의 팀 결정을 확인한다. 모델 성능 확정 전 L1·L3를 확인한다. PostgreSQL 통합은 별도 단계다. Phase 5-14 범위는 [`docs/prompts/phase5-14-versioned-queryir-prompt-trial.md`](prompts/phase5-14-versioned-queryir-prompt-trial.md)에 둔다.
 
 완료된 adapter 계약은 [`docs/prompts/phase5-07-ollama-querymodel-adapter.md`](prompts/phase5-07-ollama-querymodel-adapter.md)에, 합성 live smoke의 수행 지침은 [`docs/prompts/phase5-08-ollama-adapter-live-smoke.md`](prompts/phase5-08-ollama-adapter-live-smoke.md)에 둔다. 모델이 반환한 SQL 등 비 JSON 텍스트는 원문 문자열로 보존해 후속 Query IR 검증 실패로 드러내며, provider 호출 실패와 혼합하지 않는다.
 
@@ -1337,6 +1340,13 @@ SQLite DB 입력
 - 독립 리뷰 보완(2026-09-20): 위 세 결함(pending 단독 신뢰, 원시 식별자 보관, 인스턴스 재검증 생략)을 수정하고 `resolve`에 caller 신호 재제출, 식별자 fingerprint 저장, dump-then-validate 경계를 적용. 합성 테스트 35개로 검증.
 - 후속 결함 수정(2026-09-20): `clarification-gate-v2`는 caller option ID도 domain-separated SHA-256으로 변환해 pending·결과에 원문을 넣지 않는다. `resolve`는 caller의 원래 ID를 입력받아 fingerprint로 비교하고 결과에는 fingerprint만 돌려준다. v1 pending은 v2에서 거부한다. low-entropy ID의 해시 추측까지 막는 인증 수단은 아니며, 실제 UI·저장소 연계는 별도 설계한다. `critique_repair_summary()`도 위조된 `RepairSummary` 인스턴스를 경고 비노출 재검증하고 2회 repair 주장·잘못된 code 타입을 고정 오류로 거부한다.
 
+### ADR-032: 운영 실패 검토 후보는 내부 critique 분류의 메모리 등록으로만 다룸
+
+- 날짜: 2026-09-20
+- 상태: 채택
+- 결정: `InMemoryReviewQueue`는 원본 `RepairSummary`와 명시적 run/request ID만 입력받고 내부에서 `critique_repair_summary()`를 호출해 분류한다. caller의 `CritiqueResult` 주입·disposition 조작 API를 두지 않는다. `EXECUTED_UNVERIFIED`·`REQUEST_INVALID`은 `NOT_ELIGIBLE` 미등록, `MODEL_REVIEW`·`CONTEXT_REVIEW`·`SAFETY_BLOCKED`·`EXECUTION_FAILURE`·`INTERNAL_REVIEW`만 등록 후보로 둔다. 항목은 `review-queue-v1` version, run/request ID의 domain-separated SHA-256(canonical UTF-8), 최종 고정 code·stage·disposition, repair 시도/회복 flag, 안정 idempotency key만 저장한다. 같은 run/request의 같은 결과는 `ALREADY_PRESENT`, 다른 결과는 고정 `REVIEW_QUEUE_CONFLICT`로 거부하며 덮어쓰지 않는다. ID 오류는 `REVIEW_QUEUE_INVALID_INPUT`로 등록 전 차단하고 critique 실패는 `CRITIQUE_INVALID_SUMMARY` 그대로 두며 큐를 바꾸지 않는다. coordinator·critique·clarification·harness 동작을 바꾸지 않고, disk/DB/network/Ollama/private 접근 없이 메모리 전용으로 둔다.
+- 이유: caller가 분류 결과를 직접 넣으면 정상 분류로 둔갑한 위조 disposition이 검토 큐에 들어가고, 원문·raw ID 보관이 경로·secret 노출을 만들며, 같은 키의 다른 결과 덮어쓰기가 실패 원인을 지운다. 내부 분류·고정 메타데이터·충돌 거부·방어적 복사로 합성 후속 처리 제안을 재현 가능하게 고정해야 전체 loop·영속 저장·관리자 승인 흐름과 분리된 검증이 가능하기 때문이다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -1513,3 +1523,4 @@ SQLite DB 입력
 - Phase 6-03 독립 리뷰 보완: `resolve`의 pending 단독 신뢰, pending·결과의 원시 식별자 보관, 공개 경계의 인스턴스 재검증 생략 결함을 수정. `resolve`에 caller 신호 재제출과 정렬 option 전체 비교(일관성 확인이며 암호학적 진위 증명 아님), request·database 식별자의 domain-separated fingerprint 저장, 전 경계 dump-then-validate 재검증을 적용. 합성 테스트 35개로 검증(pending 후보 추가·삭제·교체·semantic 불일치, 경로·secret형 식별자 비노출, `model_copy(update=...)`·`model_construct` 위조 거부). ADR-031 보완. 범위·관문·gold 상태 변경 없음. 실제 CNU 자료·private bundle 미사용
 - Phase 6-03 위조 인스턴스의 Pydantic serializer 경고에 입력값이 담기는 노출 경로를 차단하고, 경로형 악성 선택값에서 경고가 발생하지 않는 회귀 테스트를 추가. 합성 전용 테스트 35개 유지
 - 중간 점검 결함 수정: Phase 6-02의 위조 repair 횟수·code 타입을 재검증해 고정 오류로 거부하고, Phase 6-03의 caller option ID 원문 보관을 없애기 위해 `clarification-gate-v2`로 갱신. 이전 v1 pending은 받지 않으며 실제 UI·저장소 migration 대상은 없다. 합성 회귀 테스트 추가
+- Phase 6-04 합성 관리자 검토 큐 경계(`backend/adaptive/harness/review_queue.py`, `review-queue-v1`) 구현. 실제 coordinator 요약의 성공·입력 실패 미등록과 운영 실패 5개 disposition 등록, 동일 항목 재등록·충돌 거부, 위조 요약·ID 오류 차단, 반환·목록 방어적 복사, 경로·secret형 ID 비노출을 합성 테스트(`tests/adaptive/test_review_queue.py` 24개)로 검증. coordinator·critique·clarification·harness 동작 변경 없음. 실제 운영 큐 저장·관리자 UI·사람 승인·full loop는 미완료 유지. ADR-032 추가. 40건·30건 `NEEDS_HUMAN_REVIEW`와 E3/L5·L1/L3 대기 유지. 실제 CNU 자료·private bundle·Ollama·PostgreSQL 미사용
