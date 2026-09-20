@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..harness.recorded import ModelRecording, RecordedFailure
+from ..harness.recorded import RecordedFailure
 from ..harness.recording_bundle_contracts import LoadedRecordingBundle
 from .run_contracts import CaseAttempt, EvaluationRunReport
 
@@ -43,35 +43,30 @@ def _require_bundle(bundle: Any) -> Any:
 
 def _validate_self_consistency(
     report: EvaluationRunReport,
-    recording: ModelRecording,
     bundle: Any,
-) -> None:
-    """Each side must bind its own report, recording, and bundle manifest.
+) -> Any:
+    """Bind one side's report to its own bundle manifest and recording.
 
     v1 and v2 intentionally use different model_run_id values, so callers
-    must not compare run IDs across sides. Only within-side equality is
-    checked. The passed recording must also match the strict-loaded bundle
-    recording by run ID and request-ID set; otherwise a caller could swap
-    in an unrelated recording while reusing a valid bundle.
+    must not compare run IDs across sides. Only within-side equality of
+    report config, manifest, and bundle recording is checked. The recording
+    under comparison is always the bundle's own recording, so a caller
+    cannot substitute a separate recording with matching request IDs but
+    different fingerprints or payloads.
     """
     _require_bundle(bundle)
     manifest = bundle.manifest
-    bundled = bundle.recording
+    recording = bundle.recording
     report_run_id = report.config.model_run_id
     if (
-        report_run_id != recording.model_run_id
-        or report_run_id != manifest.model_run_id
-        or report_run_id != bundled.model_run_id
+        report_run_id != manifest.model_run_id
+        or report_run_id != recording.model_run_id
     ):
         raise ValueError("PAIRED_MODEL_RUN_ID_MISMATCH")
-    recording_ids = [record.request_id for record in recording.records]
-    if len(recording_ids) != len(set(recording_ids)):
+    record_ids = [record.request_id for record in recording.records]
+    if len(record_ids) != len(set(record_ids)):
         raise ValueError("PAIRED_RECORDING_DUPLICATE_REQUEST_ID")
-    bundled_ids = [record.request_id for record in bundled.records]
-    if len(bundled_ids) != len(set(bundled_ids)):
-        raise ValueError("PAIRED_RECORDING_DUPLICATE_REQUEST_ID")
-    if set(recording_ids) != set(bundled_ids):
-        raise ValueError("PAIRED_RECORDING_BUNDLE_MISMATCH")
+    return recording
 
 
 def _validate_provenance_comparability(v1_bundle: Any, v2_bundle: Any) -> None:
@@ -105,7 +100,7 @@ def _validate_provenance_comparability(v1_bundle: Any, v2_bundle: Any) -> None:
 
 def _validate_request_id_coverage(
     report: EvaluationRunReport,
-    recording: ModelRecording,
+    recording: Any,
 ) -> dict[str, Any]:
     """Require exact attempt↔recording request-ID correspondence per side.
 
@@ -187,27 +182,33 @@ def _validate_paired_contracts(
 def paired_prompt_summary(
     v1: EvaluationRunReport,
     v2: EvaluationRunReport,
-    v1_recording: ModelRecording,
-    v2_recording: ModelRecording,
     *,
     v1_bundle: LoadedRecordingBundle | Any,
     v2_bundle: LoadedRecordingBundle | Any,
 ) -> dict[str, object]:
     """Return counts only; no request IDs, questions, responses or paths.
 
-    Both strict-loaded bundles are required: without manifest provenance
-    there is no proven model tag, digest, or generation config, so no
-    success aggregation is returned (PAIRED_PROVENANCE_MISSING). The
-    report itself is not cryptographically bound to the bundle manifest;
+    The recordings under comparison always come from the bundles'
+    own ``recording`` entries; there is no separate recording argument,
+    so a caller cannot substitute fingerprints or payloads while reusing
+    a valid manifest. Both bundles must be the validated results of
+    ``load_recording_bundle()``: accepting the ``LoadedRecordingBundle``
+    type alone does not perform strict loading, and this function never
+    re-verifies bundle hashes itself. Without manifest provenance there
+    is no proven model tag, digest, or generation config, so no success
+    aggregation is returned (PAIRED_PROVENANCE_MISSING). The report
+    itself is not cryptographically bound to the bundle manifest;
     binding is limited to matching model_run_id values, matching
-    request-ID sets, and matching per-case fingerprints. Anything beyond
-    that is a documented limitation, not a verified claim.
+    request-ID sets, and matching per-case fingerprints. Raw response
+    payloads are not compared; outcome comparison comes from the
+    reports. Anything beyond that is a documented limitation, not a
+    verified claim.
     """
     if v1_bundle is None or v2_bundle is None:
         raise ValueError("PAIRED_PROVENANCE_MISSING")
     _validate_paired_contracts(v1, v2)
-    _validate_self_consistency(v1, v1_recording, v1_bundle)
-    _validate_self_consistency(v2, v2_recording, v2_bundle)
+    v1_recording = _validate_self_consistency(v1, v1_bundle)
+    v2_recording = _validate_self_consistency(v2, v2_bundle)
     _validate_provenance_comparability(v1_bundle, v2_bundle)
     left, right = _indexed(v1), _indexed(v2)
     if left.keys() != right.keys() or not left:
