@@ -134,6 +134,20 @@ def _disposition_of(code: str, stage: HarnessStage | None) -> CritiqueDispositio
     raise CritiqueError()
 
 
+def disposition_for(code: str, stage: HarnessStage | None) -> CritiqueDisposition:
+    """Return the fixed disposition for one (code, stage) pair.
+
+    Single public entry point over the critique disposition table, so
+    follow-up stores (e.g. review-queue snapshots) can verify a stored
+    code/stage/disposition triple without duplicating the taxonomy.
+    Unknown codes, unknown stages, and pairs outside the table raise
+    `CritiqueError` with the fixed code only.
+    """
+    if not isinstance(code, str) or not isinstance(stage, (HarnessStage, type(None))):
+        raise CritiqueError()
+    return _disposition_of(code, stage)
+
+
 def _check_pair(code: str | None, stage: HarnessStage | None, *, succeeded: bool) -> None:
     if succeeded:
         if code is not None or stage is not HarnessStage.RESULT_VALIDATED:

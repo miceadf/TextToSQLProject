@@ -41,6 +41,7 @@ from .critique import (
     CritiqueError,
     CritiqueResult,
     critique_repair_summary,
+    disposition_for,
 )
 from .engine import ExecutionHarness
 from .executor import SQLiteReadOnlyExecutor
@@ -110,6 +111,17 @@ from .review_queue import (
     model_run_id_fingerprint,
     review_request_id_fingerprint,
 )
+from .review_queue_storage import (
+    REVIEW_QUEUE_SNAPSHOT_VERSION,
+    REVIEW_QUEUE_STORAGE_TOOL_VERSION,
+    ReviewQueueSnapshot,
+    ReviewQueueSnapshotError,
+    ReviewQueueSnapshotErrorCode,
+    load_review_queue_snapshot,
+    preflight_review_queue_snapshot,
+    snapshot_payload_sha256,
+    write_review_queue_snapshot,
+)
 
 __all__ = [
     "AmbiguityOption",
@@ -153,6 +165,8 @@ __all__ = [
     "REPAIR_PROVIDER_ERROR",
     "REVIEW_QUEUE_CONFLICT",
     "REVIEW_QUEUE_INVALID_INPUT",
+    "REVIEW_QUEUE_SNAPSHOT_VERSION",
+    "REVIEW_QUEUE_STORAGE_TOOL_VERSION",
     "REVIEW_QUEUE_VERSION",
     "RepairProvider",
     "RepairSummary",
@@ -160,6 +174,9 @@ __all__ = [
     "ReviewQueueError",
     "ReviewQueueErrorCode",
     "ReviewQueueRegistration",
+    "ReviewQueueSnapshot",
+    "ReviewQueueSnapshotError",
+    "ReviewQueueSnapshotErrorCode",
     "ReviewQueueStatus",
     "LoadedRecordingBundle",
     "ProviderKind",
@@ -195,6 +212,11 @@ __all__ = [
     "write_recording_bundle",
     "capture_recording",
     "critique_repair_summary",
+    "disposition_for",
+    "load_review_queue_snapshot",
+    "preflight_review_queue_snapshot",
+    "snapshot_payload_sha256",
+    "write_review_queue_snapshot",
     "is_repairable",
     "model_run_id_fingerprint",
     "ontology_fingerprint",

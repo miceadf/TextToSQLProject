@@ -593,3 +593,54 @@ def load_recording_bundle(
         raise
     except (OSError, RuntimeError, subprocess.SubprocessError):
         raise RecordingBundleError(RecordingBundleErrorCode.STORAGE_ERROR) from None
+
+
+def preflight_private_snapshot_path(
+    snapshot_path: str | Path,
+    *,
+    repository_root: str | Path,
+) -> Path:
+    """Validate a single private snapshot file path with the bundle policy.
+
+    This is a minimal public wrapper over the existing repository/private
+    path validator (`_validate_repository` + `_validate_target`). It adds
+    no parallel weaker check: symlink/junction/reparse, Git tracked/
+    ignored, and private-root containment all run through the same code
+    as recording bundles. The `.json` suffix guard is file-shape only.
+    """
+    try:
+        root = _validate_repository(repository_root)
+        supplied = Path(snapshot_path)
+        if supplied.suffix.lower() != ".json":
+            raise RecordingBundleError(RecordingBundleErrorCode.INVALID_PATH)
+        return _validate_target(supplied, root)
+    except RecordingBundleError:
+        raise
+    except (OSError, RuntimeError, subprocess.SubprocessError, ValueError, TypeError):
+        raise RecordingBundleError(RecordingBundleErrorCode.INVALID_PATH) from None
+
+
+def read_private_snapshot_bytes(
+    snapshot_path: str | Path,
+    *,
+    repository_root: str | Path,
+) -> bytes:
+    """Read a single private snapshot file through the shared bundle guard.
+
+    Path policy reuses `preflight_private_snapshot_path`; content reads
+    reuse `_read_private_file`, so redirect/escape and hardlink (`st_nlink`)
+    checks are identical to recording bundles. File paths stored inside
+    the snapshot are never trusted: the caller supplies the path.
+    """
+    try:
+        target = preflight_private_snapshot_path(
+            snapshot_path, repository_root=repository_root
+        )
+        parent = target.parent
+        return _read_private_file(
+            target, parent, RecordingBundleErrorCode.INCOMPLETE_BUNDLE
+        )
+    except RecordingBundleError:
+        raise
+    except (OSError, RuntimeError, subprocess.SubprocessError):
+        raise RecordingBundleError(RecordingBundleErrorCode.STORAGE_ERROR) from None
