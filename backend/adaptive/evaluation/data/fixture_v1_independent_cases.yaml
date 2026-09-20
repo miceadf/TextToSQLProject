@@ -302,7 +302,7 @@ cases:
     review_rationale: "작성자가 합성 seed와 질문 조건을 대조했으며 독립적인 사람의 의미 검토가 필요함"
     author_id: phase5-16-draft
   - case_id: P2-057
-    question_ko: "13:00 이후에 시작하는 강좌의 과목명과 시작 시간, 요일을 알려줘."
+    question_ko: "13:00보다 늦게 시작하는 강좌의 과목명과 시작 시간, 요일을 알려줘."
     gold_query_ir:
       entity: CourseOffering
       select: ["Course.name","Schedule.start_time","Schedule.day"]
@@ -342,11 +342,11 @@ cases:
     review_rationale: "작성자가 합성 seed와 질문 조건을 대조했으며 독립적인 사람의 의미 검토가 필요함"
     author_id: phase5-16-draft
   - case_id: P2-059
-    question_ko: "수업 요일에 'UE'가 들어가는 강좌의 요일과 과목명을 알려줘."
+    question_ko: "화요일에 열리는 강좌의 요일과 과목명을 알려줘."
     gold_query_ir:
       entity: CourseOffering
       select: ["Schedule.day","Course.name"]
-      filters: [{"field":"Schedule.day","operator":"contains","value":"UE"}]
+      filters: [{"field":"Schedule.day","operator":"equals","value":"TUE"}]
       limit: 50
     expected:
       offering_keys:
@@ -355,7 +355,7 @@ cases:
         - {"Schedule.day":"TUE","Course.name":"자료구조"}
       cardinality: 1
       answerability: MATCHES
-    intent_family: weekday-contains
+    intent_family: tuesday-class
     review_status: NEEDS_HUMAN_REVIEW
     review_rationale: "작성자가 합성 seed와 질문 조건을 대조했으며 독립적인 사람의 의미 검토가 필요함"
     author_id: phase5-16-draft

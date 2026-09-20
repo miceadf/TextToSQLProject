@@ -608,6 +608,7 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 - [x] Phase 5-14 `UNKNOWN_FIELD` 비노출 분류와 단일 v2 prompt 합성 120쌍 탐색 비교(v1 기본 유지; 확정 성능 제외)
 - [x] Phase 5-15 v2 실패 비노출 감사·paired 비교 무결성 계약·독립 평가 세트 설계 기준 고정
 - [x] Phase 5-16 독립 합성 평가 세트 30건 초안·자동 검증(사람 검토·동결 전; question holdout)
+- [x] Phase 5-17 독립 세트 문항 정리·단독 커버리지·FakeModel oracle smoke(사람 검토·동결·실제 모델 평가 제외)
 - [x] 모델 응답 JSON schema 검증
 - [x] 경량 evaluation runner 구현(FakeModel·SQLite fixture, 실제 모델 평가 아님)
 - [ ] 기존 fine-tuned 모델 평가
@@ -942,7 +943,7 @@ Phase 5-13에서 기존 benchmark v1과 세 합성 fixture의 검증된 runtime 
 
 Phase 5-14에서 v1 private `UNKNOWN_FIELD` 21건을 비노출로 분류했다. ontology 밖 12, entity 접두사 불일치 5, 물리 column 형태 4건이었다. 허용 semantic field의 정확한 복사를 강조한 명시적 `query-ir-v2`를 한 번 시험했다. 동일 합성 40×3 개발 세트에서 v2의 구조 exact 0/120, 실행 42/120, semantic 일치 36/120, `UNKNOWN_FIELD` 72/120으로 v1보다 악화했다. V1을 기본값으로 유지하고 이 가설은 채택하지 않는다. 세부 paired 집계와 한계는 [`docs/phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md`](phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md)에 둔다. 기존 fine-tuned 모델 평가와 동적 스키마 prompt 평가의 확정 완료 항목은 여전히 미완료다.
 
-다음 작은 작업은 새 30건 초안의 사람 검토(L1·E2)·동결이며, 그 전까지 합성으로 준비할 일은 커버리지 리포트와 FakeModel oracle smoke 점검이다(모델 점수로 발표하지 않는다). 새 prompt 탐색이나 live 호출은 하지 않는다. v1이 기본값이며 현재 로컬에는 fine-tuned tag만 확인되었으므로 base instruct 평가는 정확한 별도 tag가 준비될 때 진행한다. 합성 개발은 E3·L5 결정 대기와 병행한다. **실제 CNU 자료의 추가 사용·공유와 실제 데이터 배포·외부 시연 전**에는 각각 E3·L5의 팀 결정을 확인한다. 모델 성능 확정 전 L1·L3를 확인한다. PostgreSQL 통합은 별도 단계다. Phase 5-14 범위는 [`docs/prompts/phase5-14-versioned-queryir-prompt-trial.md`](prompts/phase5-14-versioned-queryir-prompt-trial.md)에 둔다.
+다음 작은 작업은 새 30건 초안의 사람 검토(L1·E2)·동결이다. 새 prompt 탐색이나 live 호출은 하지 않는다. v1이 기본값이며 현재 로컬에는 fine-tuned tag만 확인되었으므로 base instruct 평가는 정확한 별도 tag가 준비될 때 진행한다. 합성 개발은 E3·L5 결정 대기와 병행한다. **실제 CNU 자료의 추가 사용·공유와 실제 데이터 배포·외부 시연 전**에는 각각 E3·L5의 팀 결정을 확인한다. 모델 성능 확정 전 L1·L3를 확인한다. PostgreSQL 통합은 별도 단계다. Phase 5-14 범위는 [`docs/prompts/phase5-14-versioned-queryir-prompt-trial.md`](prompts/phase5-14-versioned-queryir-prompt-trial.md)에 둔다.
 
 완료된 adapter 계약은 [`docs/prompts/phase5-07-ollama-querymodel-adapter.md`](prompts/phase5-07-ollama-querymodel-adapter.md)에, 합성 live smoke의 수행 지침은 [`docs/prompts/phase5-08-ollama-adapter-live-smoke.md`](prompts/phase5-08-ollama-adapter-live-smoke.md)에 둔다. 모델이 반환한 SQL 등 비 JSON 텍스트는 원문 문자열로 보존해 후속 Query IR 검증 실패로 드러내며, provider 호출 실패와 혼합하지 않는다.
 
@@ -1475,3 +1476,4 @@ SQLite DB 입력
 - Phase 5-15 보완 paired 비교 무결성 계약(bundle 필수·model_run_id 자기일치·provenance 비교·fingerprint·request ID 정확대응)과 합성 테스트를 추가하고 관련 테스트로 회귀를 확인. report-level 재집계로 v1 `UNKNOWN_FIELD` 21건·v2 72건, manifest 각 120건, target 각 120건을 확인. strict-load v2 범주 재감사는 당시 실행 환경의 private bundle recording 접근 차단(`PRIVATE_BUNDLE_UNREADABLE`)으로 미검증으로 남긴다. gold 40건 `NEEDS_HUMAN_REVIEW` 유지, 새 prompt 탐색·live 호출·확정 성능 발표 없음
 - Phase 5-15 최종 보완으로 비교 recording을 bundle 자신의 `recording`에서만 가져오도록 API를 단순화해 바꿔치기 경로를 제거하고, bundle 내용 변조 거부와 실제 계약 모델 기반 합성 테스트를 추가. Codex 읽기 전용 재검증에서 private bundle 3개 strict load 후 v2 `UNKNOWN_FIELD` 72건 범주 재집계(접두사 불일치 46, ontology 밖 6, 물리 형태 5, 기타 15, 표기 차이 0, 판별 불가 0; 중복 27, 혼합 50)와 실제 bundle 기반 paired 비교(v1 21건·v2 72건)를 확인. 미승인 합성 개발 세트의 진단 집계이며 확정 성능 아님. gold 40건 `NEEDS_HUMAN_REVIEW` 유지
 - Phase 5-16 독립 합성 평가 세트 30건 초안(P2-041~070, `fixture-v1-independent-questions`) 작성. 정식 30~50건 조건·seed/ontology/QueryIR fingerprint·물리 식별자·offering key·기대 행을 기존 validator로 통과하고 flat·normalized·legacy에서 gold IR 90회(30×3) 실행이 기대 semantic 결과와 일치함을 확인. `check_set_isolation()`으로 개발 세트와의 benchmark·case ID·질문 문장·paraphrase family·intent 겹침 분리를 고정 code로 검증. question holdout이며 동결·승인·성능 검증 아님. 기존 40건과 새 30건 모두 `NEEDS_HUMAN_REVIEW` 유지, ADR-028 추가
+- Phase 5-17 독립 세트 문항 정리(P2-057 경계 배타 표현·P2-059 요일 코드 의존 제거, IR·기대 결과 정합 유지, 격리 유지)와 단독 커버리지(30건·15개 field 전부 사용·결과 0/1/여러 건·JOIN 0~3단계·gaps 3건) 및 FakeModel oracle smoke 90건 전건 일치(`oracle_smoke=true`, 모델 점수 아님) 확인. 제품 코드 변경 없음. 새 30건은 사람 검토·동결 전 question holdout 초안 유지
