@@ -1,8 +1,18 @@
 # 독립 합성 평가 세트 설계 기준
 
-> 상태: **설계 고정 초안**. 새 세트를 모델에 실행하거나 확정 성능을 발표하지 않는다.
+> 상태: **30건 작성·자동 검증 완료, 사람 검토·동결 전**. 새 세트를 모델에 실행하거나 확정 성능을 발표하지 않는다.
 >
-> 작성: 2026-09-19
+> 작성: 2026-09-19 · 초안: 2026-09-20 (`fixture-v1-independent-questions`, P2-041~070)
+
+## 초안 현황 (2026-09-20)
+
+- `backend/adaptive/evaluation/data/fixture_v1_independent_cases.yaml`에 30건을 작성했다. 기존 40건 파일은 수정하지 않았다.
+- 정식 30~50건 조건의 `load_evaluation_set()`·`validate_evaluation_set()`을 통과했다. 0건 1개·1건 다수·여러 건을 포함하고 단일·복수 filter와 서로 다른 semantic field·operator를 사용한다.
+- flat·normalized·legacy fixture에서 gold IR 90회(30×3) 실행이 기대 semantic 결과와 일치함을 확인했다. 이는 gold와 fixture의 자기 일관성이며 모델 정확도가 아니다.
+- `backend/adaptive/evaluation/isolation.py`의 `check_set_isolation()`으로 개발 세트와의 분리(benchmark ID·case ID·정규화 질문 문장·paraphrase family·`_intent_identity()` 기준 intent)를 고정 code로 검증했다.
+- 30건 모두 `NEEDS_HUMAN_REVIEW`이며 `reviewer_id`가 없다.
+- 자동 검사로 증명하지 못하는 부분: 의미는 비슷하지만 문장이 다른 질문의 유사도, 한국어 질문의 실제 의도와 gold IR의 일치, 기대 행의 업무적 타당성. 사람 검토(L1·E2)와 동결이 남았다.
+- 사람 결정 이전에 진행 가능한 합성 작업: 커버리지 리포트 생성, FakeModel oracle smoke 점검(모델 점수로 발표하지 않는다).
 
 ## 목적
 
@@ -93,7 +103,7 @@ Phase 5-13/14의 개발 세트(40건)는 v1 결과를 본 뒤 v2를 설계하는
 
 ## 현재 한계와 다음 단계
 
-- 이 문서는 설계 기준을 고정할 뿐 새 세트를 생성하지 않는다.
-- 새 세트의 실제 작성·검토·동결은 별도 작업 단계에서 수행한다.
-- gold 40건의 `NEEDS_HUMAN_REVIEW`는 유지한다.
+- 30건 초안은 자동 검증까지만 완료했으며 사람 검토·동결 전이다. “동결”, “사람 승인”, “독립 성능 검증 완료”, “학교 간 일반화 검증”으로 표현하지 않는다.
+- 새 세트의 실제 작성은 완료했고, 검토·동결은 L1·E2 관문에서 수행한다.
+- gold 40건과 새 30건 모두 `NEEDS_HUMAN_REVIEW`를 유지한다.
 - E3/L5·L1/L3 팀 결정은 필요한 실제 사용·공유·성능 확정 관문까지 대기한다.

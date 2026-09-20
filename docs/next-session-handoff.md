@@ -1,6 +1,6 @@
 # 새 Codex 대화용 짧은 인수인계
 
-현재 기준: 2026-09-20, Phase 5-15 v2 실패 비노출 감사·paired 비교 무결성 계약·독립 평가 세트 설계 기준 고정 완료. 최신 상태는 항상 Git과 코드로 다시 확인한다. 설계와 로드맵의 원본은 [`schema-adaptive-text-to-sql-plan.md`](schema-adaptive-text-to-sql-plan.md), 독립 평가 세트 설계 기준은 [`independent-evaluation-set-design.md`](independent-evaluation-set-design.md), 안전한 잠정 비교는 [`phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md`](phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md)다.
+현재 기준: 2026-09-20, Phase 5-16 독립 합성 평가 세트 30건 초안·자동 검증 완료, 사람 검토·동결 전. 최신 상태는 항상 Git과 코드로 다시 확인한다. 설계와 로드맵의 원본은 [`schema-adaptive-text-to-sql-plan.md`](schema-adaptive-text-to-sql-plan.md), 독립 평가 세트 설계 기준은 [`independent-evaluation-set-design.md`](independent-evaluation-set-design.md), 안전한 잠정 비교는 [`phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md`](phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md)다.
 
 ## 프로젝트와 현재 경계
 
@@ -14,13 +14,14 @@
 - Phase 5-12: 완전 합성 질문 2건을 로컬 Ollama에 `--live` 1회로 전송하고 응답 2건을 Git 비추적 private bundle에 저장했다. strict load·`RecordedModel` 재생과 JSON object·QueryIR 검증을 통과했다.
 - Phase 5-13: 합성 benchmark v1 40×3 target을 결정적으로 생성해 정확한 로컬 fine-tuned tag로 120건을 한 번씩 수집했다. 잠정 집계는 구조 exact 51, 실행 성공 99, semantic 일치 90이다. Gold 40건은 모두 `NEEDS_HUMAN_REVIEW`이므로 확정 성능 아님.
 - Phase 5-14: v1 `UNKNOWN_FIELD` 21건을 비노출 분류한 뒤 `query-ir-v2`를 같은 합성 40×3 세트에서 수집·비교했다. v2는 구조 exact 0, 실행 성공 42, semantic 일치 36, `UNKNOWN_FIELD` 72로 악화. v1을 기본값으로 유지한다.
-- Phase 5-15: paired 비교 무결성 계약(비교 recording은 bundle 자신의 `recording`에서만 취득·별도 인자 없음, model_run_id 자기일치, provenance·fingerprint·request ID 정확대응), 합성 테스트(변조 거부·실제 계약 모델 포함), 읽기 전용 strict-load 재검증(v2 `UNKNOWN_FIELD` 72건 범주 재집계: 접두사 불일치 46, ontology 밖 6, 물리 형태 5, 기타 15, 표기 차이 0, 판별 불가 0; 중복 27, 혼합 50; 실제 bundle paired v1 21건·v2 72건 확인) 완료. 미승인 합성 개발 세트의 진단 집계이며 확정 성능 아님. 독립 합성 평가 세트 설계 기준 문서 작성. ADR-027 보완. gold 40건 `NEEDS_HUMAN_REVIEW` 유지. 새 prompt 탐색·live 호출·확정 성능 발표 없음.
+- Phase 5-15: paired 비교 무결성 계약, 합성 테스트, 읽기 전용 strict-load 재검증(v2 `UNKNOWN_FIELD` 72건 범주 재집계) 완료. 미승인 합성 개발 세트의 진단 집계이며 확정 성능 아님. 독립 합성 평가 세트 설계 기준 문서 작성. gold 40건 `NEEDS_HUMAN_REVIEW` 유지. 새 prompt 탐색·live 호출·확정 성능 발표 없음.
+- Phase 5-16: 독립 합성 평가 세트 30건 초안(P2-041~070) 작성·자동 검증 완료, 사람 검토·동결 전. 정식 30~50건 조건 통과, 3개 fixture에서 gold IR 90회 실행이 기대 결과와 일치(자기 일관성, 모델 점수 아님). 개발 세트와 격리 검증 완료. 기존 40건과 새 30건 모두 `NEEDS_HUMAN_REVIEW` 유지. Ollama 호출·성능 평가·승인 없음.
 - 현재 로컬에는 fine-tuned tag만 확인되어 base instruct 평가는 정확한 tag가 별도로 준비될 때 진행한다. E3·L5 팀 결정 대기와 합성 개발은 병행한다.
 - `docs/desktop-test-handoff.md`는 초기 데스크톱 이전 시점의 기록이다.
 
 ## 다음 작은 작업
 
-1. 독립 합성 평가 세트의 실제 작성·사람 검토·동결 (`docs/independent-evaluation-set-design.md`의 순서 따름)
+1. 새 30건 초안의 사람 검토(L1·E2)·동결. 그 전 합성 준비는 커버리지 리포트와 FakeModel oracle smoke 점검(모델 점수 아님)
 2. base instruct 모델 tag가 준비되면 base instruct 평가
 3. E3/L5·L1/L3 팀 결정이 필요한 실제 사용·공유·성능 확정 관문 도달 시 적용
 

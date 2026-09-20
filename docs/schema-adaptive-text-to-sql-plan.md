@@ -607,6 +607,7 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 - [x] Phase 5-13 fine-tuned tag의 합성 40×3 잠정 capture·offline 평가 연결(gold 사람 승인 전, 확정 성능 제외)
 - [x] Phase 5-14 `UNKNOWN_FIELD` 비노출 분류와 단일 v2 prompt 합성 120쌍 탐색 비교(v1 기본 유지; 확정 성능 제외)
 - [x] Phase 5-15 v2 실패 비노출 감사·paired 비교 무결성 계약·독립 평가 세트 설계 기준 고정
+- [x] Phase 5-16 독립 합성 평가 세트 30건 초안·자동 검증(사람 검토·동결 전; question holdout)
 - [x] 모델 응답 JSON schema 검증
 - [x] 경량 evaluation runner 구현(FakeModel·SQLite fixture, 실제 모델 평가 아님)
 - [ ] 기존 fine-tuned 모델 평가
@@ -941,7 +942,7 @@ Phase 5-13에서 기존 benchmark v1과 세 합성 fixture의 검증된 runtime 
 
 Phase 5-14에서 v1 private `UNKNOWN_FIELD` 21건을 비노출로 분류했다. ontology 밖 12, entity 접두사 불일치 5, 물리 column 형태 4건이었다. 허용 semantic field의 정확한 복사를 강조한 명시적 `query-ir-v2`를 한 번 시험했다. 동일 합성 40×3 개발 세트에서 v2의 구조 exact 0/120, 실행 42/120, semantic 일치 36/120, `UNKNOWN_FIELD` 72/120으로 v1보다 악화했다. V1을 기본값으로 유지하고 이 가설은 채택하지 않는다. 세부 paired 집계와 한계는 [`docs/phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md`](phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md)에 둔다. 기존 fine-tuned 모델 평가와 동적 스키마 prompt 평가의 확정 완료 항목은 여전히 미완료다.
 
-다음 작은 작업은 [`docs/independent-evaluation-set-design.md`](independent-evaluation-set-design.md)의 순서에 따른 독립 합성 평가 세트 작성·사람 검토·동결이다. 새 prompt 탐색이나 live 호출은 하지 않는다. v1이 기본값이며 현재 로컬에는 fine-tuned tag만 확인되었으므로 base instruct 평가는 정확한 별도 tag가 준비될 때 진행한다. 합성 개발은 E3·L5 결정 대기와 병행한다. **실제 CNU 자료의 추가 사용·공유와 실제 데이터 배포·외부 시연 전**에는 각각 E3·L5의 팀 결정을 확인한다. 모델 성능 확정 전 L1·L3를 확인한다. PostgreSQL 통합은 별도 단계다. Phase 5-14 범위는 [`docs/prompts/phase5-14-versioned-queryir-prompt-trial.md`](prompts/phase5-14-versioned-queryir-prompt-trial.md)에 둔다.
+다음 작은 작업은 새 30건 초안의 사람 검토(L1·E2)·동결이며, 그 전까지 합성으로 준비할 일은 커버리지 리포트와 FakeModel oracle smoke 점검이다(모델 점수로 발표하지 않는다). 새 prompt 탐색이나 live 호출은 하지 않는다. v1이 기본값이며 현재 로컬에는 fine-tuned tag만 확인되었으므로 base instruct 평가는 정확한 별도 tag가 준비될 때 진행한다. 합성 개발은 E3·L5 결정 대기와 병행한다. **실제 CNU 자료의 추가 사용·공유와 실제 데이터 배포·외부 시연 전**에는 각각 E3·L5의 팀 결정을 확인한다. 모델 성능 확정 전 L1·L3를 확인한다. PostgreSQL 통합은 별도 단계다. Phase 5-14 범위는 [`docs/prompts/phase5-14-versioned-queryir-prompt-trial.md`](prompts/phase5-14-versioned-queryir-prompt-trial.md)에 둔다.
 
 완료된 adapter 계약은 [`docs/prompts/phase5-07-ollama-querymodel-adapter.md`](prompts/phase5-07-ollama-querymodel-adapter.md)에, 합성 live smoke의 수행 지침은 [`docs/prompts/phase5-08-ollama-adapter-live-smoke.md`](prompts/phase5-08-ollama-adapter-live-smoke.md)에 둔다. 모델이 반환한 SQL 등 비 JSON 텍스트는 원문 문자열로 보존해 후속 Query IR 검증 실패로 드러내며, provider 호출 실패와 혼합하지 않는다.
 
@@ -1300,6 +1301,13 @@ SQLite DB 입력
 - Phase 5-15 보완(2026-09-20): `paired_prompt_summary()`는 strict-loaded bundle 2건을 필수 입력으로 요구한다. 비교 recording은 각 bundle 자신의 `recording`에서만 가져오며 별도 recording 인자를 받지 않으므로, request ID만 맞추고 fingerprint·payload를 바꾼 recording으로 바꿔치기할 수 없다. 각 실행 안에서 report `config.model_run_id`·manifest·bundle recording의 일치, manifest provenance의 provider kind/id/version·정확한 model tag(`model_id`; report `model_label` 사용 금지)·model digest·generation config hash 비교, case×variant별 `question_sha256`·`mapping_sha256`·database 일치, report↔recording request ID 집합의 정확한 대응을 검증한다. prompt template hash 동일성은 강제하지 않는다(v1/v2가 다르다). 증명 입력이 없으면 고정 code(`PAIRED_PROVENANCE_MISSING` 등)로 거부하고 성공 집계를 반환하지 않는다. 종전의 누락 집계 허용 permissive 경로는 제거했다. 한계: `LoadedRecordingBundle` 타입을 받는 것만으로 strict load를 증명하지 않으며, 호출자는 `load_recording_bundle()` 검증 결과를 전달해야 한다. provenance는 `DECLARED_UNVERIFIED`이며 모델 weight를 독립 증명하지 않는다. report는 bundle manifest에 암호학적으로 결합되지 않으며, 결합은 run ID·request ID 집합·fingerprint 일치에 한정된다. raw response payload는 비교하지 않으며 결과 비교는 report에서 가져온다. 불일치 오류에는 원문·경로를 포함하지 않는다.
 - 재검증(2026-09-20): private bundle 3개 모두 strict load한 읽기 전용 재검증에서 v2 120 attempts 중 `UNKNOWN_FIELD` 72건을 `audit_summary()`로 재집계했다. 범주는 `ENTITY_PREFIX_MISMATCH` 46, `OUTSIDE_ONTOLOGY` 6, `PHYSICAL_COLUMN_FORM` 5, `OTHER` 15, `CASING_NOTATION` 0, `UNCLASSIFIABLE` 0이며 합계 72건이다. 중복 참조 27, 혼합 범주 attempt 50이다. 실제 bundle 기반 paired 비교도 v1 21건·v2 72건으로 확인했다. 이전 Muse Spark 실행 환경에서는 generation 디렉터리 읽기 `PermissionError`로 strict load가 차단되어 미검증으로 기록한 바 있다. 이 수치는 미승인 합성 개발 세트의 진단 집계이며 모델 성능 확정 수치가 아니다.
 
+### ADR-028: 독립 평가 세트는 question holdout 초안으로 분리하고 동결 전으로 유지
+
+- 날짜: 2026-09-20
+- 상태: 채택
+- 결정: 개발 세트(`fixture-v1-common-questions`, P2-001~040)와 분리된 새 benchmark(`fixture-v1-independent-questions`, P2-041~070) 30건을 초안으로 작성한다. 같은 `FixtureSeed v1`·ontology를 재사용하므로 question holdout이며 unseen school이 아니다. `check_set_isolation()`으로 benchmark ID 분리·case ID·정규화 질문 문장·paraphrase family·`_intent_identity()` 기준 intent 겹침을 고정 code로 거부한다. 자동 검사는 의미 유사 문장을 모두 잡지 못하므로 사람 검토·동결 전 상태를 유지한다.
+- 이유: 개발 세트에서 prompt를 선택한 뒤 같은 세트로 반복 비교하면 과적합 선택이 일반화 성능으로 오인된다. 질문 격리를 자동 검사로 강제하되, 의미 검토와 동결은 사람 관문(L1·E2)으로 남겨야 후속 수치가 해석 가능하다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -1466,3 +1474,4 @@ SQLite DB 입력
 - Phase 5-15 v2 `UNKNOWN_FIELD` 비노출 감사 범주(6개 고정 상수)와 `audit_summary()` 함수 추가, paired 비교 계약을 benchmark_id·version·seed_fingerprint·fixture metadata fingerprint까지 보강. 독립 합성 평가 세트 설계 기준 문서 작성. 관련 테스트 17개·전체 `tests` 315개 통과, 3개 건너뜀. ADR-027 추가. gold 40건 `NEEDS_HUMAN_REVIEW` 유지, 새 prompt 탐색·live 호출·확정 성능 발표 없음
 - Phase 5-15 보완 paired 비교 무결성 계약(bundle 필수·model_run_id 자기일치·provenance 비교·fingerprint·request ID 정확대응)과 합성 테스트를 추가하고 관련 테스트로 회귀를 확인. report-level 재집계로 v1 `UNKNOWN_FIELD` 21건·v2 72건, manifest 각 120건, target 각 120건을 확인. strict-load v2 범주 재감사는 당시 실행 환경의 private bundle recording 접근 차단(`PRIVATE_BUNDLE_UNREADABLE`)으로 미검증으로 남긴다. gold 40건 `NEEDS_HUMAN_REVIEW` 유지, 새 prompt 탐색·live 호출·확정 성능 발표 없음
 - Phase 5-15 최종 보완으로 비교 recording을 bundle 자신의 `recording`에서만 가져오도록 API를 단순화해 바꿔치기 경로를 제거하고, bundle 내용 변조 거부와 실제 계약 모델 기반 합성 테스트를 추가. Codex 읽기 전용 재검증에서 private bundle 3개 strict load 후 v2 `UNKNOWN_FIELD` 72건 범주 재집계(접두사 불일치 46, ontology 밖 6, 물리 형태 5, 기타 15, 표기 차이 0, 판별 불가 0; 중복 27, 혼합 50)와 실제 bundle 기반 paired 비교(v1 21건·v2 72건)를 확인. 미승인 합성 개발 세트의 진단 집계이며 확정 성능 아님. gold 40건 `NEEDS_HUMAN_REVIEW` 유지
+- Phase 5-16 독립 합성 평가 세트 30건 초안(P2-041~070, `fixture-v1-independent-questions`) 작성. 정식 30~50건 조건·seed/ontology/QueryIR fingerprint·물리 식별자·offering key·기대 행을 기존 validator로 통과하고 flat·normalized·legacy에서 gold IR 90회(30×3) 실행이 기대 semantic 결과와 일치함을 확인. `check_set_isolation()`으로 개발 세트와의 benchmark·case ID·질문 문장·paraphrase family·intent 겹침 분리를 고정 code로 검증. question holdout이며 동결·승인·성능 검증 아님. 기존 40건과 새 30건 모두 `NEEDS_HUMAN_REVIEW` 유지, ADR-028 추가
