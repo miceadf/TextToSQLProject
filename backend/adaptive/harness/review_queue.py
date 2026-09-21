@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import hashlib
 from enum import Enum
+from collections.abc import Iterable
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -182,6 +183,42 @@ class InMemoryReviewQueue:
     def __init__(self) -> None:
         self._entries: dict[tuple[str, str], ReviewQueueEntry] = {}
         self._order: list[tuple[str, str]] = []
+
+    @classmethod
+    def _from_validated_entries(
+        cls, entries: Iterable[ReviewQueueEntry]
+    ) -> InMemoryReviewQueue:
+        """Restore already snapshot-validated entries without raw IDs.
+
+        This package-private boundary keeps mutation of queue internals in
+        their owning class. Public callers must use the durable snapshot
+        restore API, which validates the complete snapshot contract first.
+        """
+        restored: list[tuple[tuple[str, str], ReviewQueueEntry]] = []
+        seen_pairs: set[tuple[str, str]] = set()
+        seen_keys: set[str] = set()
+        try:
+            for item in entries:
+                checked = ReviewQueueEntry.model_validate(
+                    item.model_dump(mode="json", warnings=False)
+                )
+                pair = (
+                    checked.model_run_id_sha256,
+                    checked.request_id_sha256,
+                )
+                if pair in seen_pairs or checked.idempotency_key in seen_keys:
+                    raise ValueError()
+                seen_pairs.add(pair)
+                seen_keys.add(checked.idempotency_key)
+                restored.append((pair, checked.model_copy()))
+        except Exception:
+            raise ReviewQueueError(ReviewQueueErrorCode.INVALID_INPUT) from None
+
+        queue = cls()
+        for pair, entry in restored:
+            queue._entries[pair] = entry
+            queue._order.append(pair)
+        return queue
 
     def __len__(self) -> int:
         return len(self._order)

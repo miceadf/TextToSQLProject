@@ -297,6 +297,12 @@ def _build_snapshot_document(queue: InMemoryReviewQueue) -> tuple[dict[str, Any]
     )
 
 
+def build_review_queue_snapshot(queue: InMemoryReviewQueue) -> ReviewQueueSnapshot:
+    """Build and validate snapshot metadata without touching the filesystem."""
+    document, _ = _build_snapshot_document(queue)
+    return ReviewQueueSnapshot.model_validate(document)
+
+
 def _fsync_directory(path: Path) -> None:
     try:
         descriptor = os.open(path, os.O_RDONLY)
@@ -394,7 +400,17 @@ def write_review_queue_snapshot(
             os.link(temporary, target)
         except FileExistsError:
             raise FileExistsError(_SNAPSHOT_EXISTS_MESSAGE) from None
-        temporary.unlink(missing_ok=True)
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            # A strict-loaded snapshot must have exactly one link. If the
+            # temporary link cannot be removed, roll back the new target
+            # before reporting a fixed storage failure.
+            try:
+                target.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
         _fsync_directory(target.parent)
     except FileExistsError:
         raise
@@ -488,6 +504,31 @@ def _validate_snapshot_document(payload: dict[str, Any]) -> ReviewQueueSnapshot:
     return snapshot
 
 
+def validate_review_queue_snapshot(
+    snapshot: ReviewQueueSnapshot | dict[str, Any],
+) -> ReviewQueueSnapshot:
+    """Revalidate caller data through the complete snapshot contract."""
+    try:
+        if isinstance(snapshot, BaseModel):
+            payload = snapshot.model_dump(mode="json", warnings=False)
+        elif isinstance(snapshot, dict):
+            payload = snapshot
+        else:
+            raise TypeError()
+        if not isinstance(payload, dict):
+            raise TypeError()
+        validated = _validate_snapshot_document(payload)
+        return ReviewQueueSnapshot.model_validate(
+            validated.model_dump(mode="json", warnings=False)
+        )
+    except ReviewQueueSnapshotError:
+        raise
+    except Exception:
+        raise ReviewQueueSnapshotError(
+            ReviewQueueSnapshotErrorCode.INVALID_CONTRACT
+        ) from None
+
+
 def load_review_queue_snapshot(
     snapshot_path: str | Path,
     *,
@@ -505,8 +546,7 @@ def load_review_queue_snapshot(
             ReviewQueueSnapshotErrorCode.STORAGE_ERROR
         ) from None
     payload = _parse_snapshot_bytes(raw)
-    snapshot = _validate_snapshot_document(payload)
-    return ReviewQueueSnapshot.model_validate(snapshot.model_dump(mode="json"))
+    return validate_review_queue_snapshot(payload)
 
 
 __all__ = [
@@ -515,8 +555,10 @@ __all__ = [
     "ReviewQueueSnapshot",
     "ReviewQueueSnapshotError",
     "ReviewQueueSnapshotErrorCode",
+    "build_review_queue_snapshot",
     "load_review_queue_snapshot",
     "preflight_review_queue_snapshot",
     "snapshot_payload_sha256",
+    "validate_review_queue_snapshot",
     "write_review_queue_snapshot",
 ]
