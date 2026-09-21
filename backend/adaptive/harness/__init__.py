@@ -55,6 +55,13 @@ from .clarification_query_constraint import (
     ConstraintAwareProvider,
     run_constrained_generation,
 )
+from .clarification_execution_adapter import (
+    CLARIFICATION_EXECUTION_ADAPTER_VERSION,
+    ClarificationExecutionAdapterError,
+    ClarificationExecutionAdapterErrorCode,
+    ClarificationExecutionResult,
+    run_clarified_execution,
+)
 from .critique import (
     CRITIQUE_DISPOSITION_VERSION,
     CRITIQUE_INVALID_SUMMARY,
@@ -192,13 +199,18 @@ __all__ = [
     "DetectorRule",
     "DetectorRuleSet",
     "CLARIFICATION_CONTRACT_VERSION",
+    "CLARIFICATION_EXECUTION_ADAPTER_VERSION",
     "CLARIFICATION_QUERY_CONSTRAINT_VERSION",
+    "ClarificationExecutionAdapterError",
+    "ClarificationExecutionAdapterErrorCode",
+    "ClarificationExecutionResult",
     "ClarificationQueryConstraint",
     "ClarificationQueryConstraintError",
     "ClarificationQueryConstraintErrorCode",
     "ConstrainedGenerationResult",
     "ConstraintAwareProvider",
     "run_constrained_generation",
+    "run_clarified_execution",
     "CRITIQUE_DISPOSITION_VERSION",
     "CRITIQUE_INVALID_SUMMARY",
     "CompiledQuery",

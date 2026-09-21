@@ -1,6 +1,6 @@
 # 새 Codex 대화용 짧은 인수인계
 
-현재 기준: 2026-09-22, Phase 6-09 확인 선택의 합성 QueryIR constraint 전달까지 구현·검증 완료. 최신 상태는 항상 Git과 코드로 다시 확인한다. 설계와 로드맵의 원본은 [`schema-adaptive-text-to-sql-plan.md`](schema-adaptive-text-to-sql-plan.md), 독립 평가 세트 설계 기준은 [`independent-evaluation-set-design.md`](independent-evaluation-set-design.md), 안전한 잠정 비교는 [`phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md`](phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md)다.
+현재 기준: 2026-09-22, Phase 6-10 확인 선택의 합성 read-only 실행 adapter까지 구현·검증 완료. 최신 상태는 항상 Git과 코드로 다시 확인한다. 설계와 로드맵의 원본은 [`schema-adaptive-text-to-sql-plan.md`](schema-adaptive-text-to-sql-plan.md), 독립 평가 세트 설계 기준은 [`independent-evaluation-set-design.md`](independent-evaluation-set-design.md), 안전한 잠정 비교는 [`phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md`](phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md)다.
 
 ## 프로젝트와 현재 경계
 
@@ -27,12 +27,13 @@
 - Phase 6-07: 합성 영속 검토 큐 lifecycle(`durable-review-workflow-v1`) 구현·합성 검증 완료. current snapshot을 전체 계약으로 strict load·복원한 뒤 기존 agent workflow를 한 번 실행하고 `ENQUEUED`만 서로 다른 새 private snapshot에 no-overwrite 게시한다. `ALREADY_PRESENT`·성공·0행 성공·`REQUEST_INVALID`은 무쓰기다. caller queue/critique/disposition 주입 없음. 경로·복원 오류는 실행 전 차단하고 conflict·내부·storage 오류를 분리한다. 반환은 기존 workflow result와 `WRITTEN`/`UNCHANGED`, hash·entry count뿐이다. 독립 검토에서 cross-module private 접근, 내부 오류 오분류, 게시 후 재읽기/결과 생성 실패 경계, hard-link temp 정리 실패 뒤 invalid target 잔류를 수정했다. 신규 합성 테스트 22개, 인접 회귀 101개 통과·1개 skip. overwrite·current pointer·동시성/잠금·운영 DB/UI·관리자 승인·자동 retry는 미구현. 실제 Ollama·PostgreSQL·CNU 자료·private recording bundle·성능 측정 없음.
 - Phase 6-08: versioned literal ruleset 기반 합성 모호성 감지(`ambiguity-detector-v1`)와 기존 `clarification-gate-v2` prepare/resolve 연결 완료. 0 match 통과, 단일 match만 opaque signal 생성, multi match conflict, 모든 공개 입력 재검증, Published mapping·DB·ontology ref 검증, resolve 재감지와 context/ruleset drift fail closed를 합성 테스트로 확인했다. 독립 검토에서 canonical 전체 ruleset fingerprint를 option ID에 결합해 trigger·미매치 rule 변경도 과거 pending과 불일치하게 보완했다. 순서만 바뀐 동등 ruleset은 안정적이다. literal 규칙은 NLU가 아니며 QueryIR 반영·실제 UI·session/expiry는 미구현. 실제 Ollama·PostgreSQL·CNU 자료·성능 측정 없음.
 - Phase 6-09: 확인 선택의 합성 QueryIR constraint 전달(`clarification-query-constraint-v1`) 완료. 원래 context/ruleset/pending/choice를 기존 detector/gate로 재확인하고 선택 fingerprint를 entity/field semantic ref로 승격해 constraint-aware provider에 방어적 복사로 1회 전달한다. 반환 QueryIR는 기존 validator와 entity 정확 일치 또는 field select/filter 사용 규칙을 통과해야 한다. 독립 검토에서 최소 constraint 필드, 고정 violation code, known raw context reflection 차단과 semantic/physical 이름 겹침 과차단 회귀를 보완했다. 관련 테스트 83개 통과. compile/execute/repair·실제 UI·session/expiry·실제 Ollama/PostgreSQL/CNU 자료·성능 측정 없음.
+- Phase 6-10: 확인 선택의 합성 read-only 실행 adapter(`clarification-execution-adapter-v1`) 완료. Phase 6-09 재확인·constraint-aware 생성 뒤 검증된 QueryIR 하나를 내부 one-shot model로 기존 `ExecutionHarness`에 전달해 request/context/IR 검증, compile, SQL policy, read-only execute, result 검증을 그대로 수행한다. caller의 IR/constraint/model/result/SQL 주입 API 없음. compile 이후 기존 실패 code/stage·IR 보존, 초기 단계 실패·IR/request 불일치·상태 모순은 내부 오류로 fail closed. 독립 검토에서 결과 모델 자체에 nested 불변식을 추가했다. 신규 12개·인접 105개 테스트 통과. 실제 UI·session/expiry·repair·Ollama/PostgreSQL/CNU 자료·성능 측정 없음.
 - 현재 로컬에는 fine-tuned tag만 확인되어 base instruct 평가는 정확한 tag가 별도로 준비될 때 진행한다. E3·L5 팀 결정 대기와 합성 개발은 병행한다.
 - `docs/desktop-test-handoff.md`는 초기 데스크톱 이전 시점의 기록이다.
 
 ## 다음 작은 작업
 
-1. constraint 검증을 통과한 QueryIR를 기존 validation·compile·정책·read-only execute 경로에 우회 없이 전달하는 합성 실행 adapter 설계(실제 UI·운영 DB 없음)
+1. ambiguity pending 발급과 choice 제출·Phase 6-10 실행을 잇는 합성 API/session 경계 설계(만료·일회성·취소·재사용 거부 포함, 실제 UI·운영 DB 없음)
 2. 새 30건 초안의 사람 검토(L1·E2)·동결은 사람 관문 도달 시 진행
 3. 실제 운영 검토 큐 저장 설계(합성 immutable source/next lifecycle까지 완료, current pointer·동시성/잠금·운영 DB·승인 흐름은 미구현)
 4. base instruct 모델 tag가 준비되면 base instruct 평가
@@ -40,8 +41,8 @@
 
 ## 새 대화의 최소 시작 순서
 
-1. 저장소 루트에서 `AGENTS.md`와 이 문서, 계획 문서의 **Phase 5·6 현재 체크포인트·ADR-023/024/025/027/028/029/030/031/032/033/034/035/036/037·다음 시작점**, `docs/human-validation-checkpoints.md`의 E3/L1/L3/L5를 읽는다.
-2. `git status --short`, 최근 commit, 관련 코드·테스트를 확인한다. 문서는 방향을 알려주지만 구현 상태와 테스트 통과를 대신하지 않는다. Phase 6-09 범위는 `docs/prompts/phase6-09-clarification-query-constraint.md`에 둔다.
+1. 저장소 루트에서 `AGENTS.md`와 이 문서, 계획 문서의 **Phase 5·6 현재 체크포인트·ADR-023/024/025/027/028/029/030/031/032/033/034/035/036/037/038·다음 시작점**, `docs/human-validation-checkpoints.md`의 E3/L1/L3/L5를 읽는다.
+2. `git status --short`, 최근 commit, 관련 코드·테스트를 확인한다. 문서는 방향을 알려주지만 구현 상태와 테스트 통과를 대신하지 않는다. Phase 6-10 범위는 `docs/prompts/phase6-10-clarification-execution-adapter.md`에 둔다.
 3. 현재 작업에 필요한 파일만 더 읽고 해당 범위의 테스트부터 실행한다. 이전 대화 전체나 저장소 전체를 다시 요약할 필요는 없다.
 
 실제 질문·응답, DB 행·dump, 모델 weight, 비밀값, private recording은 Git이나 공개 문서에 복사하지 않는다.
