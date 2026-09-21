@@ -34,6 +34,18 @@ from .clarification import (
     prepare as prepare_clarification,
     resolve as resolve_clarification,
 )
+from .ambiguity_detector import (
+    AMBIGUITY_DETECTOR_VERSION,
+    AmbiguityDetectorError,
+    AmbiguityDetectorErrorCode,
+    DetectorOption,
+    DetectorRule,
+    DetectorRuleSet,
+    detect_ambiguity,
+    normalize_text,
+    prepare_detected_clarification,
+    resolve_detected_clarification,
+)
 from .critique import (
     CRITIQUE_DISPOSITION_VERSION,
     CRITIQUE_INVALID_SUMMARY,
@@ -152,6 +164,7 @@ from .durable_review import (
 )
 
 __all__ = [
+    "AMBIGUITY_DETECTOR_VERSION",
     "AGENT_WORKFLOW_CONFLICT",
     "AGENT_WORKFLOW_INTERNAL_ERROR",
     "AGENT_WORKFLOW_INVALID_INPUT",
@@ -162,8 +175,13 @@ __all__ = [
     "AgentWorkflowResult",
     "AmbiguityOption",
     "AmbiguitySignal",
+    "AmbiguityDetectorError",
+    "AmbiguityDetectorErrorCode",
     "BoundedRepairCoordinator",
     "DetailedRepairOutcome",
+    "DetectorOption",
+    "DetectorRule",
+    "DetectorRuleSet",
     "CLARIFICATION_CONTRACT_VERSION",
     "CRITIQUE_DISPOSITION_VERSION",
     "CRITIQUE_INVALID_SUMMARY",
@@ -180,6 +198,7 @@ __all__ = [
     "CritiqueResult",
     "DataType",
     "database_id_fingerprint",
+    "detect_ambiguity",
     "DurableReviewPersistence",
     "DurableReviewWorkflowCoordinator",
     "DurableReviewWorkflowError",
@@ -269,11 +288,14 @@ __all__ = [
     "write_review_queue_snapshot",
     "is_repairable",
     "model_run_id_fingerprint",
+    "normalize_text",
     "validate_queue_identifier",
     "validate_review_queue_identity",
     "ontology_fingerprint",
     "prepare_clarification",
+    "prepare_detected_clarification",
     "request_id_fingerprint",
     "resolve_clarification",
+    "resolve_detected_clarification",
     "review_request_id_fingerprint",
 ]
