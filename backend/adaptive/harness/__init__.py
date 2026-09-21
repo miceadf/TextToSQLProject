@@ -94,6 +94,7 @@ from .repair import (
     MAX_REPAIR_ATTEMPTS,
     REPAIR_PROVIDER_ERROR,
     BoundedRepairCoordinator,
+    DetailedRepairOutcome,
     RepairProvider,
     RepairSummary,
     is_repairable,
@@ -110,6 +111,8 @@ from .review_queue import (
     ReviewQueueStatus,
     model_run_id_fingerprint,
     review_request_id_fingerprint,
+    validate_queue_identifier,
+    validate_review_queue_identity,
 )
 from .review_queue_storage import (
     REVIEW_QUEUE_SNAPSHOT_VERSION,
@@ -122,11 +125,30 @@ from .review_queue_storage import (
     snapshot_payload_sha256,
     write_review_queue_snapshot,
 )
+from .agent_workflow import (
+    AGENT_WORKFLOW_CONFLICT,
+    AGENT_WORKFLOW_INTERNAL_ERROR,
+    AGENT_WORKFLOW_INVALID_INPUT,
+    AGENT_WORKFLOW_VERSION,
+    AgentWorkflowCoordinator,
+    AgentWorkflowError,
+    AgentWorkflowErrorCode,
+    AgentWorkflowResult,
+)
 
 __all__ = [
+    "AGENT_WORKFLOW_CONFLICT",
+    "AGENT_WORKFLOW_INTERNAL_ERROR",
+    "AGENT_WORKFLOW_INVALID_INPUT",
+    "AGENT_WORKFLOW_VERSION",
+    "AgentWorkflowCoordinator",
+    "AgentWorkflowError",
+    "AgentWorkflowErrorCode",
+    "AgentWorkflowResult",
     "AmbiguityOption",
     "AmbiguitySignal",
     "BoundedRepairCoordinator",
+    "DetailedRepairOutcome",
     "CLARIFICATION_CONTRACT_VERSION",
     "CRITIQUE_DISPOSITION_VERSION",
     "CRITIQUE_INVALID_SUMMARY",
@@ -219,6 +241,8 @@ __all__ = [
     "write_review_queue_snapshot",
     "is_repairable",
     "model_run_id_fingerprint",
+    "validate_queue_identifier",
+    "validate_review_queue_identity",
     "ontology_fingerprint",
     "prepare_clarification",
     "request_id_fingerprint",

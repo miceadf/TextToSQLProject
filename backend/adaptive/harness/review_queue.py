@@ -144,6 +144,24 @@ def _validate_id(value: Any) -> str:
     return value
 
 
+def validate_queue_identifier(value: Any) -> str:
+    """Validate one queue identifier with the single shared rule.
+
+    Public helper so follow-up layers (e.g. the synthetic agent
+    workflow) reuse this exact rule instead of copying it. Accepts a
+    1..200 character non-blank string; raises fixed
+    `REVIEW_QUEUE_INVALID_INPUT` otherwise without reflecting content.
+    """
+    return _validate_id(value)
+
+
+def validate_review_queue_identity(
+    model_run_id: Any, request_id: Any
+) -> tuple[str, str]:
+    """Validate a (model_run_id, request_id) pair with the shared rule."""
+    return (validate_queue_identifier(model_run_id), validate_queue_identifier(request_id))
+
+
 def _idempotency_key(
     *,
     model_run_hash: str,
@@ -176,8 +194,9 @@ class InMemoryReviewQueue:
         request_id: str,
     ) -> ReviewQueueRegistration:
         """Classify internally and register operational failures only."""
-        raw_run_id = _validate_id(model_run_id)
-        raw_request_id = _validate_id(request_id)
+        raw_run_id, raw_request_id = validate_review_queue_identity(
+            model_run_id, request_id
+        )
         # Critique failures (including forged summaries) propagate with the
         # existing fixed CRITIQUE_INVALID_SUMMARY code; the queue is unchanged.
         result = critique_repair_summary(summary)
@@ -249,4 +268,6 @@ __all__ = [
     "ReviewQueueStatus",
     "model_run_id_fingerprint",
     "review_request_id_fingerprint",
+    "validate_queue_identifier",
+    "validate_review_queue_identity",
 ]

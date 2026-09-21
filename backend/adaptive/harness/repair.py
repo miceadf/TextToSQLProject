@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from .compiler import SingleTableSQLiteCompiler
 from .contracts import (
@@ -86,6 +86,98 @@ class RepairSummary(BaseModel):
     final_stage: HarnessStage | None = Field(default=None, strict=False)
     final_code: str | None = None
     succeeded: bool
+
+
+class DetailedRepairOutcome(BaseModel):
+    """Final harness result preserved alongside its repair summary.
+
+    `final_result` is the `HarnessResult` from the initial execution
+    (terminal path) or from the single repair-candidate execution
+    (repair path), defensively copied. It is `None` only when the
+    repair provider raised and the summary ends with
+    `REPAIR_PROVIDER_ERROR`: no final harness execution exists there,
+    and this contract expresses that absence explicitly instead of
+    inventing a fake error code or harness result. Cancellation still
+    propagates and yields no outcome.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    summary: RepairSummary
+    final_result: HarnessResult | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _revalidate_nested(cls, data: Any) -> Any:
+        # Pydantic may skip nested validation for already-built model
+        # instances (`model_copy(update=...)`, `model_construct`), so
+        # revalidate every nested instance from plain JSON data first.
+        # Serializer warnings can echo forged input, hence suppressed.
+        if isinstance(data, BaseModel):
+            try:
+                data = data.model_dump(mode="json", warnings=False)
+            except Exception:
+                raise ValueError("invalid repair outcome") from None
+            if not isinstance(data, dict):
+                raise ValueError("invalid repair outcome")
+        if isinstance(data, dict):
+            summary = data.get("summary")
+            if isinstance(summary, BaseModel):
+                try:
+                    data = dict(data)
+                    data["summary"] = summary.model_dump(
+                        mode="json", warnings=False
+                    )
+                except Exception:
+                    raise ValueError("invalid repair outcome") from None
+            result = data.get("final_result")
+            if isinstance(result, BaseModel):
+                try:
+                    data = dict(data)
+                    data["final_result"] = result.model_dump(
+                        mode="json", warnings=False
+                    )
+                except Exception:
+                    raise ValueError("invalid repair outcome") from None
+        return data
+
+    @model_validator(mode="after")
+    def _validate_result_agreement(self) -> DetailedRepairOutcome:
+        summary = self.summary
+        result = self.final_result
+        if summary.final_code == REPAIR_PROVIDER_ERROR:
+            if result is not None:
+                raise ValueError("provider-error outcome must not carry a result")
+            if summary.final_status is not HarnessStatus.FAILED:
+                raise ValueError("provider-error outcome must be failed")
+            if summary.final_stage is not None or summary.succeeded:
+                raise ValueError("provider-error outcome must not succeed")
+            return self
+        if result is None:
+            raise ValueError("non-provider-error outcome must carry a result")
+        if summary.final_status is not result.status:
+            raise ValueError("summary and result status disagree")
+        if summary.succeeded != (result.status is HarnessStatus.SUCCEEDED):
+            raise ValueError("summary and result success disagree")
+        if result.status is HarnessStatus.SUCCEEDED:
+            if summary.final_code is not None:
+                raise ValueError("success outcome must not carry a code")
+            if summary.final_stage is not HarnessStage.RESULT_VALIDATED:
+                raise ValueError("success outcome must end validated")
+            if result.error is not None:
+                raise ValueError("success result must not carry an error")
+            return self
+        if summary.final_status is not HarnessStatus.FAILED or summary.succeeded:
+            raise ValueError("failure outcome must be failed")
+        if result.error is None:
+            if summary.final_code is not None or summary.final_stage is not None:
+                raise ValueError("summary and result failure disagree")
+            return self
+        if summary.final_code != result.error.code.value:
+            raise ValueError("summary and result code disagree")
+        if summary.final_stage is not result.error.stage:
+            raise ValueError("summary and result stage disagree")
+        return self
 
 
 class _IsolatedModel:
@@ -191,7 +283,7 @@ class BoundedRepairCoordinator:
             succeeded=False,
         )
 
-    def run(
+    def run_detailed(
         self,
         request_data: HarnessRequest | dict[str, Any],
         ontology: Ontology,
@@ -199,7 +291,16 @@ class BoundedRepairCoordinator:
         *,
         model: QueryModel,
         repair_provider: RepairProvider,
-    ) -> RepairSummary:
+    ) -> DetailedRepairOutcome:
+        """Run the bounded repair and preserve the final harness result.
+
+        Same call budget as `run` (initial model once, provider at most
+        once, second execution at most once); no request is re-executed
+        to restore a result. `final_result` is `None` only for
+        `REPAIR_PROVIDER_ERROR`, where no final harness execution
+        exists. Cancellation (`BaseException`) propagates with no
+        outcome.
+        """
         # Snapshot caller context first; the harness hands only deep copies
         # to the initial model, the repair provider, and the second attempt.
         try:
@@ -215,7 +316,7 @@ class BoundedRepairCoordinator:
         )
         if initial.status is HarnessStatus.SUCCEEDED:
             status, stage, code = _outcome_of(initial)
-            return RepairSummary(
+            summary = RepairSummary(
                 initial_status=status,
                 initial_stage=stage,
                 initial_code=code,
@@ -226,17 +327,30 @@ class BoundedRepairCoordinator:
                 final_code=code,
                 succeeded=True,
             )
+            return DetailedRepairOutcome(
+                summary=summary,
+                final_result=initial.model_copy(deep=True),
+            )
         if initial.error is None:
-            return self._terminal(initial)
+            return DetailedRepairOutcome(
+                summary=self._terminal(initial),
+                final_result=initial.model_copy(deep=True),
+            )
         code, stage = initial.error.code, initial.error.stage
         if (
             stage is None
             or mapping_snapshot.status is not MappingStatus.PUBLISHED
             or not is_repairable(code, stage)
         ):
-            return self._terminal(initial)
+            return DetailedRepairOutcome(
+                summary=self._terminal(initial),
+                final_result=initial.model_copy(deep=True),
+            )
         if snapshot_request is None:
-            return self._terminal(initial)
+            return DetailedRepairOutcome(
+                summary=self._terminal(initial),
+                final_result=initial.model_copy(deep=True),
+            )
         validated = snapshot_request.model_copy(deep=True)
         try:
             candidate = repair_provider.propose_repair(
@@ -249,11 +363,16 @@ class BoundedRepairCoordinator:
         except Exception:
             # Cancellation (BaseException) propagates; anything else ends
             # the repair here with a fixed code and no further retry.
-            return self._terminal(
-                initial,
-                repair_attempts=1,
-                final_code=REPAIR_PROVIDER_ERROR,
-                final_stage=None,
+            # No final harness execution exists, so the outcome carries
+            # no harness result instead of a fabricated one.
+            return DetailedRepairOutcome(
+                summary=self._terminal(
+                    initial,
+                    repair_attempts=1,
+                    final_code=REPAIR_PROVIDER_ERROR,
+                    final_stage=None,
+                ),
+                final_result=None,
             )
         final = self._harness(_IsolatedModel(_SingleCandidateModel(candidate))).run(
             snapshot_request.model_copy(deep=True),
@@ -262,7 +381,7 @@ class BoundedRepairCoordinator:
         )
         final_status, final_stage, final_code = _outcome_of(final)
         initial_status, initial_stage, initial_code = _outcome_of(initial)
-        return RepairSummary(
+        summary = RepairSummary(
             initial_status=initial_status,
             initial_stage=initial_stage,
             initial_code=initial_code,
@@ -273,3 +392,25 @@ class BoundedRepairCoordinator:
             final_code=final_code,
             succeeded=final_status is HarnessStatus.SUCCEEDED,
         )
+        return DetailedRepairOutcome(
+            summary=summary,
+            final_result=final.model_copy(deep=True),
+        )
+
+    def run(
+        self,
+        request_data: HarnessRequest | dict[str, Any],
+        ontology: Ontology,
+        mapping: MappingProfile,
+        *,
+        model: QueryModel,
+        repair_provider: RepairProvider,
+    ) -> RepairSummary:
+        """Legacy summary-only entry point; delegates without extra calls."""
+        return self.run_detailed(
+            request_data,
+            ontology,
+            mapping,
+            model=model,
+            repair_provider=repair_provider,
+        ).summary.model_copy(deep=True)
