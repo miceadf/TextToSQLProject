@@ -628,6 +628,7 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 - [x] Phase 6-06 합성 agent workflow 통합(`agent-workflow-v1`; 상세 repair 실행 → 내부 critique → 운영 실패 후보 queue 등록을 한 번의 명시적 coordinator 호출로 수행; 최종 `HarnessResult` 보존, 성공·0행 성공과 `REQUEST_INVALID` 미등록; 파일·네트워크·Ollama·snapshot 자동 저장 없음)
 - [x] Phase 6-07 합성 영속 검토 큐 lifecycle(`durable-review-workflow-v1`; strict snapshot 복원 → agent workflow → `ENQUEUED`일 때만 새 immutable snapshot 게시; overwrite·current pointer·실제 운영 DB/UI/승인 없음)
 - [x] Phase 6-08 합성 모호성 감지와 확인 연결(`ambiguity-detector-v1`; versioned literal rule set의 결정적 단일 match → 기존 `clarification-gate-v2` prepare/resolve, ruleset drift·다중 match fail closed; QueryIR 반영·실제 UI 없음)
+- [x] Phase 6-09 확인 선택의 합성 QueryIR constraint 전달(`clarification-query-constraint-v1`; 재확인 → semantic constraint → constraint-aware provider 1회 → QueryIR·선택 준수 검증; 실행·UI 없음)
 - [x] validate → execute → critique → repair loop 구현(합성 계약 범위; `DetailedRepairOutcome`과 `AgentWorkflowCoordinator`로 연결)
 - [ ] 모호한 질문 감지 및 사용자 확인
 - [ ] 운영 실패를 관리자 검토 큐에 저장
@@ -961,7 +962,9 @@ Phase 6-07에서 `review-queue-snapshot-v1` strict load와 `AgentWorkflowCoordin
 
 Phase 6-08에서 versioned caller rule set의 literal trigger만 사용하는 합성 모호성 감지 경계(`backend/adaptive/harness/ambiguity_detector.py`, `ambiguity-detector-v1`)를 구현했다. NFKC·casefold·whitespace 정규화 후 0 match는 통과, 정확히 1개 rule match는 결정적 `AmbiguitySignal`, 2개 이상은 고정 conflict로 닫고, 기존 `clarification-gate-v2`의 `prepare`·`resolve`를 재사용한다. 모든 공개 입력은 dump-then-validate로 재검증하고 Published mapping·database 일치·ontology semantic ref만 허용한다. option ID는 canonical ruleset 전체 fingerprint를 포함한 domain-separated SHA-256이므로 rule/trigger/option drift는 과거 pending 확인에 실패하며, 입력 순서만 바뀐 동등 ruleset은 같은 ID를 유지한다. 원문 질문·raw ID·rule/option key·trigger·물리 mapping·SQL·행은 반환·오류·로그에 넣지 않는다. 이는 literal 규칙 탐지일 뿐 자연어 의미 이해가 아니며 QueryIR 반영·실행·실제 UI·session/expiry는 없다. 전체 `모호한 질문 감지 및 사용자 확인` 항목은 미완료로 유지한다. Phase 6-08 범위는 [`docs/prompts/phase6-08-synthetic-ambiguity-detection.md`](prompts/phase6-08-synthetic-ambiguity-detection.md)에 둔다.
 
-다음 작은 작업은 확인된 clarification의 semantic 선택을 후속 QueryIR 생성 입력에 안전하게 전달하는 합성 constraint 계약 설계이다. 새 30건 초안의 사람 검토(L1·E2)·동결은 사람 관문 도달 시 진행한다. 실제 사용자 상호작용·QueryIR 반영·운영 current pointer/동시성·실제 운영 DB·관리자 승인 흐름은 미구현이다. 새 prompt 탐색이나 live 호출은 하지 않는다. v1이 기본값이며 현재 로컬에는 fine-tuned tag만 확인되었으므로 base instruct 평가는 정확한 별도 tag가 준비될 때 진행한다. 합성 개발은 E3·L5 결정 대기와 병행한다. **실제 CNU 자료의 추가 사용·공유와 실제 데이터 배포·외부 시연 전**에는 각각 E3·L5의 팀 결정을 확인한다. 모델 성능 확정 전 L1·L3를 확인한다. PostgreSQL 통합은 별도 단계다.
+Phase 6-09에서 확인된 선택을 후속 생성에 전달하는 합성 경계(`backend/adaptive/harness/clarification_query_constraint.py`, `clarification-query-constraint-v1`)를 구현했다. caller는 result/signal/semantic ref/constraint를 주입하지 못하고 원래 request·ontology·Published mapping·ruleset·pending·choice와 constraint-aware provider만 전달한다. coordinator는 기존 detector/clarification으로 재감지·재확인하고 opaque 선택 fingerprint를 정확히 한 ontology entity/field로 역매핑한 뒤 request/database·ontology/mapping fingerprint와 semantic ref만 가진 frozen constraint를 provider의 방어적 복사본에 정확히 1회 전달한다. provider 반환은 `QueryIR` 재검증과 기존 `validate_query_ir()`를 통과해야 하며, entity 선택은 `QueryIR.entity` 정확 일치, field 선택은 select/filter 최소 1회 사용을 강제한다. 알려진 raw request/database/rule/trigger/option/physical 이름의 QueryIR 반사는 반환 전 차단하고 semantic 이름과 우연히 같은 물리 이름은 과차단하지 않는다. 독립 검토에서 constraint 중복 필드를 제거하고 고정 violation code와 reflection 경계를 보완했다. 이는 정답·사용자 만족 판정이 아니며 compile/execute/repair/UI/session/expiry는 없다. 전체 `모호한 질문 감지 및 사용자 확인` 항목은 미완료로 유지한다. Phase 6-09 범위는 [`docs/prompts/phase6-09-clarification-query-constraint.md`](prompts/phase6-09-clarification-query-constraint.md)에 둔다.
+
+다음 작은 작업은 constraint 검증을 통과한 QueryIR를 기존 validation·compile·정책·read-only execute 경로에 우회 없이 전달하는 합성 실행 adapter 설계이다. 새 30건 초안의 사람 검토(L1·E2)·동결은 사람 관문 도달 시 진행한다. 실제 사용자 UI·session/expiry·운영 current pointer/동시성·실제 운영 DB·관리자 승인 흐름은 미구현이다. 새 prompt 탐색이나 live 호출은 하지 않는다. v1이 기본값이며 현재 로컬에는 fine-tuned tag만 확인되었으므로 base instruct 평가는 정확한 별도 tag가 준비될 때 진행한다. 합성 개발은 E3·L5 결정 대기와 병행한다. **실제 CNU 자료의 추가 사용·공유와 실제 데이터 배포·외부 시연 전**에는 각각 E3·L5의 팀 결정을 확인한다. 모델 성능 확정 전 L1·L3를 확인한다. PostgreSQL 통합은 별도 단계다.
 
 완료된 adapter 계약은 [`docs/prompts/phase5-07-ollama-querymodel-adapter.md`](prompts/phase5-07-ollama-querymodel-adapter.md)에, 합성 live smoke의 수행 지침은 [`docs/prompts/phase5-08-ollama-adapter-live-smoke.md`](prompts/phase5-08-ollama-adapter-live-smoke.md)에 둔다. 모델이 반환한 SQL 등 비 JSON 텍스트는 원문 문자열로 보존해 후속 Query IR 검증 실패로 드러내며, provider 호출 실패와 혼합하지 않는다.
 
@@ -1386,6 +1389,13 @@ SQLite DB 입력
 - 결정: `ambiguity-detector-v1`은 caller가 제공한 frozen rule set을 dump-then-validate하고 NFKC·casefold·whitespace 정규화한 literal trigger 포함 여부만 검사한다. 0 match는 `None`, 정확히 1개 match만 기존 `clarification-gate-v2`에 전달하며 여러 rule match는 합치지 않고 고정 conflict로 거부한다. option ID는 version과 정규화된 전체 rule/trigger/option 정보를 순서 독립 canonical fingerprint로 묶은 domain-separated SHA-256으로 만들고, resolve 때 동일 입력으로 재감지한다. 따라서 rule set의 의미 있는 drift는 기존 pending과 불일치하고 순서만 다른 동등 입력은 안정적이다. 모델 추론·오류 taxonomy 기반 자동 추정·QueryIR 수정·실행·UI·DB·network는 이 경계에 넣지 않는다.
 - 이유: 자유형 의미 추론을 지금 결합하면 오탐과 모델 변동을 사용자 확인 계약에 섞고, matched rule의 option만 pending에 묶으면 trigger나 미매치 rule drift가 같은 선택으로 조용히 확인될 수 있다. literal 규칙과 전체 ruleset binding을 고정하면 합성 단계에서 재현 가능한 감지·확인 흐름과 fail-closed drift 검증을 확보하면서 실제 사용자 UX와 QueryIR 반영을 별도 단계로 남길 수 있다.
 
+### ADR-037: 확인 선택은 별도 constraint-aware 생성 경계에서 재확인하고 QueryIR 준수를 강제
+
+- 날짜: 2026-09-22
+- 상태: 채택
+- 결정: `clarification-query-constraint-v1`은 기존 `QueryModel`·`ExecutionHarness`를 변경하지 않고 별도 provider protocol과 coordinator로 둔다. caller가 확인 result나 semantic ref를 주입하지 못하게 하고, 기존 detector/gate를 다시 실행해 선택 fingerprint와 정확히 일치하는 entity/field만 최소 fingerprint constraint로 만든다. provider는 방어적 context 복사와 constraint를 한 번만 받고, 반환은 기존 QueryIR validator 후 entity 정확 일치 또는 field select/filter 포함 규칙을 통과해야 한다. known raw boundary 문자열 반사는 고정 invalid-output 오류로 거부한다. 생성 결과는 실행·compile·repair로 자동 전달하지 않는다.
+- 이유: 확인 결과를 단순 semantic 문자열로 받으면 caller가 선택을 바꾸거나 stale pending을 우회할 수 있고, prompt에 constraint를 전달하기만 하면 provider가 이를 무시한 QueryIR도 정상 경로로 들어간다. 재확인·명시적 provider 입력·사후 준수 검증을 한 경계로 묶으면 선택의 출처와 적용을 합성으로 검증하면서 기존 실행 계약과 실제 UI를 독립적으로 유지할 수 있다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -1578,3 +1588,4 @@ SQLite DB 입력
 ### 2026-09-22
 
 - Phase 6-08 합성 ambiguity 감지(`ambiguity-detector-v1`)와 기존 `clarification-gate-v2` 연결 구현. versioned literal ruleset 검증, 0/1/multi match 분기, opaque option ID, prepare/resolve 재감지, 위조·context/ruleset drift·비노출 경계를 합성 테스트로 검증. 독립 검토에서 canonical 전체 ruleset fingerprint를 option ID에 결합해 여전히 match되는 trigger 변경과 미매치 rule 변경도 과거 pending을 확인하지 못하게 하고 package 공개 API를 추가. 상위 모호성 항목은 QueryIR 반영·실제 UI 미구현으로 미완료 유지. ADR-036 추가. 실제 Ollama·PostgreSQL·CNU 자료·성능 측정 없음. E3/L5·L1/L3 대기 유지
+- Phase 6-09 확인 선택의 합성 QueryIR constraint 전달(`clarification-query-constraint-v1`) 구현. 기존 detector/gate 재확인, opaque 선택의 semantic ref 승격, 방어적 context 복사와 constraint-aware provider 1회 호출, QueryIR 구조·ontology·선택 준수 검증을 연결. 독립 검토에서 constraint를 최소 fingerprint 필드로 축소하고 violation code 중복을 수정했으며 known raw context reflection 차단과 semantic/physical 이름 겹침 과차단 회귀를 추가. 관련 테스트 83개 통과. 실행·compile·repair·UI·실제 DB/Ollama/CNU 자료·성능 측정 없음. 상위 모호성 항목과 E3/L5·L1/L3 대기 유지. ADR-037 추가

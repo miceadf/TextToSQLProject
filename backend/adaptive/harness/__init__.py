@@ -46,6 +46,15 @@ from .ambiguity_detector import (
     prepare_detected_clarification,
     resolve_detected_clarification,
 )
+from .clarification_query_constraint import (
+    CLARIFICATION_QUERY_CONSTRAINT_VERSION,
+    ClarificationQueryConstraint,
+    ClarificationQueryConstraintError,
+    ClarificationQueryConstraintErrorCode,
+    ConstrainedGenerationResult,
+    ConstraintAwareProvider,
+    run_constrained_generation,
+)
 from .critique import (
     CRITIQUE_DISPOSITION_VERSION,
     CRITIQUE_INVALID_SUMMARY,
@@ -183,6 +192,13 @@ __all__ = [
     "DetectorRule",
     "DetectorRuleSet",
     "CLARIFICATION_CONTRACT_VERSION",
+    "CLARIFICATION_QUERY_CONSTRAINT_VERSION",
+    "ClarificationQueryConstraint",
+    "ClarificationQueryConstraintError",
+    "ClarificationQueryConstraintErrorCode",
+    "ConstrainedGenerationResult",
+    "ConstraintAwareProvider",
+    "run_constrained_generation",
     "CRITIQUE_DISPOSITION_VERSION",
     "CRITIQUE_INVALID_SUMMARY",
     "CompiledQuery",
