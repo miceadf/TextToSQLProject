@@ -262,7 +262,9 @@ def test_single_match_pending_and_snapshot_isolation():
     assert started.status is ClarificationSessionStartStatus.PENDING
     assert started.session_token is not None
     assert started.pending is not None
+    assert started.options is not None
     assert len(started.pending.options) == 2
+    assert len(started.options) == 2
     # Caller mutation after start does not affect the stored snapshot.
     request.question = f"{QUESTION_BASE} mutated 성적표"
     choice = _choice_for(_request(), _ontology(), _mapping(), _field_rules(), "Course.name")
@@ -271,6 +273,30 @@ def test_single_match_pending_and_snapshot_isolation():
     tampered = started.pending.model_copy(update={"mapping_version": 99})
     assert tampered.mapping_version == 99
     assert started.pending.mapping_version == 1
+
+
+def test_start_options_can_be_submitted_without_redetection(sqlite_db):
+    coord = _coordinator()
+    started = coord.start(_request(), _ontology(), _mapping(), _field_rules())
+    assert started.session_token is not None
+    assert started.options is not None
+    selected = next(
+        option for option in started.options if option.semantic_ref == "Course.name"
+    )
+    result = coord.submit(
+        started.session_token,
+        ClarificationChoice(selection=[selected.option_id]),
+        CountingProvider(
+            {
+                "entity": "Course",
+                "select": ["Course.name"],
+                "filters": [],
+                "limit": 5,
+            }
+        ),
+        SQLiteReadOnlyExecutor({"synth-db": sqlite_db}),
+    )
+    assert result.status is ClarificationSessionSubmitStatus.EXECUTED
 
 
 def test_entity_and_field_submit_execute_once(sqlite_db):
@@ -597,6 +623,15 @@ def test_forged_nested_results_and_no_injection_api(sqlite_db):
     with pytest.raises(ValidationError):
         ClarificationSessionStartResult.model_validate(
             {**started.model_dump(mode="json", warnings=False), "status": "NOT_REQUIRED"}
+        )
+    assert started.options is not None
+    forged_option = started.options[0].model_copy(update={"option_id": "0" * 64})
+    with pytest.raises(ValidationError):
+        ClarificationSessionStartResult.model_validate(
+            {
+                **started.model_dump(mode="json", warnings=False),
+                "options": [forged_option, *started.options[1:]],
+            }
         )
     payload = result.model_dump(mode="json", warnings=False)
     payload["request_id_sha256"] = "0" * 64

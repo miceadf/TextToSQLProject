@@ -42,15 +42,21 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .ambiguity_detector import DetectorRuleSet, prepare_detected_clarification
+from .ambiguity_detector import (
+    DetectorRuleSet,
+    detect_ambiguity,
+    prepare_detected_clarification,
+)
 from .ambiguity_detector import resolve_detected_clarification as _resolve_detected
 from .clarification import (
     ClarificationChoice,
     ClarificationResult,
     ClarificationStatus,
+    AmbiguityOption,
     PendingClarification,
     database_id_fingerprint,
     ontology_fingerprint,
+    option_id_fingerprint,
     request_id_fingerprint,
 )
 from .clarification_execution_adapter import (
@@ -111,26 +117,57 @@ class ClarificationSessionStartResult(BaseModel):
     mapping_version: int = Field(ge=1)
     session_token: str | None = None
     pending: PendingClarification | None = None
+    options: list[AmbiguityOption] | None = None
 
     @model_validator(mode="before")
     @classmethod
     def _revalidate_nested(cls, data: Any) -> Any:
-        if isinstance(data, dict) and isinstance(data.get("pending"), BaseModel):
+        if isinstance(data, dict):
             nested = dict(data)
-            nested["pending"] = data["pending"].model_dump(mode="json", warnings=False)
-            return nested
+            changed = False
+            if isinstance(data.get("pending"), BaseModel):
+                nested["pending"] = data["pending"].model_dump(
+                    mode="json", warnings=False
+                )
+                changed = True
+            options = data.get("options")
+            if isinstance(options, list) and any(
+                isinstance(option, BaseModel) for option in options
+            ):
+                nested["options"] = [
+                    option.model_dump(mode="json", warnings=False)
+                    if isinstance(option, BaseModel)
+                    else option
+                    for option in options
+                ]
+                changed = True
+            if changed:
+                return nested
         return data
 
     @model_validator(mode="after")
     def _check_start_invariants(self) -> "ClarificationSessionStartResult":
         if self.status is ClarificationSessionStartStatus.NOT_REQUIRED:
-            if self.session_token is not None or self.pending is not None:
-                raise ValueError("not-required start must not carry token or pending")
+            if (
+                self.session_token is not None
+                or self.pending is not None
+                or self.options is not None
+            ):
+                raise ValueError("not-required start must not carry session data")
         else:
-            if self.session_token is None or self.pending is None:
-                raise ValueError("pending start must carry token and pending")
+            if self.session_token is None or self.pending is None or self.options is None:
+                raise ValueError("pending start must carry token, pending, and options")
             if not re.fullmatch(_TOKEN_PATTERN, self.session_token):
                 raise ValueError("pending start carries a malformed token")
+            option_pairs = sorted(
+                (option_id_fingerprint(option.option_id), option.semantic_ref)
+                for option in self.options
+            )
+            pending_pairs = sorted(
+                (option.option_id, option.semantic_ref) for option in self.pending.options
+            )
+            if option_pairs != pending_pairs:
+                raise ValueError("selectable options do not match pending binding")
             if (
                 self.pending.request_id_sha256 != self.request_id_sha256
                 or self.pending.database_id_sha256 != self.database_id_sha256
@@ -290,7 +327,17 @@ class ClarificationSessionCoordinator:
             copy.deepcopy(snapshot_mapping),
             copy.deepcopy(snapshot_rules),
         )
+        signal = detect_ambiguity(
+            copy.deepcopy(snapshot_request),
+            copy.deepcopy(snapshot_ontology),
+            copy.deepcopy(snapshot_mapping),
+            copy.deepcopy(snapshot_rules),
+        )
         if pending is None:
+            if signal is not None:
+                raise ClarificationSessionError(
+                    ClarificationSessionErrorCode.INTERNAL_ERROR
+                )
             try:
                 return ClarificationSessionStartResult.model_validate(
                     {
@@ -303,16 +350,27 @@ class ClarificationSessionCoordinator:
                         "mapping_version": mapping_ver,
                         "session_token": None,
                         "pending": None,
+                        "options": None,
                     }
                 )
             except Exception:
                 raise ClarificationSessionError(
                     ClarificationSessionErrorCode.INTERNAL_ERROR
                 ) from None
+        if signal is None:
+            raise ClarificationSessionError(
+                ClarificationSessionErrorCode.INTERNAL_ERROR
+            )
         try:
             frozen_pending = PendingClarification.model_validate(
                 pending.model_dump(mode="json", warnings=False)
             )
+            frozen_options = [
+                AmbiguityOption.model_validate(
+                    option.model_dump(mode="json", warnings=False)
+                )
+                for option in signal.options
+            ]
         except Exception:
             raise ClarificationSessionError(
                 ClarificationSessionErrorCode.INTERNAL_ERROR
@@ -366,6 +424,10 @@ class ClarificationSessionCoordinator:
                     "mapping_version": mapping_ver,
                     "session_token": token,
                     "pending": frozen_pending.model_dump(mode="json", warnings=False),
+                    "options": [
+                        option.model_dump(mode="json", warnings=False)
+                        for option in frozen_options
+                    ],
                 }
             )
         except Exception:
