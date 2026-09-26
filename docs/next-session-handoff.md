@@ -1,6 +1,6 @@
 # 새 Codex 대화용 짧은 인수인계
 
-현재 기준: 2026-09-26, Phase 6-12 합성 clarification HTTP 경계까지 구현·검증 완료. 최신 상태는 항상 Git과 코드로 다시 확인한다. 설계와 로드맵의 원본은 [`schema-adaptive-text-to-sql-plan.md`](schema-adaptive-text-to-sql-plan.md), 독립 평가 세트 설계 기준은 [`independent-evaluation-set-design.md`](independent-evaluation-set-design.md), 안전한 잠정 비교는 [`phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md`](phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md)다.
+현재 기준: 2026-09-26, Phase 6-13 합성 clarification ASGI 프로토타입까지 구현·검증 완료. 최신 상태는 항상 Git과 코드로 다시 확인한다. 설계와 로드맵의 원본은 [`schema-adaptive-text-to-sql-plan.md`](schema-adaptive-text-to-sql-plan.md), 독립 평가 세트 설계 기준은 [`independent-evaluation-set-design.md`](independent-evaluation-set-design.md), 안전한 잠정 비교는 [`phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md`](phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md)다.
 
 ## 프로젝트와 현재 경계
 
@@ -30,12 +30,13 @@
 - Phase 6-10: 확인 선택의 합성 read-only 실행 adapter(`clarification-execution-adapter-v1`) 완료. Phase 6-09 재확인·constraint-aware 생성 뒤 검증된 QueryIR 하나를 내부 one-shot model로 기존 `ExecutionHarness`에 전달해 request/context/IR 검증, compile, SQL policy, read-only execute, result 검증을 그대로 수행한다. caller의 IR/constraint/model/result/SQL 주입 API 없음. compile 이후 기존 실패 code/stage·IR 보존, 초기 단계 실패·IR/request 불일치·상태 모순은 내부 오류로 fail closed. 독립 검토에서 결과 모델 자체에 nested 불변식을 추가했다. 신규 12개·인접 105개 테스트 통과. 실제 UI·session/expiry·repair·Ollama/PostgreSQL/CNU 자료·성능 측정 없음.
 - Phase 6-11: 합성 clarification session(`clarification-session-v1`) 완료. `start`가 no-match `NOT_REQUIRED` 또는 hashed bearer token 기반 `PENDING`을 만들고, `submit`은 TTL 확인과 lock 기반 원자 소비 후 취소 재확인 또는 Phase 6-10 실행을 호출한다. 동시 제출·재사용·만료·downstream 실패 후 재실행을 차단한다. 독립 검토에서 clock 실패 소비, lazy expiry 정리, token 길이, deadline 정밀도, package export를 보완했다. 신규 13개·Phase 6-08/09/10 포함 관련 71개 통과. active raw context는 메모리에 남으며 persistence·cross-process/restart·background cleanup·HTTP/UI·인증/rate limit은 없음. 실제 Ollama/PostgreSQL/CNU 자료·성능 측정 없음.
 - Phase 6-12: 합성 clarification HTTP sub-app(`clarification-http-v1`) 완료. 독립 FastAPI factory가 server-owned context loader와 같은 session coordinator/provider/read-only executor를 start/submit POST에 연결한다. HTTP caller의 context/IR/model/result 주입 없음. start는 token+실제 submit 가능한 opaque option만, submit은 성공 columns/JSON rows 또는 실패 fixed code/stage만 반환하며 SQL·IR·constraint·trace·raw ID·fingerprint·message를 제거한다. 오류는 fixed code→400/404/409/410/422/502/503/500 표로 변환한다. 독립 검토에서 Phase 6-11 option 이중 fingerprint 결함과 HTTP 재감지 잔여 session 위험을 수정하고 token/nested/row/error 불변식을 강화했다. 신규 HTTP 13개·session 14개, Phase 6-08~12 총 122개 관련 테스트 통과. legacy app mount·React·auth·실제 Ollama/PostgreSQL/CNU 자료·성능 측정 없음.
+- Phase 6-13: 실행 가능한 합성 clarification ASGI prototype(`synthetic-clarification-prototype-v1`) 완료. `DEFAULT_SEED` 임시 flat SQLite, canonical `Course.name`·`Instructor.name` context, 결정론 constraint provider를 Phase 6-12 factory에 조립했다. loopback-only module CLI는 제한 port만 받고 reload/access log를 끄며 `.env`·실서비스 설정을 읽지 않는다. 독립 검토에서 CLI 임시 DB 이중 생성·invalid port 반사·실패 cleanup 지연과 semantic 명칭을 수정했다. 신규 7개와 Phase 6-08~12 관련 92개 테스트 통과. legacy app·React·인증·실제 Ollama/PostgreSQL/CNU 자료·성능 측정 없음.
 - 현재 로컬에는 fine-tuned tag만 확인되어 base instruct 평가는 정확한 tag가 별도로 준비될 때 진행한다. E3·L5 팀 결정 대기와 합성 개발은 병행한다.
 - `docs/desktop-test-handoff.md`는 초기 데스크톱 이전 시점의 기록이다.
 
 ## 다음 작은 작업
 
-1. Phase 6-12 factory에 합성 context/provider/read-only SQLite executor를 조립한 독립 ASGI prototype entrypoint와 안전한 실행 명령 추가(legacy·실제 provider/DB/UI 없음)
+1. Phase 6-13 endpoint를 사용하는 별도 합성 React prototype 흐름 정의·구현(start의 `NOT_REQUIRED`/`PENDING`, option 선택, cancel, submit 결과·고정 오류 표시; legacy 교체·실서비스 연결 없음)
 2. 새 30건 초안의 사람 검토(L1·E2)·동결은 사람 관문 도달 시 진행
 3. 실제 운영 검토 큐 저장 설계(합성 immutable source/next lifecycle까지 완료, current pointer·동시성/잠금·운영 DB·승인 흐름은 미구현)
 4. base instruct 모델 tag가 준비되면 base instruct 평가
@@ -43,8 +44,8 @@
 
 ## 새 대화의 최소 시작 순서
 
-1. 저장소 루트에서 `AGENTS.md`와 이 문서, 계획 문서의 **Phase 5·6 현재 체크포인트·ADR-023/024/025/027/028/029/030/031/032/033/034/035/036/037/038/039/040·다음 시작점**, `docs/human-validation-checkpoints.md`의 E3/L1/L3/L5를 읽는다.
-2. `git status --short`, 최근 commit, 관련 코드·테스트를 확인한다. 문서는 방향을 알려주지만 구현 상태와 테스트 통과를 대신하지 않는다. Phase 6-12 범위는 `docs/prompts/phase6-12-clarification-http-boundary.md`에 둔다.
+1. 저장소 루트에서 `AGENTS.md`와 이 문서, 계획 문서의 **Phase 5·6 현재 체크포인트·ADR-023/024/025/027/028/029/030/031/032/033/034/035/036/037/038/039/040/041·다음 시작점**, `docs/human-validation-checkpoints.md`의 E3/L1/L3/L5를 읽는다.
+2. `git status --short`, 최근 commit, 관련 코드·테스트를 확인한다. 문서는 방향을 알려주지만 구현 상태와 테스트 통과를 대신하지 않는다. Phase 6-13 범위는 `docs/prompts/phase6-13-synthetic-clarification-asgi-prototype.md`에 둔다.
 3. 현재 작업에 필요한 파일만 더 읽고 해당 범위의 테스트부터 실행한다. 이전 대화 전체나 저장소 전체를 다시 요약할 필요는 없다.
 
 실제 질문·응답, DB 행·dump, 모델 weight, 비밀값, private recording은 Git이나 공개 문서에 복사하지 않는다.
