@@ -62,6 +62,16 @@ from .clarification_execution_adapter import (
     ClarificationExecutionResult,
     run_clarified_execution,
 )
+from .clarification_session import (
+    CLARIFICATION_SESSION_VERSION,
+    ClarificationSessionCoordinator,
+    ClarificationSessionError,
+    ClarificationSessionErrorCode,
+    ClarificationSessionStartResult,
+    ClarificationSessionStartStatus,
+    ClarificationSessionSubmitResult,
+    ClarificationSessionSubmitStatus,
+)
 from .critique import (
     CRITIQUE_DISPOSITION_VERSION,
     CRITIQUE_INVALID_SUMMARY,
@@ -211,6 +221,14 @@ __all__ = [
     "ConstraintAwareProvider",
     "run_constrained_generation",
     "run_clarified_execution",
+    "CLARIFICATION_SESSION_VERSION",
+    "ClarificationSessionCoordinator",
+    "ClarificationSessionError",
+    "ClarificationSessionErrorCode",
+    "ClarificationSessionStartResult",
+    "ClarificationSessionStartStatus",
+    "ClarificationSessionSubmitResult",
+    "ClarificationSessionSubmitStatus",
     "CRITIQUE_DISPOSITION_VERSION",
     "CRITIQUE_INVALID_SUMMARY",
     "CompiledQuery",
