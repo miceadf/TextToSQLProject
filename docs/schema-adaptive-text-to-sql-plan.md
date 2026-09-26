@@ -634,8 +634,9 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 - [x] Phase 6-12 합성 clarification HTTP 경계(`clarification-http-v1`; server-owned context/dependency → start/submit → 고정 HTTP 오류·redacted 결과, legacy mount/UI 없음)
 - [x] Phase 6-13 합성 clarification ASGI 프로토타입(`synthetic-clarification-prototype-v1`; canonical 합성 context·결정론 provider·임시 read-only SQLite → loopback 전용 실행, legacy/UI/실서비스 없음)
 - [x] Phase 6-14 합성 clarification React 흐름(`/adaptive-prototype`; strict response parser·메모리 token·option/cancel/result 상태, legacy 화면 교체·browser 실검증 없음)
+- [x] Phase 6-15 합성 clarification 통합 browser smoke와 팀 handoff(두 option·결과·취소·no-match·연결 실패·재제출 차단·legacy 경로 확인; 합성 내부 공유 전용)
 - [x] validate → execute → critique → repair loop 구현(합성 계약 범위; `DetailedRepairOutcome`과 `AgentWorkflowCoordinator`로 연결)
-- [ ] 모호한 질문 감지 및 사용자 확인
+- [x] 모호한 질문 감지 및 사용자 확인(합성 내부 prototype 구현·browser smoke 범위; L4 사람 검토·실서비스 연결은 별도)
 - [ ] 운영 실패를 관리자 검토 큐에 저장
 - [ ] 교정 내용을 mapping/glossary/verified query에 반영
 
@@ -979,7 +980,9 @@ Phase 6-13에서 Phase 6-12 factory를 실행 가능한 합성 ASGI 프로토타
 
 Phase 6-14에서 Phase 6-13 endpoint를 쓰는 별도 합성 React 화면(`src/adaptive-prototype/`, `/adaptive-prototype`)을 추가했다. start `NOT_REQUIRED`/`PENDING`, option 선택, cancel, submit 성공·실패를 명시적 상태로 분리하고 response를 strict runtime parser로 재검증한다. token은 pending 동안 ref 메모리에만 두고 submit/cancel 직전 제거하며 storage·cookie·auth header·원문 오류 반사를 사용하지 않는다. operation ID와 `AbortController`로 stale response와 reset/unmount를 처리하고 결과는 backend column 순서의 generic table로만 표시한다. Vite는 `/api/adaptive`만 별도 loopback target으로 proxy하고 legacy `/api/v1`과 기존 `App`은 유지한다. 독립 검토에서 pending 중 start/reset으로 session이 고아가 되는 상태, 선택 전 token 조기 삭제, 느슨한 submit 및 execution code/stage 검증, legacy와 adaptive proxy 환경변수 충돌, system Python 실행 script, unknown error suffix 오분류를 수정했다. Node 전용 16개, 변경 파일 ESLint, frontend build, Phase 6-13 backend 7개 테스트를 통과했다. 실제 browser 조작·frontend/backend 실기동 smoke는 아직 수행하지 않아 전체 `모호한 질문 감지 및 사용자 확인`은 미완료다. 구현 범위는 [`docs/prompts/phase6-14-synthetic-clarification-react-flow.md`](prompts/phase6-14-synthetic-clarification-react-flow.md)에 둔다.
 
-다음 작은 작업은 Phase 6-15 합성 prototype 통합 smoke와 팀 공유 handoff다. loopback backend와 Vite를 함께 실제 기동해 `/adaptive-prototype`에서 pending option 두 갈래, cancel, no-match, 재사용 차단, 결과 표, 연결 실패를 브라우저로 확인하고 재현 명령·관찰 결과·알려진 한계를 문서화한다. 이 단계까지 통과하면 합성 데이터 기반 내부 팀 논의용 prototype으로 공유할 수 있다. legacy 교체·실제 provider/DB 연결·외부 공개는 하지 않는다. 새 30건 초안의 사람 검토(L1·E2)·동결은 사람 관문 도달 시 진행한다. 운영 current pointer/동시성·실제 운영 DB·관리자 승인 흐름은 미구현이다. 새 prompt 탐색이나 live 호출은 하지 않는다. v1이 기본값이며 현재 로컬에는 fine-tuned tag만 확인되었으므로 base instruct 평가는 정확한 별도 tag가 준비될 때 진행한다. 합성 개발은 E3·L5 결정 대기와 병행한다. **실제 CNU 자료의 추가 사용·공유와 실제 데이터 배포·외부 시연 전**에는 각각 E3·L5의 팀 결정을 확인한다. 모델 성능 확정 전 L1·L3를 확인한다. PostgreSQL 통합은 별도 단계다.
+Phase 6-15에서 backend+Vite loopback을 실제 기동하고 설치된 Chrome headless의 DOM·network 경로로 `/adaptive-prototype`을 검증했다. 두 option, 강의명·교수자명 각 6행 결과, cancel, no-match, terminal 재제출 control 제거, legacy `/` 유지가 통과했다. adaptive proxy를 사용하지 않는 loopback port로 분리한 Vite에서도 backend 연결 실패가 token·SQL·경로·endpoint·원시 응답 없이 일반 오류로 닫혔다. 독립 검토에서 비-2xx 비-JSON proxy 오류를 response 계약 오류로 오분류하던 client를 일반 server 오류로 수정하고 회귀 테스트를 추가했다. 팀 공유 명령·관찰표·안전 경계는 [`docs/synthetic-clarification-team-handoff.md`](synthetic-clarification-team-handoff.md)에 둔다. 이 증거로 합성 내부 prototype의 `모호한 질문 감지 및 사용자 확인` 구현 항목을 완료하지만 L4 사람 사용성 검토, 실제 auth/provider/DB, 외부 시연 승인은 포함하지 않는다. 구현 지침은 [`docs/prompts/phase6-15-synthetic-prototype-browser-smoke.md`](prompts/phase6-15-synthetic-prototype-browser-smoke.md)에 둔다.
+
+다음 시작점은 이 합성 prototype을 팀원에게 공유해 L4 전 단계의 용어·흐름 피드백을 수집하고, 그 결과로 다음 중간 개발 범위를 하나 선택하는 것이다. 실제 데이터 연결이 필요 없으면 운영 review queue의 current pointer·동시성 경계를 합성으로 계속하고, 실제 서비스 통합을 선택하면 Phase 7의 `PostgresAdapter` 계약부터 별도 범위로 시작하며 E3/L5를 해당 관문에서 적용한다. 새 30건 초안의 L1·E2 검토·동결과 실제 성능 확정 L3는 여전히 사람 관문 대기다. Phase 8 관리자 UI, 실제 CNU 자료, 외부 공개는 이번 완료 범위가 아니다.
 
 완료된 adapter 계약은 [`docs/prompts/phase5-07-ollama-querymodel-adapter.md`](prompts/phase5-07-ollama-querymodel-adapter.md)에, 합성 live smoke의 수행 지침은 [`docs/prompts/phase5-08-ollama-adapter-live-smoke.md`](prompts/phase5-08-ollama-adapter-live-smoke.md)에 둔다. 모델이 반환한 SQL 등 비 JSON 텍스트는 원문 문자열로 보존해 후속 Query IR 검증 실패로 드러내며, provider 호출 실패와 혼합하지 않는다.
 
@@ -1446,6 +1449,13 @@ SQLite DB 입력
 - 결정: Phase 6-14 UI는 기존 legacy `App`을 교체하지 않고 `/adaptive-prototype`에서만 렌더한다. 같은 origin의 `/api/adaptive` proxy로 Phase 6-13 loopback backend만 호출하며 `/api/v1` proxy와 auth/storage를 재사용하지 않는다. 모든 response는 exact version·상태·필드·option/token 형식·fixed execution code/stage·row/column 일치를 runtime에서 검사한다. session token은 pending 상태의 메모리에만 두고 유효 submit/cancel 직전 제거하며 복원하지 않는다. pending 중 새 start/reset은 막고 cancel로 소비하게 하며, reset/unmount는 진행 중 fetch를 abort하고 operation identity가 stale response 반영을 막는다. unknown semantic ref·error code·column 이름은 원문 대신 일반 label/message/header로 표시한다.
 - 이유: legacy 단일 chat request에 다단계 clarification을 억지로 섞으면 기존 기준선과 token 수명 경계가 깨지고, TypeScript 타입만 믿으면 변조·drift response가 UI state를 오염시킬 수 있다. 별도 route·proxy·strict parser와 메모리 전용 token 상태는 합성 browser prototype을 작은 경계로 검증하면서 실제 auth·배포·운영 UI 결정을 뒤로 남긴다.
 
+### ADR-043: 팀 공유 준비 완료는 합성 loopback browser 증거로 한정
+
+- 날짜: 2026-09-27
+- 상태: 채택
+- 결정: Phase 6-15의 내부 팀 공유 준비 기준은 단일 loopback 실행 명령, 실제 Chrome DOM·network smoke의 두 option·두 결과 분기·cancel·no-match·terminal 재제출 차단·legacy route 유지, 그리고 backend 연결 실패의 redacted 일반 오류까지다. HTTP 비-2xx가 비-JSON이면 raw body를 반사하거나 정상 response 계약 오류로 표시하지 않고 code 없는 일반 server 오류로 닫는다. browser smoke와 기존 자동 token 재사용 `409` 검증은 서로 보완 증거로 기록한다. 이 완료 표시는 합성 fixture·무인증·비영속 session의 내부 논의용 상태에만 적용하며 L4, 실제 auth/provider/PostgreSQL/CNU 데이터, 배포·외부 시연을 승인하지 않는다.
+- 이유: 팀원이 실행 가능한 통합 흐름과 실패 표현을 직접 확인해야 prototype 논의가 가능하지만, 기계적 browser 통과만으로 사용자 이해·실데이터 안전·운영 준비를 주장하면 검증 범위를 넘는다. 성공·실패 재현 기준과 사람 관문을 분리하면 prototype은 지금 공유하면서 후속 설계 결정을 과장 없이 받을 수 있다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -1647,3 +1657,7 @@ SQLite DB 입력
 - Phase 6-12 합성 clarification HTTP sub-app(`clarification-http-v1`) 구현. server-owned context loader와 app-lifetime coordinator/provider/executor를 두 POST endpoint에 연결하고 malformed/session/constraint/provider/internal 오류의 fixed HTTP 매핑과 start/submit redaction을 검증. 독립 검토에서 Phase 6-11 option 이중 fingerprint로 start 응답 선택을 submit할 수 없던 결함을 selectable option↔pending binding으로 수정하고 HTTP 재감지를 제거했으며 token/nested/row/error 불변식을 강화. 신규 HTTP 13개, session 14개와 Phase 6-08~12 관련 총 122개 통과. legacy app·React·auth·실제 Ollama/PostgreSQL/CNU 자료·성능 측정 없음. 상위 사용자 확인 항목과 E3/L5·L1/L3 대기 유지. ADR-040 추가
 - Phase 6-13 합성 clarification ASGI 프로토타입(`synthetic-clarification-prototype-v1`) 구현. `DEFAULT_SEED` 임시 flat SQLite, canonical `Course.name`·`Instructor.name` ontology/Published mapping, literal rule, 결정론 constraint provider를 Phase 6-12 factory에 조립하고 loopback-only module CLI와 재현 문서를 추가. 독립 검토에서 CLI의 임시 DB 이중 생성·invalid port 반사·실패 cleanup 지연과 비canonical semantic 이름을 수정. 신규 7개와 Phase 6-08~12 관련 92개 테스트 통과. legacy app·React·인증·실제 Ollama/PostgreSQL/CNU 자료·성능 측정 없음. 상위 사용자 확인 항목과 E3/L5·L1/L3 대기 유지. ADR-041 추가
 - Phase 6-14 별도 합성 clarification React 흐름(`/adaptive-prototype`) 구현. strict start/submit/error parser, option·cancel·결과 상태, 메모리 token 폐기, stale/abort 처리, generic result table과 synthetic 경고를 추가하고 `/api/adaptive` loopback proxy·동시 실행 script를 연결. 독립 검토에서 pending session 고아 상태, token 조기 삭제, submit/code/stage 검증, proxy 환경변수 충돌, system Python script, unknown error suffix 오분류를 수정. Node 16개·변경 파일 ESLint·frontend build·Phase 6-13 backend 7개 통과. browser 실기동 smoke 전이므로 상위 사용자 확인 항목은 미완료. legacy app·실제 Ollama/PostgreSQL/CNU 자료·성능 측정 없음. E3/L5·L1/L3 대기 유지. ADR-042 추가
+
+### 2026-09-27
+
+- Phase 6-15 합성 clarification 통합 browser smoke와 팀 공유 handoff 완료. backend+Vite loopback 실제 기동 후 Chrome headless DOM·network로 option 두 갈래, 각 6행 결과, cancel, no-match, terminal 재제출 차단, legacy `/`를 확인하고 별도 실패 proxy로 redacted 일반 오류를 검증. 독립 검토에서 비-2xx 비-JSON proxy 오류의 계약 오류 오분류를 일반 server 오류로 수정하고 회귀 테스트 추가. 합성 내부 범위의 `모호한 질문 감지 및 사용자 확인` 항목을 완료 처리하되 L4·실제 auth/provider/PostgreSQL/CNU 자료·배포·외부 시연·성능 확정은 미완료. ADR-043 및 팀 handoff 추가

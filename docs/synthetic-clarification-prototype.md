@@ -22,7 +22,9 @@ npm run dev:adaptive-full
 
 브라우저에서 `http://127.0.0.1:5173/adaptive-prototype`을 연다. 다른 경로는 기존 legacy 화면을 유지한다. 새 화면은 `/api/adaptive` proxy만 사용하며 legacy `/api/v1`이나 로그인 token을 사용하지 않는다.
 
-화면 구현과 자동 검증은 완료했지만 실제 browser 실조작 smoke는 Phase 6-15에서 수행한다. 현재 상태를 외부 시연 완료나 최종 사용자 검증으로 표시하지 않는다.
+Phase 6-15에서 실제 Chrome DOM·network browser smoke를 완료했다. 합성 내부 팀 논의용 준비 상태이며 외부 시연 완료나 최종 사용자 검증(L4)으로 표시하지 않는다.
+
+팀 공유 실행 절차와 browser smoke 표는 [`docs/synthetic-clarification-team-handoff.md`](synthetic-clarification-team-handoff.md)를 사용한다.
 
 ## 고정 Database ID
 

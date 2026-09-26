@@ -6,7 +6,7 @@
 
 자동 테스트는 코드가 **정의된 계약대로** 작동하는지 검사한다. 질문의 실제 뜻, 대학별 컬럼·코드값의 업무 의미, 개인정보 사용 권한, 사용자 신뢰도, 논문 주장까지 승인하지는 못한다. AI가 구현과 테스트를 함께 작성하면 같은 가정 오류가 양쪽에 들어갈 수도 있다. 사람 검토는 개발 중 모든 단계의 필수 중단점이 아니라, 해당 결과를 사용·공유·주장하기 전의 승인 관문이다.
 
-2026-09-14 기준: SQLite 합성 fixture 3개는 같은 6개 개설강좌의 구조 변형이다. 공통 질문 40개는 전부 `NEEDS_HUMAN_REVIEW`다. `FakeModel` oracle smoke는 실제 모델 성능이 아니다. Ollama·PostgreSQL 실통합, 독립 unseen school, 사용자 화면의 adaptive 경로는 아직 검증되지 않았다. 앞선 점검에서 `tests/`는 203개 통과·1개 건너뜀, 루트 `pytest`는 `backend/test_correction.py` import 오류로 수집 중단이었다. 이 수치는 현재 상태의 기록이지 향후 통과 보증이 아니다.
+2026-09-27 상태: SQLite 합성 fixture 3개는 같은 6개 개설강좌의 구조 변형이다. 공통 질문 40개는 전부 `NEEDS_HUMAN_REVIEW`다. `FakeModel` oracle smoke는 실제 모델 성능이 아니다. 합성 clarification 화면은 실제 Chrome browser smoke를 통과해 내부 팀 논의에 쓸 수 있지만 L4 사람 검토는 미수행이다. Ollama·PostgreSQL 실통합과 독립 unseen school도 아직 검증되지 않았다. 루트 `pytest`의 legacy `backend/test_correction.py` import 오류는 별도 기준선 결함으로 남아 있다. 각 수치는 해당 시점 기록이지 향후 통과 보증이 아니다.
 
 ## 바로 또는 최대한 빠르게 확인할 것
 

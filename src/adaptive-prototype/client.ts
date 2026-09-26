@@ -60,8 +60,15 @@ async function readJson(response: FetchResponseLike): Promise<unknown> {
 
 function serverError(payload: unknown): PrototypeClientError {
   const parsed = parseHttpError(payload);
-  if (parsed === null) throw new PrototypeClientError('contract');
-  return new PrototypeClientError('server', parsed.code);
+  return new PrototypeClientError('server', parsed?.code ?? null);
+}
+
+async function readServerError(response: FetchResponseLike): Promise<PrototypeClientError> {
+  try {
+    return serverError(await response.json());
+  } catch {
+    return new PrototypeClientError('server');
+  }
 }
 
 export async function startClarification(
@@ -90,8 +97,8 @@ export async function startClarification(
     if (error instanceof PrototypeClientError) throw error;
     throw new PrototypeClientError('transport');
   }
+  if (!response.ok) throw await readServerError(response);
   const payload = await readJson(response);
-  if (!response.ok) throw serverError(payload);
   const parsed = parseStartResponse(payload);
   if (parsed === null) throw new PrototypeClientError('contract');
   return parsed;
@@ -131,8 +138,8 @@ export async function submitClarification(
     if (error instanceof PrototypeClientError) throw error;
     throw new PrototypeClientError('transport');
   }
+  if (!response.ok) throw await readServerError(response);
   const payload = await readJson(response);
-  if (!response.ok) throw serverError(payload);
   const parsed = parseSubmitResponse(payload);
   if (parsed === null) throw new PrototypeClientError('contract');
   return parsed;

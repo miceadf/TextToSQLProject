@@ -135,6 +135,23 @@ describe('phase6-14 client', () => {
       assert.equal((error as PrototypeClientError).kind, 'transport');
       assert.ok(!String((error as Error).message).includes(secret));
     }
+
+    const nonJsonProxyFailure: FetchLike = async () => ({
+      ok: false,
+      status: 502,
+      json: async () => {
+        throw new Error(secret);
+      },
+    });
+    try {
+      await startClarification(nonJsonProxyFailure, '강의 보여줘', { requestId: 'req-proxy' });
+      assert.fail('should throw');
+    } catch (error) {
+      assert.ok(error instanceof PrototypeClientError);
+      assert.equal((error as PrototypeClientError).kind, 'server');
+      assert.equal((error as PrototypeClientError).serverCode, null);
+      assert.ok(!String((error as Error).message).includes(secret));
+    }
   });
 
   it('uses no storage, cookie, or auth header in shipped source', () => {
