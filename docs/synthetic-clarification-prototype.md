@@ -12,6 +12,18 @@
 - port는 `8000-8999` 정수만 허용된다. reload와 access log는 꺼져 있다.
 - 실제 DB URL, 모델 서버 설정, 환경 파일을 읽지 않는다.
 
+## React 합성 화면
+
+backend와 Vite를 loopback에서 함께 실행한다.
+
+```powershell
+npm run dev:adaptive-full
+```
+
+브라우저에서 `http://127.0.0.1:5173/adaptive-prototype`을 연다. 다른 경로는 기존 legacy 화면을 유지한다. 새 화면은 `/api/adaptive` proxy만 사용하며 legacy `/api/v1`이나 로그인 token을 사용하지 않는다.
+
+화면 구현과 자동 검증은 완료했지만 실제 browser 실조작 smoke는 Phase 6-15에서 수행한다. 현재 상태를 외부 시연 완료나 최종 사용자 검증으로 표시하지 않는다.
+
 ## 고정 Database ID
 
 ```text
