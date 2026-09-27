@@ -16,7 +16,7 @@ class AstPolicyContext(BaseModel):
     query_ir: QueryIR
     mapping: PublishedMappingProfile
     join_result: JoinPlanningResult
-    dialect: Literal["sqlite"] = "sqlite"
+    dialect: Literal["sqlite", "postgres"] = "sqlite"
 
     @computed_field
     @property

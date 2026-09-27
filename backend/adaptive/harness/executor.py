@@ -8,6 +8,18 @@ from typing import Any
 from .contracts import CompiledQuery, HarnessErrorCode, HarnessStage
 from .errors import HarnessFailure
 
+from typing import Protocol
+
+
+class QueryExecutor(Protocol):
+    def execute(
+        self,
+        database_id: str,
+        query: CompiledQuery,
+    ) -> tuple[list[str], list[dict[str, Any]]]:
+        """Execute compiler-owned SQL and return columns with mapping rows."""
+        ...
+
 
 DENIED_SQLITE_ACTIONS = {
     sqlite3.SQLITE_ALTER_TABLE,

@@ -1,9 +1,10 @@
 """DBMS capability contract for schema-adaptive boundaries.
 
-Phase 7-01 synthetic scope only: SQLite reflects the current local
-implementation; PostgreSQL reflects inspector-only support. No live
-PostgreSQL, Ollama, or CNU data is used. Oracle/MySQL are explicitly
-unsupported and fail closed via :func:`get_capability`.
+Phase 7-02 synthetic scope only: SQLite reflects the current local
+implementation; PostgreSQL reflects synthetic fake-connector verified
+inspector/compiler/policy/executor support. No live PostgreSQL, Ollama,
+or CNU data is used. Oracle/MySQL are explicitly unsupported and fail
+closed via :func:`get_capability`.
 """
 
 from __future__ import annotations
@@ -108,9 +109,9 @@ def postgres_capability() -> DbmsCapability:
         adapter="postgres",
         dialect="postgres",
         supports_schema_inspection=True,
-        supports_compiler=False,
-        supports_policy=False,
-        supports_executor=False,
+        supports_compiler=True,
+        supports_policy=True,
+        supports_executor=True,
         supported_query_ir_features=SUPPORTED_QUERY_IR_FEATURES,
         unsupported_query_ir_features=UNSUPPORTED_QUERY_IR_FEATURES,
         read_only=True,

@@ -28,7 +28,13 @@ def quote_identifier(identifier: str) -> str:
     return '"' + identifier.replace('"', '""') + '"'
 
 
-class SQLiteQueryCompiler(Protocol):
+class QueryCompiler(Protocol):
+    def compile(self, query_ir: QueryIR, mapping: MappingProfile) -> CompiledQuery:
+        """Compile a validated query for the execution harness."""
+        ...
+
+
+class SQLiteQueryCompiler(QueryCompiler, Protocol):
     def compile(self, query_ir: QueryIR, mapping: MappingProfile) -> CompiledQuery:
         """Compile a validated query for the execution harness."""
         ...

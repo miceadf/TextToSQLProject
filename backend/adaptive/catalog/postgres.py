@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from collections.abc import Callable, Mapping
 from typing import Any
@@ -238,7 +239,7 @@ def _production_connector(config: PostgresConnectionConfig) -> Any:
     try:
         return psycopg2.connect(
             config._dsn,  # noqa: SLF001 - server-owned config accessor
-            connect_timeout=config.connect_timeout_seconds,
+            connect_timeout=max(1, math.ceil(config.connect_timeout_seconds)),
             options=(
                 "-c statement_timeout="
                 f"{config.statement_timeout_ms}ms"

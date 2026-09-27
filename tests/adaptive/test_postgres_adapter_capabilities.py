@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import unittest
+from types import SimpleNamespace
 from typing import Any
 
 from backend.adaptive.catalog import (
@@ -323,9 +324,9 @@ class CapabilityContractTest(unittest.TestCase):
         self.assertTrue(sqlite.supports_policy)
         self.assertTrue(sqlite.supports_executor)
         self.assertTrue(postgres.supports_schema_inspection)
-        self.assertFalse(postgres.supports_compiler)
-        self.assertFalse(postgres.supports_policy)
-        self.assertFalse(postgres.supports_executor)
+        self.assertTrue(postgres.supports_compiler)
+        self.assertTrue(postgres.supports_policy)
+        self.assertTrue(postgres.supports_executor)
         for capability in (sqlite, postgres):
             self.assertEqual(
                 sorted(capability.supported_query_ir_features),
@@ -604,6 +605,32 @@ class PostgresAdapterRoundTripTest(unittest.TestCase):
             self.assertEqual(
                 raised.exception.message, "PostgreSQL schema inspection failed"
             )
+        finally:
+            if saved is not None:
+                sys.modules["psycopg2"] = saved
+            else:
+                del sys.modules["psycopg2"]
+
+    def test_production_connector_rounds_connect_timeout_up(self) -> None:
+        from backend.adaptive.catalog import postgres as pg_module
+
+        captured: dict[str, Any] = {}
+        sentinel = object()
+
+        def connect(dsn: str, **kwargs: Any) -> object:
+            captured.update({"dsn": dsn, **kwargs})
+            return sentinel
+
+        saved = sys.modules.get("psycopg2")
+        sys.modules["psycopg2"] = SimpleNamespace(connect=connect)  # type: ignore[assignment]
+        try:
+            result = pg_module._production_connector(
+                make_config(connect_timeout_seconds=1.2)
+            )
+            self.assertIs(result, sentinel)
+            self.assertEqual(captured["connect_timeout"], 2)
+            self.assertIsInstance(captured["connect_timeout"], int)
+            self.assertNotIn("s3cret-pw", repr(captured["options"]))
         finally:
             if saved is not None:
                 sys.modules["psycopg2"] = saved

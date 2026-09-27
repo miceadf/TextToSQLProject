@@ -17,7 +17,7 @@ from .contracts import (
     Operator,
     QueryIR,
 )
-from .compiler import SingleTableSQLiteCompiler
+from .compiler import QueryCompiler, SingleTableSQLiteCompiler
 from .clarification import (
     CLARIFICATION_CONTRACT_VERSION,
     AmbiguityOption,
@@ -82,8 +82,9 @@ from .critique import (
     disposition_for,
 )
 from .engine import ExecutionHarness
-from .executor import SQLiteReadOnlyExecutor
+from .executor import QueryExecutor, SQLiteReadOnlyExecutor
 from .model import FakeModel
+from .postgres import PostgresReadOnlyExecutor
 from .ollama import OllamaQueryModel
 from .private_capture import capture_private_bundle
 from .recorded import (
@@ -273,6 +274,9 @@ __all__ = [
     "OllamaQueryModel",
     "Operator",
     "PendingClarification",
+    "PostgresReadOnlyExecutor",
+    "QueryCompiler",
+    "QueryExecutor",
     "QueryIR",
     "REPAIR_PROVIDER_ERROR",
     "REVIEW_QUEUE_CONFLICT",
