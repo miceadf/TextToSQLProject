@@ -650,6 +650,7 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 - [x] `PostgresAdapter` schema inspection 구현
 - [x] `pg_catalog` 기반 table/column/PK/FK 분석(실 PostgreSQL 검증은 별도)
 - [x] Phase 7-02 PostgreSQL QueryIR compiler·AST policy·read-only executor(`%s`, postgres dialect, fake connector 통합)
+- [x] Phase 7-03 완전 합성 PostgreSQL live integration smoke(inspect→mapping→compiler/policy/executor, 격리 schema·cleanup)
 - [ ] 데스크톱 Ollama provider 통합
 - [ ] 실제 CNU DB regression test
 - [ ] SQL dialect 차이 처리
@@ -1000,7 +1001,9 @@ Phase 7-01에서 `sqlite`·`postgres`만 허용하는 불변 `dbms-capability-v1
 
 Phase 7-02에서 기존 QueryIR의 `select`·`filters`·`joins`·`limit` subset을 PostgreSQL double-quoted identifier와 psycopg2 `%s` parameter로 컴파일하는 join-capable compiler를 추가했다. `sqlglot` postgres dialect AST policy는 한 개 SELECT와 정확한 Published Mapping·join plan·projection·filter·anonymous placeholder·parameterized LIMIT만 허용한다. executor는 server-owned `PostgresConnectionConfig`, PostgreSQL 12+, read-only transaction, config/executor 중 더 짧은 statement timeout, 최대 200행, SQLSTATE `57014` timeout 분류, 성공·실패 cleanup과 고정 redaction을 강제한다. libpq connect timeout은 정수 초로 올림한다. `ExecutionHarness`의 compiler/executor 타입을 protocol로 일반화하고 PostgreSQL capability의 compiler/policy/executor를 합성 component 준비 상태로 올렸다. 독립 `gpt-6-luna` high 검토에서 실제 timeout 미적용과 주입 `HarnessFailure` redaction 우회를 확인해 수정했다. fake connector 관련 82개·69 subtests와 전체 pytest 747개·5 skip·459 subtests, compileall, diff check가 통과했다. capability 활성화는 실제 server 연결이나 registry/UI 노출을 의미하지 않으며 raw SQL fallback, 실제 PostgreSQL·CNU·Ollama는 사용하지 않았다. 구현 지침은 [`docs/prompts/phase7-02-postgres-query-runtime.md`](prompts/phase7-02-postgres-query-runtime.md)에 둔다.
 
-다음 시작점은 Phase 7-03으로, CNU가 아닌 합성 PostgreSQL fixture와 server-owned private profile에서 inspector→mapping→compiler/policy/executor를 실제 로컬 PostgreSQL에 연결해 최소 integration smoke를 수행한다. 실학교 mapping publish·질의에는 L2, 실제 CNU 자료 추가 사용·공유 전 E3, 외부 시연 전 L5를 유지하며 UI·Ollama 연결은 별도 단계로 둔다.
+Phase 7-03에서 `DEFAULT_SEED` 기반 정규화 PostgreSQL fixture와 opt-in CLI를 추가하고, 별도 로컬 PostgreSQL 18 임시 cluster에서 inspector→mapping proposal→relation graph→PostgreSQL compiler/policy/read-only executor를 두 QueryIR로 실제 연결했다. 생성 schema는 제한된 이름·quoted identifier·bound value만 사용하고 성공·실패 뒤 제거한다. live 검증에서 드러난 PostgreSQL 18 다중 배열 `unnest` 호환 문제를 `generate_subscripts` 기반 FK ordinal 결합으로 수정했고, executor는 검사한 단일 schema를 transaction-local `search_path`로 고정한다. Luna review-only의 setup 실패 cleanup과 느슨한 FK 검증을 rollback·idempotent cleanup·정확한 FK tuple 비교로 보완했다. 실제 CNU·기존 PostgreSQL service data·Ollama·registry/UI는 사용하지 않았다. 구현 지침은 [`docs/prompts/phase7-03-synthetic-postgres-live-smoke.md`](prompts/phase7-03-synthetic-postgres-live-smoke.md)에 둔다.
+
+다음 시작점은 Phase 7-04로, server-owned PostgreSQL profile을 기존 adaptive backend registry/runtime에 안전하게 조립하는 범위를 설계한다. DSN은 클라이언트·응답·로그에 노출하지 않고 실제 학교 DB mapping publish·질의 전 L2를 유지한다. UI 선택과 Ollama provider 연결은 각각 후속 단계로 분리한다.
 
 완료된 adapter 계약은 [`docs/prompts/phase5-07-ollama-querymodel-adapter.md`](prompts/phase5-07-ollama-querymodel-adapter.md)에, 합성 live smoke의 수행 지침은 [`docs/prompts/phase5-08-ollama-adapter-live-smoke.md`](prompts/phase5-08-ollama-adapter-live-smoke.md)에 둔다. 모델이 반환한 SQL 등 비 JSON 텍스트는 원문 문자열로 보존해 후속 Query IR 검증 실패로 드러내며, provider 호출 실패와 혼합하지 않는다.
 
@@ -1516,6 +1519,13 @@ SQLite DB 입력
 - 결정: PostgreSQL runtime은 기존 DB 독립 QueryIR을 deterministic join plan과 Published Mapping으로 컴파일하며, identifier는 double quote escaping하고 filter 값과 LIMIT은 psycopg2 `%s` parameter로만 전달한다. `sqlglot` postgres dialect allowlist가 compiler output을 QueryIR·mapping·join plan과 재대조한 뒤, executor가 server-owned profile의 startup read-only option, transaction `READ ONLY`, bounded statement timeout을 겹쳐 적용한다. executor는 PostgreSQL 12+, 최대 200행, SQLSTATE `57014`만 timeout으로 분류하고 외부 connector/cursor/fetch 예외를 고정 redacted 오류로 변환한다. capability의 compiler/policy/executor `true`는 fake connector로 검증한 component 준비 상태이며 registry 노출·실서버 검증과 분리한다.
 - 이유: DBMS별 raw SQL을 모델에 맡기면 dialect와 안전 정책을 검증하기 어렵고, read-only 설정 하나만으로는 잘못된 SQL·권한·timeout·결과 크기 위험을 함께 닫을 수 없다. QueryIR→compiler→AST policy→DB read-only의 독립 경계를 유지하면 SQLite와 같은 의미 계약을 PostgreSQL parameter style로 확장하면서 미완성 통합 노출을 막을 수 있다.
 
+### ADR-050: PostgreSQL live smoke는 완전 합성 격리 schema와 명시적 opt-in으로만 수행
+
+- 날짜: 2026-09-28
+- 상태: 채택
+- 결정: Phase 7-03 live smoke는 `--live-synthetic`와 전용 loopback DSN이 함께 있을 때만 실행하며 DB 이름을 `schema_adaptive_synthetic`으로 고정한다. 매 실행마다 제한된 무작위 schema를 만들고 identifier는 `psycopg2.sql.Identifier`, 값은 `%s`로 전달한다. fixture setup 실패는 rollback한 뒤 exact schema에 `DROP SCHEMA IF EXISTS ... CASCADE`를 한 번만 시도한다. inspector catalog의 table·PK·FK·sample 부재를 정확히 확인하고 동일 schema를 executor의 transaction-local `search_path`로 고정한 뒤 두 고정 QueryIR 결과를 검증한다. 공개 출력은 고정 상태·집계·fingerprint만 포함한다.
+- 이유: 실제 학교 DB나 기존 service database로 첫 통합을 검증하면 데이터 사용 관문과 구현 결함 진단이 섞인다. 완전 합성 DB와 실행별 schema 격리, strict preflight, cleanup, redaction을 함께 고정하면 실제 driver/catalog/dialect 차이는 찾으면서 기존 데이터·credential·runtime registry에는 영향을 주지 않는다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -1727,3 +1737,7 @@ SQLite DB 입력
 - Phase 6-19 private mapping 검토·publish·활성화 완료. registration proposal을 private draft로 열어 모든 canonical field를 승인/remap하고 명시적 publish한 경우에만 immutable mapping과 activation manifest를 게시하며, strict activation reload 뒤 registry·catalog·clarification에 편입한다. publish 전·변조 항목은 숨기고 active 선택은 자동 변경하지 않는다. `gpt-6-luna` high review-only에서 확인한 재게시 중단 시 기존 활성 DB 소실, review body 사후 크기 검사, publish 성공 뒤 detail 실패의 registry 갱신 누락을 activation 단일 실행 권한, streaming 상한, 성공/보조 refresh 분리로 수정했다. 신규 backend 13개, 관련 backend 36개·1 skip·7 subtests, frontend 27개·ESLint·build 통과. 실제 browser 통합 smoke·실제 CNU/PostgreSQL/Ollama·L2/L4 승인 없음. ADR-047 추가
 - Phase 7-01 DBMS capability와 PostgreSQL read-only schema inspector 완료. `sqlite`·`postgres` 외 dialect를 거부하고 PostgreSQL은 inspector만 지원 상태로 명시했다. server-owned DSN, PostgreSQL 12+, 단일 schema, read-only transaction·timeout, parameterized `pg_catalog`, sample 미수집, deterministic catalog/fingerprint를 fake connector로 검증했다. Luna review-only에서 확인한 미등록 ID 반사, cross-schema FK, mutable feature list를 고정 오류·참조 schema filter·tuple로 수정했다. 관련 39개·5 subtests와 전체 pytest 725개·5 skip·452 subtests, compileall, diff check 통과. 실 PostgreSQL/CNU/Ollama/runtime 질의/UI 없음. ADR-048 추가
 - Phase 7-02 PostgreSQL QueryIR runtime component 완료. join-capable `%s` compiler, postgres dialect AST allowlist, PostgreSQL 12+ read-only executor를 기존 ExecutionHarness protocol에 연결하고 capability compiler/policy/executor를 준비 상태로 전환했다. executor는 더 짧은 statement timeout, 200행 상한, SQLSTATE `57014`, cleanup·고정 redaction을 적용하고 libpq connect timeout을 정수로 전달한다. Luna review-only의 timeout 미적용과 외부 `HarnessFailure` redaction 우회를 수정했다. 관련 82개·69 subtests와 전체 pytest 747개·5 skip·459 subtests, compileall, diff check 통과. 실제 server/CNU/Ollama/registry/UI 없음. ADR-049 추가
+
+### 2026-09-28
+
+- Phase 7-03 완전 합성 PostgreSQL live integration smoke 완료. opt-in loopback DSN preflight, 실행별 격리 schema fixture, sample 없는 inspector·mapping proposal·physical graph, 두 QueryIR의 compiler/policy/read-only execution, 고정 JSON/redaction, 성공·실패 cleanup을 구현했다. Luna review-only의 aborted transaction cleanup과 FK 검증 결함을 rollback·idempotent drop·정확 tuple 비교로 수정했고, 실제 PostgreSQL 18 smoke에서 발견한 schema-qualified 다중 `unnest` 비호환과 executor schema 미고정을 `generate_subscripts`와 transaction-local `search_path`로 수정했다. 관련 57개·18 subtests, 전체 pytest 762개·5 skip·470 subtests, compileall, diff check 통과. 임시 cluster와 schema는 제거했고 실제 CNU·기존 PostgreSQL 데이터·Ollama·registry/UI는 사용하지 않았다. ADR-050 추가

@@ -533,12 +533,14 @@ class PostgresExecutorTest(unittest.TestCase):
                 {"Course.name": "운영체제", "Course.credits": 3},
             ],
         )
-        user_calls = [call for call in connection.executed if "pg_catalog" not in call[0]]
-        self.assertEqual(len(user_calls), 3)
+        user_calls = connection.executed
+        self.assertEqual(len(user_calls), 4)
         self.assertEqual(user_calls[0], ("SET TRANSACTION READ ONLY", ()))
         self.assertIn("statement_timeout", user_calls[1][0])
-        self.assertEqual(user_calls[2], (query.sql, (50,)))
-        self.assertIsInstance(user_calls[2][1], tuple)
+        self.assertIn("search_path", user_calls[2][0])
+        self.assertEqual(user_calls[2][1], ("public",))
+        self.assertEqual(user_calls[3], (query.sql, (50,)))
+        self.assertIsInstance(user_calls[3][1], tuple)
         self.assertTrue(connection.closed)
         self.assertTrue(connection.rolled_back)
         self.assertTrue(connection.cursor_closed)
@@ -649,6 +651,7 @@ class PostgresExecutorTest(unittest.TestCase):
             CompiledQuery(sql="SELECT 1", parameters=[], expected_columns=["A"]),
         )
         self.assertEqual(short.executed[1][1], ("100ms",))
+        self.assertEqual(short.executed[2][1], ("public",))
 
         config_limited = FakeConnection()
         config_limited.columns = ["A"]
@@ -662,6 +665,7 @@ class PostgresExecutorTest(unittest.TestCase):
             CompiledQuery(sql="SELECT 1", parameters=[], expected_columns=["A"]),
         )
         self.assertEqual(config_limited.executed[1][1], ("250ms",))
+        self.assertEqual(config_limited.executed[2][1], ("public",))
 
     def test_failures_redacted_with_fixed_code_stage(self) -> None:
         def exploding(_config: PostgresConnectionConfig) -> FakeConnection:

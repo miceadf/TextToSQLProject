@@ -1,6 +1,6 @@
 # 새 Codex 대화용 짧은 인수인계
 
-현재 기준: 2026-09-27, Phase 7-02 PostgreSQL QueryIR compiler·AST policy·read-only executor까지 fake connector로 구현·검증 완료. 최신 상태는 항상 Git과 코드로 다시 확인한다. 설계와 로드맵의 원본은 [`schema-adaptive-text-to-sql-plan.md`](schema-adaptive-text-to-sql-plan.md), 독립 평가 세트 설계 기준은 [`independent-evaluation-set-design.md`](independent-evaluation-set-design.md), 안전한 잠정 비교는 [`phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md`](phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md)다.
+현재 기준: 2026-09-28, Phase 7-03 완전 합성 PostgreSQL live integration smoke까지 구현·검증 완료. 최신 상태는 항상 Git과 코드로 다시 확인한다. 설계와 로드맵의 원본은 [`schema-adaptive-text-to-sql-plan.md`](schema-adaptive-text-to-sql-plan.md), 독립 평가 세트 설계 기준은 [`independent-evaluation-set-design.md`](independent-evaluation-set-design.md), 안전한 잠정 비교는 [`phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md`](phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md)다.
 
 ## 프로젝트와 현재 경계
 
@@ -39,21 +39,22 @@
 - Phase 6-19: 업로드 성공 아래에서 server-owned proposal을 private draft로 `INIT`하고 field별 `APPROVE`/`REMAP` 뒤 명시적으로 `PUBLISH`한다. immutable mapping version과 `activation.json` 최종 commit을 strict reload한 DB만 동적 registry에 나타나며 catalog·clarification은 Published Mapping 기반 schema-adaptive compiler/AST policy/read-only executor를 쓴다. publish 전·불완전·변조 항목은 숨고 active DB는 자동 변경되지 않는다. Luna review-only의 재게시 원자성·HTTP body 상한·publish/detail 상태 전이 3건을 메인에서 확인·수정했다. 신규 backend 13개, 관련 backend 36개·1 skip·7 subtests, frontend 27개·ESLint·build 통과. 실제 browser 통합 smoke와 L2/L4는 미수행이다.
 - Phase 7-01: immutable `dbms-capability-v1`로 SQLite는 inspector/compiler/policy/executor 지원, PostgreSQL은 inspector만 지원한다고 명시했다. `PostgresAdapter`는 server-owned DSN과 PostgreSQL 12+ 단일 schema를 read-only transaction·2초 timeout·parameterized `pg_catalog` query로 검사하며 sample을 수집하지 않는다. table/column/PK/composite FK/generated/identity와 기존 logical affinity를 deterministic catalog로 만든다. Luna review-only의 미등록 ID 반사, cross-schema FK, shallow-frozen list를 고정 오류·schema filter·tuple로 수정했다. 관련 39개·5 subtests와 전체 pytest 725개·5 skip·452 subtests, compileall, diff check 통과. 실 PostgreSQL·CNU·Ollama·runtime 질의·UI는 사용하지 않았다.
 - Phase 7-02: 기존 QueryIR subset용 PostgreSQL join compiler(`%s`), postgres dialect AST allowlist, PostgreSQL 12+ read-only executor를 추가하고 `ExecutionHarness` compiler/executor 타입을 protocol로 일반화했다. executor는 server-owned config, read-only transaction, config/executor 중 짧은 timeout, 200행 상한, SQLSTATE `57014`, cleanup과 고정 redaction을 강제한다. PostgreSQL capability의 compiler/policy/executor는 fake connector로 검증한 component 준비 상태로 `true`다. Luna review-only의 timeout 미적용과 외부 `HarnessFailure` redaction 우회를 수정했다. 관련 82개·69 subtests와 전체 pytest 747개·5 skip·459 subtests, compileall, diff check 통과. 실 PostgreSQL·CNU·Ollama·registry/UI 연결은 없다.
+- Phase 7-03: `DEFAULT_SEED` 기반 PostgreSQL fixture와 explicit opt-in live smoke CLI를 추가했다. loopback·전용 DB DSN만 허용하고 실행별 생성 schema에서 inspector→mapping→graph→compiler/policy/executor 두 QueryIR를 검증한 뒤 cleanup한다. Luna review-only의 setup 실패 cleanup·느슨한 FK 검증을 수정했고, 실제 PostgreSQL 18에서 드러난 FK catalog query 호환성과 runtime schema 고정을 `generate_subscripts`·transaction-local `search_path`로 보완했다. 관련 57개·18 subtests와 전체 pytest 762개·5 skip·470 subtests, compileall, diff check 통과. 임시 cluster/schema 제거 완료. 실제 CNU·기존 PostgreSQL 데이터·Ollama·registry/UI 연결은 없다.
 - 현재 로컬에는 fine-tuned tag만 확인되어 base instruct 평가는 정확한 tag가 별도로 준비될 때 진행한다. E3·L5 팀 결정 대기와 합성 개발은 병행한다.
 - `docs/desktop-test-handoff.md`는 초기 데스크톱 이전 시점의 기록이다.
 
 ## 다음 작은 작업
 
-1. Phase 7-03은 CNU가 아닌 합성 PostgreSQL fixture와 server-owned private profile로 inspector→mapping→compiler/policy/executor 실제 로컬 integration smoke를 수행한다. raw SQL fallback은 추가하지 않는다.
-2. 실학교 DB나 기존 legacy 데이터를 재사용하지 않고, 로컬 PostgreSQL 가용성부터 확인한 뒤 완전 합성 schema/data만 사용한다.
+1. Phase 7-04는 server-owned PostgreSQL profile을 기존 adaptive backend registry/runtime에 조립하되 DSN을 클라이언트·응답·로그에 노출하지 않는다. raw SQL fallback은 추가하지 않는다.
+2. backend registry/catalog/clarification 연결을 먼저 완료하고 UI 선택과 Ollama provider 연결은 각각 후속 단계로 분리한다.
 3. Phase 6-20의 합성 SQLite browser end-to-end smoke는 별도 잔여 작업이며 L4 승인이 아니다.
 4. 실 PostgreSQL 학교 DB publish·질의 전 L2, 실제 CNU 자료 사용·공유 전 E3, 외부 시연 전 L5를 적용한다.
 5. 운영 검토 큐 current pointer·동시성/잠금과 새 30건 사람 검토·모델 성능 관문은 별도다.
 
 ## 새 대화의 최소 시작 순서
 
-1. 저장소 루트에서 `AGENTS.md`와 이 문서, 계획 문서의 **Phase 7 현재 체크포인트·ADR-048/049·다음 시작점**, `docs/human-validation-checkpoints.md`의 E3/L1/L2/L3/L4/L5를 읽는다.
-2. `git status --short`, 최근 commit, 관련 코드·테스트를 확인한다. 문서는 방향을 알려주지만 구현 상태와 테스트 통과를 대신하지 않는다. Phase 7-02 범위는 `docs/prompts/phase7-02-postgres-query-runtime.md`, inspector 경계는 `docs/prompts/phase7-01-postgres-adapter-capabilities.md`에 둔다.
+1. 저장소 루트에서 `AGENTS.md`와 이 문서, 계획 문서의 **Phase 7 현재 체크포인트·ADR-048/049/050·다음 시작점**, `docs/human-validation-checkpoints.md`의 E3/L1/L2/L3/L4/L5를 읽는다.
+2. `git status --short`, 최근 commit, 관련 코드·테스트를 확인한다. 문서는 방향을 알려주지만 구현 상태와 테스트 통과를 대신하지 않는다. Phase 7-03 범위는 `docs/prompts/phase7-03-synthetic-postgres-live-smoke.md`에 둔다.
 3. 현재 작업에 필요한 파일만 더 읽고 해당 범위의 테스트부터 실행한다. 이전 대화 전체나 저장소 전체를 다시 요약할 필요는 없다.
 
 실제 질문·응답, DB 행·dump, 모델 weight, 비밀값, private recording은 Git이나 공개 문서에 복사하지 않는다.

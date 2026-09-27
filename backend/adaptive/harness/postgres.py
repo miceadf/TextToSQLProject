@@ -33,6 +33,7 @@ _FIXED_TOO_LARGE = "PostgreSQL query returned too many rows"
 
 _READ_ONLY_STATEMENT = "SET TRANSACTION READ ONLY"
 _STATEMENT_TIMEOUT_STATEMENT = "SELECT set_config('statement_timeout', %s, false)"
+_SEARCH_PATH_STATEMENT = "SELECT pg_catalog.set_config('search_path', %s, true)"
 
 def _production_connector(config: PostgresConnectionConfig) -> Any:
     try:
@@ -176,6 +177,10 @@ class PostgresReadOnlyExecutor:
                     _STATEMENT_TIMEOUT_STATEMENT,
                     (f"{effective_timeout_ms}ms",),
                 )
+                # Pin unqualified compiler-owned table names to the inspected schema.
+                # set_config takes the schema as a value, so no identifier interpolation
+                # or DSN option can alter the transaction-local search path.
+                cursor.execute(_SEARCH_PATH_STATEMENT, (config.schema,))
                 cursor.execute(query.sql, tuple(query.parameters))
             except Exception as exc:
                 if _is_timeout_error(exc):
