@@ -646,8 +646,9 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 
 ### Phase 7. PostgreSQL·Ollama 통합
 
-- [ ] `PostgresAdapter` 구현
-- [ ] `information_schema` 및 `pg_catalog` 분석
+- [x] Phase 7-01 DBMS capability 계약과 PostgreSQL read-only schema inspector(`dbms-capability-v1`, 단일 schema·sample 없음·fake connector 검증)
+- [x] `PostgresAdapter` schema inspection 구현
+- [x] `pg_catalog` 기반 table/column/PK/FK 분석(실 PostgreSQL 검증은 별도)
 - [ ] 데스크톱 Ollama provider 통합
 - [ ] 실제 CNU DB regression test
 - [ ] SQL dialect 차이 처리
@@ -994,7 +995,9 @@ Phase 6-18에서 loopback prototype의 메인 `DB 변경` modal에 standalone SQ
 
 Phase 6-19에서 Phase 6-17 registration의 server-owned proposal을 private review draft로 열고 `APPROVE`/`REMAP`한 뒤 명시적 `PUBLISH`가 성공한 경우에만 실행 권한을 부여했다. review 저장소는 registration과 분리된 Git ignored 경로에서 ID lock, strict JSON, immutable `mapping-vNNNN.json`, mutable review pointer, manifest-last `activation.json`을 사용한다. 실행 registry는 매 요청 strict activation을 재검증해 유효 private DB만 결정적으로 병합하며, catalog와 clarification은 해당 Published Mapping, physical relation graph, schema-adaptive compiler/AST policy, read-only SQLite executor를 사용한다. `activation.json`만 실행 권한의 원자 commit record이므로 재게시 중 pointer가 먼저 바뀌어도 기존 activation은 계속 유효하고, draft-only·미완료·변조 artifact는 registry에서 숨긴다. UI는 업로드 요약 아래에서 검토·publish를 수행하며 publish 성공 응답 직후 registry를 재조회하되 active DB를 자동 변경하지 않는다. 독립 `gpt-6-luna` high 검토에서 재게시 원자성, HTTP review body의 사후 크기 검사, publish 후 detail 조회 실패의 성공 상태 롤백을 확인해 각각 activation-authority 분리, streaming 64 KiB 상한, best-effort detail refresh로 수정했다. 신규 backend 13개, 관련 backend 36개·1 skip·7 subtests, frontend 27개, ESLint·build가 통과했다. 실제 browser 통합 smoke, 실제 학교 DB·PostgreSQL·Ollama·L2/L4 승인은 수행하지 않았다. 다음 작은 범위는 Phase 6-20의 합성 browser end-to-end smoke와 팀 handoff 갱신이다. 구현 지침은 [`docs/prompts/phase6-19-private-mapping-publish-activation.md`](prompts/phase6-19-private-mapping-publish-activation.md)에 둔다.
 
-다음 시작점은 Phase 6-19로, 합성 private registration의 mapping proposal을 검토 draft로 열어 수정·승인하고 명시적으로 publish한 뒤에만 Phase 6-16 실행 registry에 편입하는 권한 상승 흐름을 별도 구현한다. 실제 학교 DB mapping publish·질의에는 L2를 적용하며, 이 합성 로컬 단계에서 실제 CNU 자료를 사용하지 않는다. PostgreSQL은 Phase 7에서 별도 adapter로 시작한다. L4는 팀 사용성 검토 전, E3/L5는 실제 CNU 자료 사용·배포 관문에서 계속 대기한다.
+Phase 7-01에서 `sqlite`·`postgres`만 허용하는 불변 `dbms-capability-v1` 계약과 PostgreSQL schema inspector를 추가했다. PostgreSQL은 현재 schema inspection만 지원하며 compiler·policy·executor는 fail-closed 상태다. inspector는 server-owned DSN, PostgreSQL 12 이상, 단일 허용 schema(기본 `public`), read-only transaction, 2초 statement timeout, parameterized `pg_catalog` query, sample 미수집을 강제한다. ordinary/partitioned table, column·generated/identity, 복합 PK/FK 순서와 기존 logical affinity를 생성하며 다른 schema를 가리키는 FK는 제외한다. 오류는 입력 ID·DSN·원문 예외를 반사하지 않는다. 독립 `gpt-6-luna` high 검토의 입력 반사, cross-schema FK, shallow-frozen feature list를 메인에서 확인·수정했다. fake psycopg2-style connector와 SQLite/mapping/relation 회귀 39개·5 subtests, 전체 pytest 725개·5 skip·452 subtests, compileall, diff check가 통과했다. 실 PostgreSQL·CNU 자료·Ollama·runtime 질의·UI는 사용하지 않았다. 구현 지침은 [`docs/prompts/phase7-01-postgres-adapter-capabilities.md`](prompts/phase7-01-postgres-adapter-capabilities.md)에 둔다.
+
+다음 시작점은 Phase 7-02로, 현재 QueryIR subset을 PostgreSQL parameter style과 identifier quoting으로 컴파일하고 PostgreSQL 전용 AST allowlist·read-only executor를 capability gate 뒤에 연결한다. 실제 서버 없이 fake connector와 합성 계약부터 검증하며 raw SQL fallback은 추가하지 않는다. 실 PostgreSQL 연결·학교 DB mapping publish·질의에는 L2를 적용하고, 실제 CNU 자료 추가 사용·공유 전 E3, 외부 시연 전 L5를 유지한다.
 
 완료된 adapter 계약은 [`docs/prompts/phase5-07-ollama-querymodel-adapter.md`](prompts/phase5-07-ollama-querymodel-adapter.md)에, 합성 live smoke의 수행 지침은 [`docs/prompts/phase5-08-ollama-adapter-live-smoke.md`](prompts/phase5-08-ollama-adapter-live-smoke.md)에 둔다. 모델이 반환한 SQL 등 비 JSON 텍스트는 원문 문자열로 보존해 후속 Query IR 검증 실패로 드러내며, provider 호출 실패와 혼합하지 않는다.
 
@@ -1496,6 +1499,13 @@ SQLite DB 입력
 - 결정: Phase 6-19 review HTTP는 server-owned Phase 6-17 registration과 proposal만 다시 읽어 `INIT/APPROVE/REMAP/PUBLISH`를 수행하며 caller의 draft·mapping·version·path·SQL을 받지 않는다. 모든 canonical field가 승인·remap되고 catalog·ontology·fingerprint·physical graph·compiler·AST policy 검증을 통과하면 immutable mapping version을 쓴 뒤 `activation.json`을 마지막 원자 commit record로 교체한다. `current.json`은 review 조회 pointer일 뿐 실행 권한이 아니며, 재게시 도중 먼저 바뀌거나 process가 중단돼도 strict loader는 이전 activation이 가리키는 immutable mapping을 계속 사용한다. registry·catalog·clarification은 매번 activation과 registration을 strict reload하며 draft-only·누락·변조 항목은 개별 fail-closed로 숨긴다. UI publish 성공은 strict reload를 통과한 publish 응답으로 확정하고 registry를 재조회하되 선택은 자동 변경하지 않는다.
 - 이유: registration·검토 완료·실행 가능 상태를 하나로 취급하면 미검토 DB가 노출되고, 여러 mutable pointer를 동시에 commit하려 하면 중단 시 기존 정상 DB까지 registry에서 사라질 수 있다. 단일 activation commit과 immutable mapping을 실행 권한의 기준으로 두면 publish 전 격리, crash-safe 재게시, 재시작 복원, 명시적 사용자 선택을 동시에 보존할 수 있다.
 
+### ADR-048: 초기 DBMS 지원은 SQLite·PostgreSQL이며 QueryIR와 capability로 실행 권한을 분리
+
+- 날짜: 2026-09-27
+- 상태: 채택
+- 결정: 초기 지원 dialect는 `sqlite`와 `postgres`로 제한하고 알 수 없는 dialect는 fallback 없이 거부한다. 모델 경계는 기존 DB 독립 QueryIR을 유지하며 raw SQL runtime fallback을 두지 않는다. versioned immutable capability가 schema inspection·compiler·policy·executor 준비 상태와 QueryIR subset·행/시간 상한을 명시한다. Phase 7-01의 PostgreSQL capability는 inspector만 활성화하며, server-owned 설정의 PostgreSQL 12+ 단일 schema를 read-only·parameterized `pg_catalog` query로 sample 없이 검사한다. compiler·policy·executor가 완성되기 전 PostgreSQL 질의 실행은 허용하지 않는다.
+- 이유: DB 연결 가능 여부와 안전한 질의 실행 준비 여부를 같은 플래그로 취급하면 미완성 dialect가 실행 경로에 노출된다. QueryIR을 공통 의미 경계로 두고 DBMS별 capability를 단계적으로 올리면 Ollama 재학습이나 raw SQL 신뢰 없이 dialect 차이를 adapter에서 통제할 수 있다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -1705,3 +1715,4 @@ SQLite DB 입력
 - Phase 6-17 private SQLite backend 등록 quarantine 완료. 단일-fd 32 MiB bounded copy, SQLite header·sidecar/WAL·read-only immutable quick check, Git ignored private containment, ID lock·staging rename no-overwrite, sample 없는 catalog·mapping proposal, `PENDING_REVIEW` manifest와 strict 재검사를 구현. 독립 검토에서 redirect parent 생성 순서와 broken redirect, source identity, exact JSON·bounded read, artifact fsync를 수정. 신규 18개와 catalog/mapping/Phase 6-16 관련 15개 통과, source symlink 생성 권한 없는 환경 1개 skip. 실행 registry·mapping publish·upload/UI·실제 CNU/PostgreSQL/Ollama·L4 승인 없음. ADR-045 추가
 - Phase 6-18 loopback SQLite upload와 검토 대기 요약 완료. 메인 `DB 변경` modal에서 raw SQLite body를 선언·실측 32 MiB로 제한해 임시 파일에 streaming하고 Phase 6-17 register→strict load를 호출한다. 성공은 `PENDING_REVIEW` schema·mapping metadata만 읽기 전용 표시하며 active DB·sessionStorage·Phase 6-16 registry/catalog/clarification은 불변이다. `gpt-6-luna` high review-only 지적을 메인에서 재현해 modal 취소 후 `uploading` 고착을 수정하고, strict response 집계/status 및 빈 query segment fail-closed를 보강했다. 관련 backend 31개 통과·1개 기존 Windows symlink 권한 skip, frontend 17개·ESLint·build 통과. browser 실기동 upload smoke는 미수행. mapping 수정·승인·publish·실행 registry 편입, 실제 CNU/PostgreSQL/Ollama·L4 승인 없음. ADR-046 추가
 - Phase 6-19 private mapping 검토·publish·활성화 완료. registration proposal을 private draft로 열어 모든 canonical field를 승인/remap하고 명시적 publish한 경우에만 immutable mapping과 activation manifest를 게시하며, strict activation reload 뒤 registry·catalog·clarification에 편입한다. publish 전·변조 항목은 숨기고 active 선택은 자동 변경하지 않는다. `gpt-6-luna` high review-only에서 확인한 재게시 중단 시 기존 활성 DB 소실, review body 사후 크기 검사, publish 성공 뒤 detail 실패의 registry 갱신 누락을 activation 단일 실행 권한, streaming 상한, 성공/보조 refresh 분리로 수정했다. 신규 backend 13개, 관련 backend 36개·1 skip·7 subtests, frontend 27개·ESLint·build 통과. 실제 browser 통합 smoke·실제 CNU/PostgreSQL/Ollama·L2/L4 승인 없음. ADR-047 추가
+- Phase 7-01 DBMS capability와 PostgreSQL read-only schema inspector 완료. `sqlite`·`postgres` 외 dialect를 거부하고 PostgreSQL은 inspector만 지원 상태로 명시했다. server-owned DSN, PostgreSQL 12+, 단일 schema, read-only transaction·timeout, parameterized `pg_catalog`, sample 미수집, deterministic catalog/fingerprint를 fake connector로 검증했다. Luna review-only에서 확인한 미등록 ID 반사, cross-schema FK, mutable feature list를 고정 오류·참조 schema filter·tuple로 수정했다. 관련 39개·5 subtests와 전체 pytest 725개·5 skip·452 subtests, compileall, diff check 통과. 실 PostgreSQL/CNU/Ollama/runtime 질의/UI 없음. ADR-048 추가

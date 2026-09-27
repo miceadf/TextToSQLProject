@@ -1,6 +1,6 @@
 # 새 Codex 대화용 짧은 인수인계
 
-현재 기준: 2026-09-27, Phase 6-19 private mapping 검토·명시적 publish·strict activation 뒤 실행 registry 편입까지 구현·검증 완료. 최신 상태는 항상 Git과 코드로 다시 확인한다. 설계와 로드맵의 원본은 [`schema-adaptive-text-to-sql-plan.md`](schema-adaptive-text-to-sql-plan.md), 독립 평가 세트 설계 기준은 [`independent-evaluation-set-design.md`](independent-evaluation-set-design.md), 안전한 잠정 비교는 [`phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md`](phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md)다.
+현재 기준: 2026-09-27, Phase 7-01 DBMS capability 계약과 PostgreSQL read-only schema inspector까지 구현·검증 완료. 최신 상태는 항상 Git과 코드로 다시 확인한다. 설계와 로드맵의 원본은 [`schema-adaptive-text-to-sql-plan.md`](schema-adaptive-text-to-sql-plan.md), 독립 평가 세트 설계 기준은 [`independent-evaluation-set-design.md`](independent-evaluation-set-design.md), 안전한 잠정 비교는 [`phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md`](phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md)다.
 
 ## 프로젝트와 현재 경계
 
@@ -37,21 +37,22 @@
 - Phase 6-17: standalone SQLite를 단일 read fd에서 32 MiB 제한·header/hash·sidecar/WAL 검사 후 Git ignored private root에 immutable/no-overwrite로 등록한다. private copy만 read-only immutable quick check하고 sample 없는 catalog·mapping proposal을 생성하며 strict loader가 exact 파일·hash/size·JSON 계약·fingerprint를 재검사한다. 상태는 `PENDING_REVIEW`이고 Phase 6-16 registry에는 들어가지 않는다. 독립 검토에서 redirect parent 선검증, source identity, exact JSON, bounded load, fsync를 보강했다. 신규 18개와 관련 기존 15개 통과, Windows source symlink 권한 1개 skip. upload HTTP/UI·mapping 검토/publish·실제 DB/Ollama·L4는 미완료다.
 - Phase 6-18: 메인 `DB 변경` modal에 standalone SQLite raw-body upload를 추가했다. HTTP 경계가 `Content-Length`와 실제 stream을 모두 32 MiB로 제한하고 exclusive temp를 정리한 뒤 Phase 6-17 register→strict load만 호출한다. 성공은 `PENDING_REVIEW` sample-free schema/mapping summary만 표시하고 active/pending DB 선택·sessionStorage·course UI·Phase 6-16 registry/catalog/clarification은 바꾸지 않는다. `gpt-6-luna` high review-only에서 찾은 modal 취소 후 upload 고착을 메인에서 재현·수정했고 strict response count/status·빈 query segment도 보강했다. 관련 backend 31개 통과·1개 기존 Windows symlink 권한 skip, frontend 17개·ESLint·build 통과. 실제 browser upload smoke는 미수행이며 mapping 검토/publish·실행 registry 편입·실제 DB/Ollama·L4는 미완료다.
 - Phase 6-19: 업로드 성공 아래에서 server-owned proposal을 private draft로 `INIT`하고 field별 `APPROVE`/`REMAP` 뒤 명시적으로 `PUBLISH`한다. immutable mapping version과 `activation.json` 최종 commit을 strict reload한 DB만 동적 registry에 나타나며 catalog·clarification은 Published Mapping 기반 schema-adaptive compiler/AST policy/read-only executor를 쓴다. publish 전·불완전·변조 항목은 숨고 active DB는 자동 변경되지 않는다. Luna review-only의 재게시 원자성·HTTP body 상한·publish/detail 상태 전이 3건을 메인에서 확인·수정했다. 신규 backend 13개, 관련 backend 36개·1 skip·7 subtests, frontend 27개·ESLint·build 통과. 실제 browser 통합 smoke와 L2/L4는 미수행이다.
+- Phase 7-01: immutable `dbms-capability-v1`로 SQLite는 inspector/compiler/policy/executor 지원, PostgreSQL은 inspector만 지원한다고 명시했다. `PostgresAdapter`는 server-owned DSN과 PostgreSQL 12+ 단일 schema를 read-only transaction·2초 timeout·parameterized `pg_catalog` query로 검사하며 sample을 수집하지 않는다. table/column/PK/composite FK/generated/identity와 기존 logical affinity를 deterministic catalog로 만든다. Luna review-only의 미등록 ID 반사, cross-schema FK, shallow-frozen list를 고정 오류·schema filter·tuple로 수정했다. 관련 39개·5 subtests와 전체 pytest 725개·5 skip·452 subtests, compileall, diff check 통과. 실 PostgreSQL·CNU·Ollama·runtime 질의·UI는 사용하지 않았다.
 - 현재 로컬에는 fine-tuned tag만 확인되어 base instruct 평가는 정확한 tag가 별도로 준비될 때 진행한다. E3·L5 팀 결정 대기와 합성 개발은 병행한다.
 - `docs/desktop-test-handoff.md`는 초기 데스크톱 이전 시점의 기록이다.
 
 ## 다음 작은 작업
 
-1. Phase 6-20은 합성 SQLite 파일 선택→upload→review→publish→registry 재조회→명시적 DB 선택→catalog/clarification을 실제 browser에서 최소 smoke하고 팀 handoff를 갱신한다. 합성 내부 검증일 뿐 L4 승인은 아니다.
-2. 실제 학교 DB publish·질의에는 L2를 적용하며, 현재 합성 publish를 그 승인으로 간주하지 않는다.
-3. PostgreSQL은 Phase 7 `PostgresAdapter` 계약부터 별도 시작하고 실제 CNU 자료 사용·공유 전 E3, 실제 데이터 배포·외부 시연 전 L5를 적용한다.
+1. Phase 7-02는 기존 QueryIR subset용 PostgreSQL compiler, AST policy, read-only executor를 capability gate 뒤에 합성 fake connector로 구현한다. raw SQL fallback은 추가하지 않는다.
+2. Phase 6-20의 합성 SQLite browser end-to-end smoke는 별도 잔여 작업이며 L4 승인이 아니다.
+3. 실 PostgreSQL 또는 실제 학교 DB publish·질의 전 L2, 실제 CNU 자료 사용·공유 전 E3, 외부 시연 전 L5를 적용한다.
 4. 운영 검토 큐 current pointer·동시성/잠금은 별도 합성 범위로 남아 있다.
 5. 새 30건 초안의 사람 검토(L1·E2)·동결, base instruct 정확한 tag 평가, 모델 성능 확정 전 L1/L3는 별도다.
 
 ## 새 대화의 최소 시작 순서
 
-1. 저장소 루트에서 `AGENTS.md`와 이 문서, 계획 문서의 **Phase 5·6 현재 체크포인트·ADR-023/024/025/027/028/029/030/031/032/033/034/035/036/037/038/039/040/041/042/043/044/045/046/047·다음 시작점**, `docs/human-validation-checkpoints.md`의 E3/L1/L2/L3/L4/L5를 읽는다.
-2. `git status --short`, 최근 commit, 관련 코드·테스트를 확인한다. 문서는 방향을 알려주지만 구현 상태와 테스트 통과를 대신하지 않는다. Phase 6-19 범위는 `docs/prompts/phase6-19-private-mapping-publish-activation.md`, upload 경계는 `docs/prompts/phase6-18-loopback-sqlite-upload.md`, registration core는 `docs/prompts/phase6-17-private-sqlite-registration.md`에 둔다.
+1. 저장소 루트에서 `AGENTS.md`와 이 문서, 계획 문서의 **Phase 7 현재 체크포인트·ADR-048·다음 시작점**, `docs/human-validation-checkpoints.md`의 E3/L1/L2/L3/L4/L5를 읽는다.
+2. `git status --short`, 최근 commit, 관련 코드·테스트를 확인한다. 문서는 방향을 알려주지만 구현 상태와 테스트 통과를 대신하지 않는다. Phase 7-01 범위는 `docs/prompts/phase7-01-postgres-adapter-capabilities.md`에 둔다.
 3. 현재 작업에 필요한 파일만 더 읽고 해당 범위의 테스트부터 실행한다. 이전 대화 전체나 저장소 전체를 다시 요약할 필요는 없다.
 
 실제 질문·응답, DB 행·dump, 모델 weight, 비밀값, private recording은 Git이나 공개 문서에 복사하지 않는다.

@@ -49,6 +49,6 @@ class TableCatalog(BaseModel):
 
 class DatabaseCatalog(BaseModel):
     database_id: str = Field(min_length=1)
-    dialect: Literal["sqlite"] = "sqlite"
+    dialect: Literal["sqlite", "postgres"] = "sqlite"
     tables: list[TableCatalog]
     schema_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
