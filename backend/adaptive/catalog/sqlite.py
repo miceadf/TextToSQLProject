@@ -43,6 +43,7 @@ class SQLiteAdapter:
         *,
         sample_limit: int = 3,
         max_sample_length: int = 100,
+        immutable: bool = False,
     ) -> None:
         if sample_limit < 1:
             raise ValueError("sample_limit must be at least 1")
@@ -51,6 +52,7 @@ class SQLiteAdapter:
         self._databases = {key: Path(value).resolve() for key, value in databases.items()}
         self._sample_limit = sample_limit
         self._max_sample_length = max_sample_length
+        self._immutable = bool(immutable)
 
     def inspect(
         self,
@@ -67,8 +69,9 @@ class SQLiteAdapter:
 
         connection: sqlite3.Connection | None = None
         try:
+            suffix = "?mode=ro&immutable=1" if self._immutable else "?mode=ro"
             connection = sqlite3.connect(
-                database_path.as_uri() + "?mode=ro",
+                database_path.as_uri() + suffix,
                 uri=True,
             )
             connection.row_factory = sqlite3.Row

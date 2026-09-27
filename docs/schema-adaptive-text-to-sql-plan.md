@@ -636,6 +636,7 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 - [x] Phase 6-14 합성 clarification React 흐름(`/adaptive-prototype`; strict response parser·메모리 token·option/cancel/result 상태, legacy 화면 교체·browser 실검증 없음)
 - [x] Phase 6-15 합성 clarification 통합 browser smoke와 팀 handoff(두 option·결과·취소·no-match·연결 실패·재제출 차단·legacy 경로 확인; 합성 내부 공유 전용)
 - [x] Phase 6-16 합성 활성 DB 선택과 메인 목록·질의 동기화(legacy 기준선 보존, flat·legacy-schema 등록 DB, session 범위 선택, canonical catalog·clarification 동일 DB, browser smoke)
+- [x] Phase 6-17 private SQLite backend 등록 경계(32 MiB 제한·standalone 형식·private immutable storage·read-only immutable 검사·schema scan·mapping proposal, 검토 전 실행 registry 격리)
 - [x] validate → execute → critique → repair loop 구현(합성 계약 범위; `DetailedRepairOutcome`과 `AgentWorkflowCoordinator`로 연결)
 - [x] 모호한 질문 감지 및 사용자 확인(합성 내부 prototype 구현·browser smoke 범위; L4 사람 검토·실서비스 연결은 별도)
 - [ ] 운영 실패를 관리자 검토 큐에 저장
@@ -985,7 +986,9 @@ Phase 6-15에서 backend+Vite loopback을 실제 기동하고 설치된 Chrome h
 
 Phase 6-16에서 메인 화면에 `DB 변경` 흐름을 추가하고 legacy 기준선과 서버 소유 합성 flat·legacy-schema DB 두 개를 선택할 수 있게 했다. 활성 선택은 backend 전역 상태가 아니라 `sessionStorage`에 두고 매번 strict registry 응답으로 재검증한다. 합성 선택 시 canonical course catalog와 clarification start가 같은 DB ID를 사용하고, schema fingerprint drift·미등록 DB·unsafe compile·변조 응답은 redacted 고정 오류로 닫는다. DB 변경은 선택 강의·경고·hover·modal 상태와 진행 요청을 무효화하며 legacy API 실패도 빈 성공으로 숨기지 않는다. 실제 Chrome smoke에서 두 DB 각 6개 동일 canonical 강의, reload 선택 유지, 같은 DB clarification 6행, 중복·미등록 query fail-closed, legacy backend 부재 오류·재시도가 통과했다. 실제 CNU DB·PostgreSQL·Ollama·파일 업로드·mapping publish·L4 승인은 포함하지 않는다. 구현 지침은 [`docs/prompts/phase6-16-active-database-selection.md`](prompts/phase6-16-active-database-selection.md)에 둔다.
 
-다음 시작점은 Phase 6-17로, 사용자가 추가하는 **private SQLite 파일의 backend 등록 경계**를 하나의 중간 범위로 개발한다. 파일 크기·형식·private storage·read-only open을 검증하고 schema scan과 mapping proposal 생성까지만 수행하며, 사람 검토와 명시적 publish 전에는 course catalog·clarification에서 선택할 수 없게 한다. 업로드 UI·mapping 검토/publish UI는 그 다음 범위로 분리하고 PostgreSQL은 Phase 7에서 별도 adapter로 시작한다. L4는 팀 사용성 검토 전, E3/L5는 실제 CNU 자료 사용·배포 관문에서 계속 대기한다.
+Phase 6-17에서 사용자가 제공한 standalone SQLite 파일을 `.schema-adaptive/registered-databases`에 immutable/no-overwrite registration으로 격리하는 backend core를 추가했다. source는 단일 read fd에서 header·32 MiB 상한·SHA-256·streaming copy를 처리하고 sidecar/WAL·redirect/hardlink를 거부하며, private 복사본만 `mode=ro&immutable=1`·`query_only`·`quick_check`로 검사한다. 표본값 없는 기존 `SQLiteAdapter` catalog와 rule-based mapping proposal을 생성하고 `registration.json`을 `PENDING_REVIEW` commit marker로 게시한다. strict loader는 허용 파일 집합·크기/hash·exact JSON 계약·database/schema/ontology 일치와 DB 재검사를 수행한다. 독립 검토에서 redirect parent 선검증, source identity, JSON extra/coercion, bounded load, 파일 fsync를 보강했다. 이 등록은 Phase 6-16 fixed registry를 변경하지 않아 검토·publish 전에는 course catalog·clarification에서 선택할 수 없다. 구현 지침은 [`docs/prompts/phase6-17-private-sqlite-registration.md`](prompts/phase6-17-private-sqlite-registration.md)에 둔다.
+
+다음 시작점은 Phase 6-18로, loopback prototype의 `DB 변경` 흐름에서 SQLite 파일을 선택해 제한된 upload HTTP 경계로 Phase 6-17 registration을 호출하고, 성공한 `PENDING_REVIEW`의 schema/mapping proposal 요약을 읽기 전용으로 보여주는 한 흐름을 구현한다. 아직 mapping 수정·승인·publish와 실행 registry 편입은 하지 않고 다음 범위로 분리한다. PostgreSQL은 Phase 7에서 별도 adapter로 시작한다. L4는 팀 사용성 검토 전, E3/L5는 실제 CNU 자료 사용·배포 관문에서 계속 대기한다.
 
 완료된 adapter 계약은 [`docs/prompts/phase5-07-ollama-querymodel-adapter.md`](prompts/phase5-07-ollama-querymodel-adapter.md)에, 합성 live smoke의 수행 지침은 [`docs/prompts/phase5-08-ollama-adapter-live-smoke.md`](prompts/phase5-08-ollama-adapter-live-smoke.md)에 둔다. 모델이 반환한 SQL 등 비 JSON 텍스트는 원문 문자열로 보존해 후속 Query IR 검증 실패로 드러내며, provider 호출 실패와 혼합하지 않는다.
 
@@ -1466,6 +1469,13 @@ SQLite DB 입력
 - 결정: 메인 화면의 활성 DB는 backend process 전역 mutable pointer로 저장하지 않고 browser `sessionStorage`에 둔다. legacy 기준선은 기존 `/api/v1/courses`를 그대로 사용하고, 합성 경로는 서버 소유 strict registry에 등록된 flat·legacy-schema SQLite만 허용한다. registry 응답으로 저장값을 재검증한 뒤 canonical course catalog와 clarification start에 같은 DB ID를 명시적으로 전달한다. catalog는 caller SQL·경로·mapping을 받지 않고 Published 상태의 서버 mapping, parameterized compiler, SQL policy, read-only executor를 통과한다. schema fingerprint drift, 미등록·중복 ID, 응답 계약 불일치는 redacted 오류로 닫고 DB 변경 시 이전 DB에 종속된 UI 상태와 요청을 폐기한다. 파일 DB 등록·PostgreSQL·전역 current DB·publish UI는 포함하지 않는다.
 - 이유: 서버 전역 선택은 여러 사용자 요청을 교차 오염시키고, main catalog와 Text-to-SQL이 서로 다른 DB를 보면 prototype의 핵심 주장을 검증할 수 없다. session 범위의 명시적 DB ID와 서버 registry·Published Mapping gate를 결합하면 legacy 기준선을 유지하면서 두 물리 schema가 같은 canonical 화면과 질의 결과를 제공함을 안전하게 보여줄 수 있다.
 
+### ADR-045: private SQLite 등록은 immutable quarantine이며 publish와 실행 권한을 분리
+
+- 날짜: 2026-09-27
+- 상태: 채택
+- 결정: 사용자 제공 SQLite는 Git ignored `.schema-adaptive/registered-databases` 아래 database ID별 immutable registration으로만 저장한다. source는 한 번 연 fd에서 32 MiB 상한과 hash를 강제하고 standalone header·sidecar/WAL·redirect/hardlink를 검사한다. private copy는 read-only immutable SQLite 검사, sample 없는 schema scan, 기존 rule-based aligner만 통과하며 `registration.json`을 마지막 commit marker로 게시한다. loader는 exact 네 파일, bounded size/hash, strict contract, fingerprint/ontology 일치와 재검사를 수행한다. 성공 상태는 항상 `PENDING_REVIEW`이고 기존 Phase 6-16 registry나 Published Mapping을 자동 변경하지 않는다.
+- 이유: 파일을 받은 즉시 실행 대상으로 취급하면 경로 우회·불완전 WAL snapshot·민감 sample 유출·동시 overwrite뿐 아니라 미검토 mapping으로 잘못된 SQL을 실행할 수 있다. 저장·검사·proposal 생성을 quarantine 단계로 닫고 사람 검토·명시적 publish를 별도 권한 상승으로 두면 파일 등록 기능을 개발하면서도 기존 합성 실행 경계와 legacy 기준선을 보존할 수 있다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -1672,3 +1682,4 @@ SQLite DB 입력
 
 - Phase 6-15 합성 clarification 통합 browser smoke와 팀 공유 handoff 완료. backend+Vite loopback 실제 기동 후 Chrome headless DOM·network로 option 두 갈래, 각 6행 결과, cancel, no-match, terminal 재제출 차단, legacy `/`를 확인하고 별도 실패 proxy로 redacted 일반 오류를 검증. 독립 검토에서 비-2xx 비-JSON proxy 오류의 계약 오류 오분류를 일반 server 오류로 수정하고 회귀 테스트 추가. 합성 내부 범위의 `모호한 질문 감지 및 사용자 확인` 항목을 완료 처리하되 L4·실제 auth/provider/PostgreSQL/CNU 자료·배포·외부 시연·성능 확정은 미완료. ADR-043 및 팀 handoff 추가
 - Phase 6-16 합성 활성 DB 선택과 메인 course catalog·clarification 동기화 완료. legacy 기준선은 기존 API로 보존하고 flat·legacy-schema 합성 DB를 server registry에 등록했으며, sessionStorage 선택을 registry로 재검증해 두 경로에 같은 DB ID를 전달. read-only compiler/policy/executor, canonical `CourseOffering.*` semantic refs, schema fingerprint drift, strict response·redaction, stale/abort·상태 초기화 계약을 구현. 독립 통합 검토에서 저장 선택 소실, 중복 query 허용, legacy 침묵 실패, 요청 경합, schema drift 간극을 수정. 관련 backend 39개·frontend 24개, ESLint/build와 Chrome browser smoke 7개 흐름 통과. 실제 CNU/PostgreSQL/Ollama·파일 업로드·mapping publish·L4 승인 없음. ADR-044 추가
+- Phase 6-17 private SQLite backend 등록 quarantine 완료. 단일-fd 32 MiB bounded copy, SQLite header·sidecar/WAL·read-only immutable quick check, Git ignored private containment, ID lock·staging rename no-overwrite, sample 없는 catalog·mapping proposal, `PENDING_REVIEW` manifest와 strict 재검사를 구현. 독립 검토에서 redirect parent 생성 순서와 broken redirect, source identity, exact JSON·bounded read, artifact fsync를 수정. 신규 18개와 catalog/mapping/Phase 6-16 관련 15개 통과, source symlink 생성 권한 없는 환경 1개 skip. 실행 registry·mapping publish·upload/UI·실제 CNU/PostgreSQL/Ollama·L4 승인 없음. ADR-045 추가
