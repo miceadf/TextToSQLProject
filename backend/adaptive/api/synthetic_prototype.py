@@ -43,6 +43,7 @@ from ..harness.errors import HarnessFailure
 from ..harness.executor import SQLiteReadOnlyExecutor
 from ..harness.policy import ConservativeSqlPolicy
 from .clarification_http import create_clarification_http_app
+from .registration_upload import register_sqlite_upload_routes
 from .synthetic_registry import (
     SyntheticDatabaseRegistry,
     register_synthetic_database_routes,
@@ -269,6 +270,10 @@ def create_synthetic_clarification_prototype() -> FastAPI:
             schema_by_id=schema_by_id,
             schema_is_current=schema_is_current,
         )
+        try:
+            register_sqlite_upload_routes(app)
+        except Exception:
+            raise RuntimeError(_PROTOTYPE_CREATION_FAILURE) from None
     except Exception:
         if tmp is not None:
             try:

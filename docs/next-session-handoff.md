@@ -1,6 +1,6 @@
 # 새 Codex 대화용 짧은 인수인계
 
-현재 기준: 2026-09-27, Phase 6-17 private SQLite backend 등록 quarantine과 schema scan·mapping proposal 생성까지 구현·검증 완료. 최신 상태는 항상 Git과 코드로 다시 확인한다. 설계와 로드맵의 원본은 [`schema-adaptive-text-to-sql-plan.md`](schema-adaptive-text-to-sql-plan.md), 독립 평가 세트 설계 기준은 [`independent-evaluation-set-design.md`](independent-evaluation-set-design.md), 안전한 잠정 비교는 [`phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md`](phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md)다.
+현재 기준: 2026-09-27, Phase 6-18 loopback SQLite upload와 `PENDING_REVIEW` schema·mapping proposal 읽기 전용 요약까지 구현·검증 완료. 최신 상태는 항상 Git과 코드로 다시 확인한다. 설계와 로드맵의 원본은 [`schema-adaptive-text-to-sql-plan.md`](schema-adaptive-text-to-sql-plan.md), 독립 평가 세트 설계 기준은 [`independent-evaluation-set-design.md`](independent-evaluation-set-design.md), 안전한 잠정 비교는 [`phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md`](phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md)다.
 
 ## 프로젝트와 현재 경계
 
@@ -35,21 +35,22 @@
 - Phase 6-15: backend+Vite loopback 실제 기동과 Chrome headless DOM·network smoke 완료. 두 option, 강의명·교수자명 각 6행 결과, cancel, no-match, terminal 재제출 control 제거, legacy `/` 유지, 별도 실패 proxy의 redacted 일반 오류를 확인했다. 독립 검토에서 비-2xx 비-JSON proxy 오류를 계약 오류로 오분류하던 client를 code 없는 일반 server 오류로 수정하고 회귀 테스트를 추가했다. 팀 실행·관찰표는 `docs/synthetic-clarification-team-handoff.md`에 있다. 합성 내부 prototype 범위의 모호성 사용자 확인 구현은 완료지만 L4 사람 검토·실제 auth/provider/PostgreSQL/CNU 자료·배포/외부 시연은 미완료다.
 - Phase 6-16: 메인 화면 `DB 변경`에서 legacy 기준선과 server-owned 합성 flat·legacy-schema DB를 선택한다. 선택은 sessionStorage에 두고 strict registry로 재검증하며, 합성 course catalog와 clarification start가 같은 DB ID를 쓴다. catalog는 canonical 15개 field의 Published 상태 mapping, safe compiler/policy, read-only executor를 통과하고 schema fingerprint drift·미등록/중복 ID·변조 response는 redacted fail-closed다. DB 변경은 이전 요청과 선택 강의·경고·hover·modal 상태를 폐기하며 legacy API 실패도 오류·재시도로 표시한다. 관련 backend 39개·frontend 24개, ESLint/build, Chrome smoke 7개 흐름(flat/legacy 각 6개 동일 강의, reload 유지, 동일 DB clarification 6행, unsupported query, legacy backend 부재 오류)이 통과했다. 파일 업로드·mapping publish·실제 DB/Ollama·L4는 미완료다.
 - Phase 6-17: standalone SQLite를 단일 read fd에서 32 MiB 제한·header/hash·sidecar/WAL 검사 후 Git ignored private root에 immutable/no-overwrite로 등록한다. private copy만 read-only immutable quick check하고 sample 없는 catalog·mapping proposal을 생성하며 strict loader가 exact 파일·hash/size·JSON 계약·fingerprint를 재검사한다. 상태는 `PENDING_REVIEW`이고 Phase 6-16 registry에는 들어가지 않는다. 독립 검토에서 redirect parent 선검증, source identity, exact JSON, bounded load, fsync를 보강했다. 신규 18개와 관련 기존 15개 통과, Windows source symlink 권한 1개 skip. upload HTTP/UI·mapping 검토/publish·실제 DB/Ollama·L4는 미완료다.
+- Phase 6-18: 메인 `DB 변경` modal에 standalone SQLite raw-body upload를 추가했다. HTTP 경계가 `Content-Length`와 실제 stream을 모두 32 MiB로 제한하고 exclusive temp를 정리한 뒤 Phase 6-17 register→strict load만 호출한다. 성공은 `PENDING_REVIEW` sample-free schema/mapping summary만 표시하고 active/pending DB 선택·sessionStorage·course UI·Phase 6-16 registry/catalog/clarification은 바꾸지 않는다. `gpt-6-luna` high review-only에서 찾은 modal 취소 후 upload 고착을 메인에서 재현·수정했고 strict response count/status·빈 query segment도 보강했다. 관련 backend 31개 통과·1개 기존 Windows symlink 권한 skip, frontend 17개·ESLint·build 통과. 실제 browser upload smoke는 미수행이며 mapping 검토/publish·실행 registry 편입·실제 DB/Ollama·L4는 미완료다.
 - 현재 로컬에는 fine-tuned tag만 확인되어 base instruct 평가는 정확한 tag가 별도로 준비될 때 진행한다. E3·L5 팀 결정 대기와 합성 개발은 병행한다.
 - `docs/desktop-test-handoff.md`는 초기 데스크톱 이전 시점의 기록이다.
 
 ## 다음 작은 작업
 
-1. Phase 6-18은 loopback prototype의 `DB 변경`에서 SQLite 파일을 선택하고 제한된 upload HTTP 경계로 Phase 6-17 registration을 호출한 뒤, `PENDING_REVIEW` schema/mapping proposal 요약을 읽기 전용으로 보여주는 흐름을 구현한다. 실행 DB 선택은 계속 금지한다.
-2. mapping proposal 수정·승인·publish와 Phase 6-16 실행 registry 편입은 Phase 6-18 다음 범위로 분리한다. 팀 handoff의 L4 사람 검토는 아직 승인/완료가 아니다.
+1. Phase 6-19는 합성 private registration의 mapping proposal을 검토 draft로 열어 수정·승인하고 명시적으로 publish한 뒤에만 Phase 6-16 실행 registry에 편입하는 권한 상승 흐름을 구현한다. 실제 학교 DB publish·질의에는 L2를 적용한다.
+2. Phase 6-18의 실제 browser upload smoke와 팀 handoff의 L4 사람 검토는 아직 승인/완료가 아니다.
 3. PostgreSQL은 Phase 7 `PostgresAdapter` 계약부터 별도 시작하고 실제 CNU 자료 사용·공유 전 E3, 실제 데이터 배포·외부 시연 전 L5를 적용한다.
 4. 운영 검토 큐 current pointer·동시성/잠금은 별도 합성 범위로 남아 있다.
 5. 새 30건 초안의 사람 검토(L1·E2)·동결, base instruct 정확한 tag 평가, 모델 성능 확정 전 L1/L3는 별도다.
 
 ## 새 대화의 최소 시작 순서
 
-1. 저장소 루트에서 `AGENTS.md`와 이 문서, 계획 문서의 **Phase 5·6 현재 체크포인트·ADR-023/024/025/027/028/029/030/031/032/033/034/035/036/037/038/039/040/041/042/043/044/045·다음 시작점**, `docs/human-validation-checkpoints.md`의 E3/L1/L3/L4/L5를 읽는다.
-2. `git status --short`, 최근 commit, 관련 코드·테스트를 확인한다. 문서는 방향을 알려주지만 구현 상태와 테스트 통과를 대신하지 않는다. Phase 6-17 범위는 `docs/prompts/phase6-17-private-sqlite-registration.md`, 이전 공유 절차는 `docs/synthetic-clarification-team-handoff.md`에 둔다.
+1. 저장소 루트에서 `AGENTS.md`와 이 문서, 계획 문서의 **Phase 5·6 현재 체크포인트·ADR-023/024/025/027/028/029/030/031/032/033/034/035/036/037/038/039/040/041/042/043/044/045/046·다음 시작점**, `docs/human-validation-checkpoints.md`의 E3/L1/L2/L3/L4/L5를 읽는다.
+2. `git status --short`, 최근 commit, 관련 코드·테스트를 확인한다. 문서는 방향을 알려주지만 구현 상태와 테스트 통과를 대신하지 않는다. Phase 6-18 범위는 `docs/prompts/phase6-18-loopback-sqlite-upload.md`, Phase 6-17 core는 `docs/prompts/phase6-17-private-sqlite-registration.md`, 이전 공유 절차는 `docs/synthetic-clarification-team-handoff.md`에 둔다.
 3. 현재 작업에 필요한 파일만 더 읽고 해당 범위의 테스트부터 실행한다. 이전 대화 전체나 저장소 전체를 다시 요약할 필요는 없다.
 
 실제 질문·응답, DB 행·dump, 모델 weight, 비밀값, private recording은 Git이나 공개 문서에 복사하지 않는다.

@@ -24,6 +24,14 @@ import {
   writeStoredDatabaseId,
   type RegistryDatabase,
 } from '../adaptive-prototype/databases.ts'
+import {
+  UPLOAD_PENDING_NOTICE,
+  canStartUpload,
+  toUploadMessage,
+  uploadSqliteDatabase,
+  type SqliteUploadStatus,
+  type SqliteUploadSuccess,
+} from '../adaptive-prototype/sqliteUpload.ts'
 import { coursesApi } from '../services/api'
 import type { Course } from '../types/course'
 import { isStaleResponse, nextOperation } from '../adaptive-prototype/state.ts'
@@ -134,9 +142,17 @@ export default function MainPage({
   const [catalogError, setCatalogError] = useState<string | null>(null)
   const [catalogRetry, setCatalogRetry] = useState(0)
   const [registryRetry, setRegistryRetry] = useState(0)
+  const [uploadDbId, setUploadDbId] = useState('')
+  const [uploadLabel, setUploadLabel] = useState('')
+  const [uploadFile, setUploadFile] = useState<File | null>(null)
+  const [uploadStatus, setUploadStatus] = useState<SqliteUploadStatus>('idle')
+  const [uploadResult, setUploadResult] = useState<SqliteUploadSuccess | null>(null)
+  const [uploadError, setUploadError] = useState<string | null>(null)
 
   const operationRef = useRef(0)
   const abortRef = useRef<AbortController | null>(null)
+  const uploadOperationRef = useRef(0)
+  const uploadAbortRef = useRef<AbortController | null>(null)
   const mountedRef = useRef(true)
   const activeDbIdRef = useRef(activeDbId)
 
@@ -145,8 +161,65 @@ export default function MainPage({
     return () => {
       mountedRef.current = false
       abortRef.current?.abort()
+      uploadAbortRef.current?.abort()
     }
   }, [])
+
+  function closeDbModal() {
+    uploadAbortRef.current?.abort()
+    uploadOperationRef.current = nextOperation(uploadOperationRef.current)
+    setUploadStatus('idle')
+    setUploadResult(null)
+    setUploadError(null)
+    setDbModalOpen(false)
+  }
+
+  async function submitSqliteUpload() {
+    if (!canStartUpload(uploadStatus)) return
+    const file = uploadFile
+    const databaseId = uploadDbId.trim()
+    const label = uploadLabel.trim()
+    if (file === null || databaseId === '' || label === '') {
+      setUploadResult(null)
+      setUploadError(toUploadMessage(new Error('invalid upload input')))
+      setUploadStatus('error')
+      return
+    }
+    const operation = nextOperation(uploadOperationRef.current)
+    uploadOperationRef.current = operation
+    uploadAbortRef.current?.abort()
+    const controller = new AbortController()
+    uploadAbortRef.current = controller
+    setUploadStatus('uploading')
+    setUploadResult(null)
+    setUploadError(null)
+    try {
+      const result = await uploadSqliteDatabase(
+        (url, init) =>
+          fetch(url, {
+            method: init.method,
+            headers: init.headers,
+            body: init.body,
+            signal: init.signal ?? controller.signal,
+          }),
+        databaseId,
+        label,
+        file,
+        { signal: controller.signal },
+      )
+      if (!mountedRef.current || isStaleResponse(uploadOperationRef.current, operation)) return
+      if (controller.signal.aborted) return
+      setUploadResult(result)
+      setUploadError(null)
+      setUploadStatus('success')
+    } catch (error) {
+      if (!mountedRef.current || isStaleResponse(uploadOperationRef.current, operation)) return
+      if (controller.signal.aborted) return
+      setUploadResult(null)
+      setUploadError(toUploadMessage(error))
+      setUploadStatus('error')
+    }
+  }
 
   useEffect(() => {
     let disposed = false
@@ -225,6 +298,11 @@ export default function MainPage({
   }, [registryRetry])
 
   function applyDatabase(nextId: string) {
+    uploadAbortRef.current?.abort()
+    uploadOperationRef.current = nextOperation(uploadOperationRef.current)
+    setUploadStatus('idle')
+    setUploadResult(null)
+    setUploadError(null)
     const known = registry.map((entry) => entry.database_id)
     const resolved =
       nextId === LEGACY_SELECTION_ID || (isDatabaseId(nextId) && known.includes(nextId))
@@ -569,7 +647,7 @@ export default function MainPage({
             <div className="mt-4 flex justify-end gap-2">
               <button
                 type="button"
-                onClick={() => setDbModalOpen(false)}
+                onClick={() => closeDbModal()}
                 className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
               >
                 취소
@@ -582,6 +660,98 @@ export default function MainPage({
                 적용
               </button>
             </div>
+            <fieldset className="mt-4 space-y-2 border-t border-slate-200 pt-3">
+              <legend className="text-xs font-semibold text-slate-700">
+                SQLite 등록(검토 대기)
+              </legend>
+              <div className="text-xs text-slate-500">
+                standalone SQLite 파일(.sqlite/.sqlite3)을 등록합니다. 등록 결과는
+                검토 대기 상태로만 표시되며 조회·질의에 사용할 수 없습니다.
+              </div>
+              <label className="block text-xs font-medium text-slate-700">
+                Database ID
+                <input
+                  value={uploadDbId}
+                  onChange={(event) => setUploadDbId(event.target.value)}
+                  placeholder="예: my-review-db"
+                  className="mt-1 h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                />
+              </label>
+              <label className="block text-xs font-medium text-slate-700">
+                Label
+                <input
+                  value={uploadLabel}
+                  onChange={(event) => setUploadLabel(event.target.value)}
+                  placeholder="예: 검토용 강의 DB"
+                  className="mt-1 h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                />
+              </label>
+              <label className="block text-xs font-medium text-slate-700">
+                SQLite 파일
+                <input
+                  type="file"
+                  accept=".sqlite,.sqlite3"
+                  onChange={(event) => setUploadFile(event.target.files?.[0] ?? null)}
+                  className="mt-1 w-full text-xs text-slate-600"
+                />
+              </label>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void submitSqliteUpload()}
+                  disabled={uploadStatus === 'uploading'}
+                  className="h-9 rounded-lg bg-slate-900 px-3 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:opacity-50"
+                >
+                  {uploadStatus === 'uploading' ? '등록 중' : '등록'}
+                </button>
+                {uploadStatus === 'uploading' ? (
+                  <span className="text-xs text-slate-500" role="status">
+                    업로드 중입니다. 중복 등록은 차단됩니다.
+                  </span>
+                ) : null}
+              </div>
+              {uploadStatus === 'error' && uploadError !== null ? (
+                <div
+                  className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-900"
+                  role="alert"
+                >
+                  {uploadError}
+                </div>
+              ) : null}
+              {uploadStatus === 'success' && uploadResult !== null ? (
+                <div
+                  className="space-y-1 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900"
+                  role="status"
+                >
+                  <div className="font-semibold">
+                    {uploadResult.database_id} · {uploadResult.label} · PENDING_REVIEW
+                  </div>
+                  <div>{UPLOAD_PENDING_NOTICE}</div>
+                  <div>
+                    테이블 {uploadResult.schema.table_count}개 · 컬럼{' '}
+                    {uploadResult.schema.column_count}개 · FK {uploadResult.schema.foreign_key_count}
+                    개
+                  </div>
+                  {uploadResult.schema.tables.map((table) => (
+                    <div key={table.name}>
+                      {table.name} ({table.columns.map((column) => column.name).join(', ')})
+                    </div>
+                  ))}
+                  <div>
+                    매핑 {uploadResult.mapping.field_count}개 필드 · 미매핑{' '}
+                    {uploadResult.mapping.unmapped_count}개
+                  </div>
+                  {uploadResult.mapping.fields.map((field) => (
+                    <div key={field.semantic_field}>
+                      {field.semantic_field} · {field.review_status}
+                      {field.top_candidate !== null
+                        ? ` · ${field.top_candidate.table}.${field.top_candidate.column} (${field.top_candidate.confidence})`
+                        : null}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </fieldset>
           </div>
         </div>
       ) : null}
