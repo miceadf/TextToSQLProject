@@ -1,10 +1,32 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import ChatPopup from '../components/ChatPopup'
 import CourseTable from '../components/CourseTable'
 import ExpandedTimetableModal from '../components/ExpandedTimetableModal'
 import Timetable from '../components/Timetable'
+import {
+  CatalogClientError,
+  getCatalog,
+  listDatabases,
+} from '../adaptive-prototype/catalogClient.ts'
+import type { CatalogFetchLike } from '../adaptive-prototype/catalogClient.ts'
+import {
+  CATALOG_GENERIC_MESSAGE,
+  CATALOG_CONTRACT_MESSAGE,
+  CATALOG_TRANSPORT_MESSAGE,
+  CATALOG_UNAVAILABLE_MESSAGE,
+  LEGACY_SELECTION_ID,
+  STORAGE_KEY,
+  canonicalToCourse,
+  databaseLabel,
+  isDatabaseId,
+  readStoredDatabaseId,
+  shouldResetCourseUi,
+  writeStoredDatabaseId,
+  type RegistryDatabase,
+} from '../adaptive-prototype/databases.ts'
 import { coursesApi } from '../services/api'
 import type { Course } from '../types/course'
+import { isStaleResponse, nextOperation } from '../adaptive-prototype/state.ts'
 import { cn } from '../utils/cn'
 import { courseColor } from '../utils/courseColors'
 import { apiCourseToCourse } from '../utils/courseMapper'
@@ -47,6 +69,16 @@ type MainPageProps = {
   completedCourses?: unknown[]
   onLoginClick: () => void
   onLogout: () => void
+}
+
+function toCatalogMessage(error: unknown): string {
+  if (error instanceof CatalogClientError) {
+    if (error.kind === 'transport') return CATALOG_TRANSPORT_MESSAGE
+    if (error.kind === 'contract') return CATALOG_CONTRACT_MESSAGE
+    if (error.serverCode === 'SYNTHETIC_CATALOG_CONTEXT_UNAVAILABLE') return CATALOG_UNAVAILABLE_MESSAGE
+    return CATALOG_GENERIC_MESSAGE
+  }
+  return CATALOG_GENERIC_MESSAGE
 }
 
 function buildCoursePrompt(
@@ -92,30 +124,187 @@ export default function MainPage({
     unmetPrerequisiteCodes: string[]
     unmetPrerequisiteNames: Array<string | undefined>
   } | null>(null)
+  const [activeDbId, setActiveDbId] = useState<string>(LEGACY_SELECTION_ID)
+  const [registry, setRegistry] = useState<RegistryDatabase[]>([])
+  const [registryLoading, setRegistryLoading] = useState(true)
+  const [registryError, setRegistryError] = useState<string | null>(null)
+  const [dbModalOpen, setDbModalOpen] = useState(false)
+  const [pendingDbId, setPendingDbId] = useState<string>(LEGACY_SELECTION_ID)
+  const [catalogLoading, setCatalogLoading] = useState(true)
+  const [catalogError, setCatalogError] = useState<string | null>(null)
+  const [catalogRetry, setCatalogRetry] = useState(0)
+  const [registryRetry, setRegistryRetry] = useState(0)
+
+  const operationRef = useRef(0)
+  const abortRef = useRef<AbortController | null>(null)
+  const mountedRef = useRef(true)
+  const activeDbIdRef = useRef(activeDbId)
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      abortRef.current?.abort()
+    }
+  }, [])
 
   useEffect(() => {
     let disposed = false
+    const controller = new AbortController()
+    const adaptiveFetch: CatalogFetchLike = (url, init) =>
+      fetch(url, { method: init.method, headers: init.headers, signal: init.signal ?? controller.signal })
+
+    async function bootstrap() {
+      setRegistryLoading(true)
+      try {
+        const databases = await listDatabases(adaptiveFetch)
+        if (disposed || !mountedRef.current) return
+        const known = databases.map((entry) => entry.database_id)
+        let resolved = LEGACY_SELECTION_ID
+        try {
+          resolved = readStoredDatabaseId(window.sessionStorage, known)
+        } catch {
+          resolved = LEGACY_SELECTION_ID
+        }
+        if (activeDbIdRef.current !== resolved) {
+          operationRef.current = nextOperation(operationRef.current)
+          abortRef.current?.abort()
+          setSelectedCourses([])
+          setCoursePrompt(null)
+          setHoveredCourse(null)
+          setExpandedOpen(false)
+          setPopupOpen(false)
+          setAllCourses([])
+          setCatalogLoading(true)
+          setCatalogError(null)
+        }
+        activeDbIdRef.current = resolved
+        setRegistry(databases)
+        setRegistryError(null)
+        setActiveDbId(resolved)
+        setPendingDbId(resolved)
+        try {
+          window.sessionStorage.setItem(STORAGE_KEY, resolved)
+        } catch {
+          // fail closed without surfacing storage errors
+        }
+      } catch {
+        if (disposed || !mountedRef.current) return
+        setRegistry([])
+        setRegistryError('DB 목록을 불러오지 못했습니다. legacy 기준선으로 동작합니다.')
+        if (activeDbIdRef.current !== LEGACY_SELECTION_ID) {
+          operationRef.current = nextOperation(operationRef.current)
+          abortRef.current?.abort()
+          setSelectedCourses([])
+          setCoursePrompt(null)
+          setHoveredCourse(null)
+          setExpandedOpen(false)
+          setPopupOpen(false)
+          setAllCourses([])
+          setCatalogLoading(true)
+          setCatalogError(null)
+        }
+        activeDbIdRef.current = LEGACY_SELECTION_ID
+        setActiveDbId(LEGACY_SELECTION_ID)
+        setPendingDbId(LEGACY_SELECTION_ID)
+        try {
+          writeStoredDatabaseId(window.sessionStorage, LEGACY_SELECTION_ID, [])
+        } catch {
+          // fail closed without surfacing storage errors
+        }
+      } finally {
+        if (!disposed && mountedRef.current) setRegistryLoading(false)
+      }
+    }
+
+    void bootstrap()
+    return () => {
+      disposed = true
+      controller.abort()
+    }
+  }, [registryRetry])
+
+  function applyDatabase(nextId: string) {
+    const known = registry.map((entry) => entry.database_id)
+    const resolved =
+      nextId === LEGACY_SELECTION_ID || (isDatabaseId(nextId) && known.includes(nextId))
+        ? nextId
+        : LEGACY_SELECTION_ID
+    if (shouldResetCourseUi(activeDbIdRef.current, resolved)) {
+      operationRef.current = nextOperation(operationRef.current)
+      abortRef.current?.abort()
+      setSelectedCourses([])
+      setCoursePrompt(null)
+      setHoveredCourse(null)
+      setExpandedOpen(false)
+      setPopupOpen(false)
+      setAllCourses([])
+      setCatalogLoading(true)
+    }
+    activeDbIdRef.current = resolved
+    setActiveDbId(resolved)
+    setPendingDbId(resolved)
+    setCatalogError(null)
+    try {
+      writeStoredDatabaseId(window.sessionStorage, resolved, known)
+    } catch {
+      // fail closed without surfacing storage errors
+    }
+    setDbModalOpen(false)
+  }
+
+  function updateCourseSearch(value: string) {
+    operationRef.current = nextOperation(operationRef.current)
+    abortRef.current?.abort()
+    setCourseSearch(value)
+  }
+
+  useEffect(() => {
+    let disposed = false
+    const operation = nextOperation(operationRef.current)
+    operationRef.current = operation
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
     const timeoutId = window.setTimeout(() => {
       void loadCourses()
     }, 250)
 
     async function loadCourses() {
+      const keyword = courseSearch.trim()
+      setCatalogLoading(true)
+      setCatalogError(null)
       try {
-        const keyword = courseSearch.trim()
-        const result = await coursesApi.getCourses({
-          year: new Date().getFullYear(),
-          semester: '1',
-          keyword: keyword || undefined,
-          page: 1,
-          pageSize: 200,
-        })
-        const courses = result.items.map(apiCourseToCourse)
-        if (!disposed) {
-          setAllCourses(courses)
+        let courses: Course[]
+        if (activeDbId === LEGACY_SELECTION_ID) {
+          const result = await coursesApi.getCourses({
+            year: new Date().getFullYear(),
+            semester: '1',
+            keyword: keyword || undefined,
+            page: 1,
+            pageSize: 200,
+          })
+          courses = result.items.map(apiCourseToCourse)
+        } else {
+          const adaptiveFetch: CatalogFetchLike = (url, init) =>
+            fetch(url, { method: init.method, headers: init.headers, signal: init.signal ?? controller.signal })
+          const catalog = await getCatalog(adaptiveFetch, activeDbId, {
+            keyword: keyword || undefined,
+            signal: controller.signal,
+          })
+          courses = catalog.items.map(canonicalToCourse)
         }
-      } catch {
-        if (!disposed) {
-          setAllCourses([])
+        if (disposed || !mountedRef.current || isStaleResponse(operationRef.current, operation)) return
+        setAllCourses(courses)
+        setCatalogError(null)
+      } catch (error) {
+        if (disposed || !mountedRef.current || isStaleResponse(operationRef.current, operation)) return
+        if (controller.signal.aborted) return
+        setAllCourses([])
+        setCatalogError(activeDbId === LEGACY_SELECTION_ID ? CATALOG_GENERIC_MESSAGE : toCatalogMessage(error))
+      } finally {
+        if (!disposed && mountedRef.current && !isStaleResponse(operationRef.current, operation)) {
+          setCatalogLoading(false)
         }
       }
     }
@@ -123,8 +312,12 @@ export default function MainPage({
     return () => {
       disposed = true
       window.clearTimeout(timeoutId)
+      controller.abort()
+      if (!isStaleResponse(operationRef.current, operation)) {
+        operationRef.current = nextOperation(operationRef.current)
+      }
     }
-  }, [courseSearch])
+  }, [courseSearch, activeDbId, catalogRetry])
 
   const selectedIds = useMemo(
     () => new Set(selectedCourses.map((c) => c.id)),
@@ -260,7 +453,7 @@ export default function MainPage({
             <div className="relative">
               <input
                 value={courseSearch}
-                onChange={(event) => setCourseSearch(event.target.value)}
+                onChange={(event) => updateCourseSearch(event.target.value)}
                 placeholder="Search by course name"
                 className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 pr-12 text-sm text-slate-900 shadow-sm outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
               />
@@ -289,6 +482,19 @@ export default function MainPage({
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
+            <div className="hidden rounded-lg bg-slate-100 px-3 py-2 text-xs font-medium text-slate-700 md:block">
+              현재 DB: {registryLoading ? '확인 중' : databaseLabel(registry, activeDbId)}
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setPendingDbId(activeDbId)
+                setDbModalOpen(true)
+              }}
+              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+            >
+              DB 변경
+            </button>
             {userName ? (
               <>
                 <div className="hidden rounded-lg bg-slate-100 px-3 py-2 text-xs font-medium text-slate-700 sm:block">
@@ -314,6 +520,129 @@ export default function MainPage({
           </div>
         </div>
       </header>
+
+      {dbModalOpen ? (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/35 px-4">
+          <div
+            className="w-full max-w-sm rounded-xl border border-slate-200 bg-white p-5 shadow-2xl"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="database-select-title"
+          >
+            <div id="database-select-title" className="text-sm font-semibold text-slate-900">
+              사용 DB 선택
+            </div>
+            <div className="mt-1 text-xs text-slate-500">
+              적용을 눌러야 변경됩니다. 변경 시 선택 강의·경고·미리보기가 초기화됩니다.
+            </div>
+            {registryError !== null ? (
+              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-900">
+                {registryError}
+              </div>
+            ) : null}
+            <fieldset className="mt-3 space-y-2">
+              <legend className="text-xs font-semibold text-slate-700">DB 목록</legend>
+              <label className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm">
+                <input
+                  type="radio"
+                  name="active-database"
+                  checked={pendingDbId === LEGACY_SELECTION_ID}
+                  onChange={() => setPendingDbId(LEGACY_SELECTION_ID)}
+                />
+                Legacy 기준선
+              </label>
+              {registry.map((entry) => (
+                <label
+                  key={entry.database_id}
+                  className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                >
+                  <input
+                    type="radio"
+                    name="active-database"
+                    checked={pendingDbId === entry.database_id}
+                    onChange={() => setPendingDbId(entry.database_id)}
+                  />
+                  {entry.label} ({entry.schema})
+                </label>
+              ))}
+            </fieldset>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setDbModalOpen(false)}
+                className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+              >
+                취소
+              </button>
+              <button
+                type="button"
+                onClick={() => applyDatabase(pendingDbId)}
+                className="h-9 rounded-lg bg-blue-600 px-3 text-sm font-semibold text-white transition hover:bg-blue-700"
+              >
+                적용
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      <div className="mx-auto max-w-7xl px-4 pt-4 sm:px-6">
+        <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm shadow-sm">
+          <span className="font-semibold text-slate-900">합성 질의:</span>
+          {activeDbId === LEGACY_SELECTION_ID ? (
+            <span className="text-slate-500">합성 질의 지원 없음 (legacy 기준선)</span>
+          ) : (
+            <a
+              className="font-semibold text-blue-700 underline"
+              href={`/adaptive-prototype?database=${encodeURIComponent(activeDbId)}`}
+            >
+              합성 질의 열기 ({databaseLabel(registry, activeDbId)})
+            </a>
+          )}
+        </div>
+        {registryError !== null ? (
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-amber-800" role="alert">
+            <span>{registryError}</span>
+            <button
+              type="button"
+              onClick={() => setRegistryRetry((value) => value + 1)}
+              className="rounded-lg border border-amber-300 bg-white px-2 py-1 font-semibold text-amber-900 transition hover:bg-amber-50"
+            >
+              DB 목록 다시 시도
+            </button>
+          </div>
+        ) : null}
+        {activeDbId !== LEGACY_SELECTION_ID ? (
+          <div className="mt-2 text-xs text-slate-500" role="status">
+            {catalogLoading ? '합성 목록을 불러오는 중입니다.' : null}
+            {catalogError !== null ? catalogError : null}
+            {catalogError !== null ? (
+              <button
+                type="button"
+                onClick={() => setCatalogRetry((value) => value + 1)}
+                className="ml-2 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+              >
+                다시 시도
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+        {activeDbId === LEGACY_SELECTION_ID && (catalogLoading || catalogError !== null) ? (
+          <div className="mt-2 text-xs text-slate-500" role="status">
+            {catalogLoading ? '강의 목록을 불러오는 중입니다.' : null}
+            {catalogError !== null ? catalogError : null}
+            {catalogError !== null ? (
+              <button
+                type="button"
+                onClick={() => setCatalogRetry((value) => value + 1)}
+                className="ml-2 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+              >
+                다시 시도
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
 
       <main className="mx-auto grid max-w-7xl grid-cols-1 gap-5 px-4 py-6 sm:px-6 lg:grid-cols-[1.45fr_0.95fr]">
         <section className="min-w-0">

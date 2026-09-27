@@ -24,7 +24,10 @@ describe('phase6-14 client', () => {
       calls.push({ url, init });
       return okResponse({ version: 'clarification-http-v1', status: 'NOT_REQUIRED' });
     };
-    const out = await startClarification(fetchFn, '강의 목록 보여줘', { requestId: 'req-1' });
+    const out = await startClarification(fetchFn, '강의 목록 보여줘', {
+      requestId: 'req-1',
+      databaseId: 'synth-clarification-prototype',
+    });
     assert.equal(out.status, 'NOT_REQUIRED');
     assert.equal(calls.length, 1);
     assert.equal(calls[0]?.url, '/api/adaptive/v1/clarifications/start');
@@ -98,7 +101,7 @@ describe('phase6-14 client', () => {
       },
     };
     try {
-      await startClarification(async () => exploding, '강의 보여줘', { requestId: 'req-x' });
+      await startClarification(async () => exploding, '강의 보여줘', { requestId: 'req-x', databaseId: 'synth-clarification-prototype' });
       assert.fail('should throw');
     } catch (error) {
       assert.ok(error instanceof PrototypeClientError);
@@ -108,7 +111,7 @@ describe('phase6-14 client', () => {
 
     const badPayload = async () => okResponse({ version: 'x', status: 'PENDING', nope: secret });
     try {
-      await startClarification(badPayload, '강의 보여줘', { requestId: 'req-y' });
+      await startClarification(badPayload, '강의 보여줘', { requestId: 'req-y', databaseId: 'synth-clarification-prototype' });
       assert.fail('should throw');
     } catch (error) {
       assert.ok(!String((error as Error).message).includes(secret));
@@ -128,7 +131,7 @@ describe('phase6-14 client', () => {
       throw new Error(`network says ${secret}`);
     };
     try {
-      await startClarification(throwing, '강의 보여줘', { requestId: 'req-z' });
+      await startClarification(throwing, '강의 보여줘', { requestId: 'req-z', databaseId: 'synth-clarification-prototype' });
       assert.fail('should throw');
     } catch (error) {
       assert.ok(error instanceof PrototypeClientError);
@@ -144,7 +147,7 @@ describe('phase6-14 client', () => {
       },
     });
     try {
-      await startClarification(nonJsonProxyFailure, '강의 보여줘', { requestId: 'req-proxy' });
+      await startClarification(nonJsonProxyFailure, '강의 보여줘', { requestId: 'req-proxy', databaseId: 'synth-clarification-prototype' });
       assert.fail('should throw');
     } catch (error) {
       assert.ok(error instanceof PrototypeClientError);

@@ -21,19 +21,40 @@ from typing import Any
 
 from fastapi import FastAPI
 
+from ..catalog.sqlite import SQLiteAdapter
 from ..fixtures.flat import build_flat_database
+from ..fixtures.legacy import build_legacy_database
 from ..fixtures.seed import DEFAULT_SEED
 from ..harness.ambiguity_detector import AMBIGUITY_DETECTOR_VERSION
 from ..harness.clarification_session import ClarificationSessionCoordinator
 from ..harness.compiler import SingleTableSQLiteCompiler
-from ..harness.contracts import DataType, FieldMapping, MappingProfile, MappingStatus, Ontology, OntologyField, Operator
+from ..harness.contracts import (
+    DataType,
+    FieldMapping,
+    HarnessErrorCode,
+    HarnessStage,
+    MappingProfile,
+    MappingStatus,
+    Ontology,
+    OntologyField,
+    Operator,
+)
+from ..harness.errors import HarnessFailure
 from ..harness.executor import SQLiteReadOnlyExecutor
 from ..harness.policy import ConservativeSqlPolicy
 from .clarification_http import create_clarification_http_app
+from .synthetic_registry import (
+    SyntheticDatabaseRegistry,
+    register_synthetic_database_routes,
+)
 
 
 SYNTHETIC_CLARIFICATION_PROTOTYPE_VERSION = "synthetic-clarification-prototype-v1"
 SYNTHETIC_PROTOTYPE_DATABASE_ID = "synth-clarification-prototype"
+SYNTHETIC_LEGACY_DATABASE_ID = "synth-clarification-legacy"
+
+SYNTHETIC_FLAT_LABEL = "Synthetic flat (2026 seed)"
+SYNTHETIC_LEGACY_LABEL = "Synthetic legacy (2026 seed)"
 
 _FIXED_HOST = "127.0.0.1"
 _DEFAULT_PORT = 8000
@@ -50,6 +71,9 @@ _KNOWN_FIELD_REFS = frozenset({_COURSE_NAME_REF, _INSTRUCTOR_NAME_REF})
 __all__ = [
     "SYNTHETIC_CLARIFICATION_PROTOTYPE_VERSION",
     "SYNTHETIC_PROTOTYPE_DATABASE_ID",
+    "SYNTHETIC_LEGACY_DATABASE_ID",
+    "SYNTHETIC_FLAT_LABEL",
+    "SYNTHETIC_LEGACY_LABEL",
     "create_synthetic_clarification_prototype",
     "main",
     "app",
@@ -86,6 +110,18 @@ def _build_mapping() -> MappingProfile:
     )
 
 
+def _build_legacy_mapping() -> MappingProfile:
+    return MappingProfile(
+        database_id=SYNTHETIC_LEGACY_DATABASE_ID,
+        version=1,
+        status=MappingStatus.PUBLISHED,
+        fields={
+            _COURSE_NAME_REF: FieldMapping(table="lecture_info", column="sbjt_nm"),
+            _INSTRUCTOR_NAME_REF: FieldMapping(table="lecture_info", column="prof_nm"),
+        },
+    )
+
+
 def _build_rules() -> dict[str, Any]:
     return {
         "version": AMBIGUITY_DETECTOR_VERSION,
@@ -103,16 +139,46 @@ def _build_rules() -> dict[str, Any]:
 
 
 class _PrototypeContextLoader:
-    """Fixed-ID loader returning a defensive copy per call."""
+    """Registry-backed loader returning a defensive copy per call."""
+
+    def __init__(self, schema_is_current: Any) -> None:
+        self._schema_is_current = schema_is_current
 
     def load(self, database_id: str) -> tuple[Any, Any, Any]:
-        if database_id != SYNTHETIC_PROTOTYPE_DATABASE_ID:
+        if not self._schema_is_current(database_id):
+            raise RuntimeError("synthetic context unavailable")
+        if database_id == SYNTHETIC_PROTOTYPE_DATABASE_ID:
+            mapping = _build_mapping()
+        elif database_id == SYNTHETIC_LEGACY_DATABASE_ID:
+            mapping = _build_legacy_mapping()
+        else:
             raise RuntimeError("synthetic context unavailable")
         return (
             copy.deepcopy(_build_ontology()),
-            copy.deepcopy(_build_mapping()),
+            copy.deepcopy(mapping),
             copy.deepcopy(_build_rules()),
         )
+
+
+class _SchemaGuardedExecutor:
+    """Reject execution when a registered fixture schema has drifted."""
+
+    def __init__(self, executor: Any, schema_is_current: Any) -> None:
+        self._executor = executor
+        self._schema_is_current = schema_is_current
+
+    def execute(self, database_id: str, compiled: Any) -> tuple[list[str], list[dict[str, Any]]]:
+        try:
+            current = self._schema_is_current(database_id)
+        except Exception:
+            current = False
+        if current is not True:
+            raise HarnessFailure(
+                HarnessErrorCode.MAPPING_NOT_PUBLISHED,
+                "published mapping is stale",
+                stage=HarnessStage.EXECUTED,
+            )
+        return self._executor.execute(database_id, compiled)
 
 
 class _FixedConstraintProvider:
@@ -139,10 +205,32 @@ def create_synthetic_clarification_prototype() -> FastAPI:
     tmp: Any = None
     try:
         tmp = tempfile.TemporaryDirectory(prefix="synth-clarify-")
-        db_path = build_flat_database(Path(tmp.name) / "prototype.sqlite3", seed=DEFAULT_SEED)
-        loader = _PrototypeContextLoader()
+        flat_path = build_flat_database(Path(tmp.name) / "flat.sqlite3", seed=DEFAULT_SEED)
+        legacy_path = build_legacy_database(Path(tmp.name) / "legacy.sqlite3", seed=DEFAULT_SEED)
+        database_paths = {
+            SYNTHETIC_PROTOTYPE_DATABASE_ID: flat_path,
+            SYNTHETIC_LEGACY_DATABASE_ID: legacy_path,
+        }
+        schema_inspector = SQLiteAdapter(database_paths)
+        expected_fingerprints = {
+            database_id: schema_inspector.inspect(database_id).schema_fingerprint
+            for database_id in database_paths
+        }
+
+        def schema_is_current(database_id: str) -> bool:
+            expected = expected_fingerprints.get(database_id)
+            if expected is None:
+                return False
+            try:
+                actual = schema_inspector.inspect(database_id).schema_fingerprint
+            except Exception:
+                return False
+            return actual == expected
+
+        loader = _PrototypeContextLoader(schema_is_current)
         provider = _FixedConstraintProvider()
-        executor = SQLiteReadOnlyExecutor({SYNTHETIC_PROTOTYPE_DATABASE_ID: db_path})
+        executor = SQLiteReadOnlyExecutor(database_paths)
+        guarded_executor = _SchemaGuardedExecutor(executor, schema_is_current)
         compiler = SingleTableSQLiteCompiler()
         sql_policy = ConservativeSqlPolicy()
         coordinator = ClarificationSessionCoordinator()
@@ -150,9 +238,36 @@ def create_synthetic_clarification_prototype() -> FastAPI:
             coordinator,
             loader,
             provider,
-            executor,
+            guarded_executor,
             compiler=compiler,
             sql_policy=sql_policy,
+        )
+        registry = SyntheticDatabaseRegistry(
+            [
+                {
+                    "database_id": SYNTHETIC_PROTOTYPE_DATABASE_ID,
+                    "label": SYNTHETIC_FLAT_LABEL,
+                    "schema": "flat",
+                },
+                {
+                    "database_id": SYNTHETIC_LEGACY_DATABASE_ID,
+                    "label": SYNTHETIC_LEGACY_LABEL,
+                    "schema": "legacy",
+                },
+            ]
+        )
+        schema_by_id = {
+            SYNTHETIC_PROTOTYPE_DATABASE_ID: "flat",
+            SYNTHETIC_LEGACY_DATABASE_ID: "legacy",
+        }
+        register_synthetic_database_routes(
+            app,
+            registry=registry,
+            executor=guarded_executor,
+            compiler=compiler,
+            sql_policy=sql_policy,
+            schema_by_id=schema_by_id,
+            schema_is_current=schema_is_current,
         )
     except Exception:
         if tmp is not None:
@@ -199,9 +314,14 @@ def create_synthetic_clarification_prototype() -> FastAPI:
     try:
         app.state.synthetic_prototype_version = SYNTHETIC_CLARIFICATION_PROTOTYPE_VERSION
         app.state.synthetic_prototype_database_id = SYNTHETIC_PROTOTYPE_DATABASE_ID
+        app.state.synthetic_prototype_legacy_database_id = SYNTHETIC_LEGACY_DATABASE_ID
+        app.state.synthetic_prototype_registry = registry
+        app.state.synthetic_prototype_schema_by_id = dict(schema_by_id)
         app.state.synthetic_prototype_loader = loader
         app.state.synthetic_prototype_provider = provider
         app.state.synthetic_prototype_executor = executor
+        app.state.synthetic_prototype_guarded_executor = guarded_executor
+        app.state.synthetic_prototype_schema_fingerprints = dict(expected_fingerprints)
         app.state.synthetic_prototype_compiler = compiler
         app.state.synthetic_prototype_policy = sql_policy
         app.state.synthetic_prototype_coordinator = coordinator

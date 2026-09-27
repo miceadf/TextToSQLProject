@@ -1,6 +1,5 @@
 export const START_PATH = '/api/adaptive/v1/clarifications/start';
 export const SUBMIT_PATH = '/api/adaptive/v1/clarifications/submit';
-export const DATABASE_ID = 'synth-clarification-prototype';
 export const HTTP_VERSION = 'clarification-http-v1';
 
 export const COURSE_NAME_REF = 'Course.name';

@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { PrototypeClientError, startClarification, submitClarification } from './client.ts';
 import type { FetchLike } from './client.ts';
+import { listDatabases } from './catalogClient.ts';
+import type { CatalogFetchLike } from './catalogClient.ts';
 import {
   CONTRACT_ERROR_MESSAGE,
   GENERIC_ERROR_MESSAGE,
@@ -10,6 +12,7 @@ import {
   getOptionLabel,
   type StartOption,
 } from './contracts.ts';
+import { isDatabaseId, parsePrototypeDatabaseParam } from './databases.ts';
 import { canStartQuestion, isBusy, nextOperation, restartHint, type FlowStatus } from './state.ts';
 
 const domFetch: FetchLike = (url, init) =>
@@ -17,6 +20,13 @@ const domFetch: FetchLike = (url, init) =>
     method: init.method,
     headers: init.headers,
     body: init.body,
+    signal: init.signal,
+  });
+
+const registryFetch: CatalogFetchLike = (url, init) =>
+  fetch(url, {
+    method: init.method,
+    headers: init.headers,
     signal: init.signal,
   });
 
@@ -32,6 +42,9 @@ export default function AdaptivePrototypePage() {
   const [selectedOption, setSelectedOption] = useState<string | null>(null);
   const [result, setResult] = useState<ResultTable | null>(null);
   const [notice, setNotice] = useState<string>('');
+  const [databaseId, setDatabaseId] = useState<string | null>(null);
+  const [databaseLabel, setDatabaseLabel] = useState<string>('');
+  const [databaseState, setDatabaseState] = useState<'loading' | 'ready' | 'unsupported'>('loading');
 
   const tokenRef = useRef<string | null>(null);
   const operationRef = useRef(0);
@@ -44,6 +57,53 @@ export default function AdaptivePrototypePage() {
       mountedRef.current = false;
       abortRef.current?.abort();
       tokenRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    const controller = new AbortController();
+    async function resolveDatabase(): Promise<void> {
+      let candidate: string | null = null;
+      try {
+        candidate = parsePrototypeDatabaseParam(window.location.search);
+      } catch {
+        candidate = null;
+      }
+      if (candidate === null || !isDatabaseId(candidate)) {
+        if (!disposed && mountedRef.current) {
+          setDatabaseId(null);
+          setDatabaseLabel('');
+          setDatabaseState('unsupported');
+        }
+        return;
+      }
+      const wanted = candidate;
+      try {
+        const registry = await listDatabases(registryFetch, { signal: controller.signal });
+        if (disposed || !mountedRef.current) return;
+        const found = registry.find((entry) => entry.database_id === wanted);
+        if (found === undefined) {
+          setDatabaseId(null);
+          setDatabaseLabel('');
+          setDatabaseState('unsupported');
+        } else {
+          setDatabaseId(found.database_id);
+          setDatabaseLabel(found.label);
+          setDatabaseState('ready');
+        }
+      } catch {
+        if (disposed || !mountedRef.current) return;
+        if (controller.signal.aborted) return;
+        setDatabaseId(null);
+        setDatabaseLabel('');
+        setDatabaseState('unsupported');
+      }
+    }
+    void resolveDatabase();
+    return () => {
+      disposed = true;
+      controller.abort();
     };
   }, []);
 
@@ -62,6 +122,11 @@ export default function AdaptivePrototypePage() {
 
   async function handleStart(): Promise<void> {
     if (!canStartQuestion(status)) return;
+    if (databaseState !== 'ready' || databaseId === null) {
+      setNotice('선택한 DB에서는 합성 질의를 지원하지 않습니다. 메인 화면에서 합성 DB를 선택해 주세요.');
+      return;
+    }
+    const activeDatabase = databaseId;
     const trimmed = question.trim();
     if (trimmed.length === 0) {
       setNotice('질문을 입력해 주세요.');
@@ -77,7 +142,10 @@ export default function AdaptivePrototypePage() {
     setStatus('starting');
     setNotice('');
     try {
-      const started = await startClarification(domFetch, trimmed, { signal: controller.signal });
+      const started = await startClarification(domFetch, trimmed, {
+        databaseId: activeDatabase,
+        signal: controller.signal,
+      });
       applyIfCurrent(operation, () => {
         if (started.status === 'NOT_REQUIRED') {
           tokenRef.current = null;
@@ -175,7 +243,7 @@ export default function AdaptivePrototypePage() {
   }
 
   const busy = isBusy(status);
-  const startable = canStartQuestion(status);
+  const startable = canStartQuestion(status) && databaseState === 'ready' && databaseId !== null;
   const hint = restartHint(status);
 
   return (
@@ -187,6 +255,17 @@ export default function AdaptivePrototypePage() {
           <li>모델 정확도 아님</li>
           <li>인증 없음</li>
         </ul>
+      </section>
+      <section aria-label="선택 DB">
+        {databaseState === 'loading' ? <p>DB 정보를 확인하는 중입니다.</p> : null}
+        {databaseState === 'ready' && databaseId !== null ? (
+          <p>
+            선택 DB: {databaseLabel !== '' ? databaseLabel : databaseId} ({databaseId})
+          </p>
+        ) : null}
+        {databaseState === 'unsupported' ? (
+          <p>합성 질의 지원 없음: 메인 화면에서 합성 DB를 선택한 뒤 진입해 주세요.</p>
+        ) : null}
       </section>
       <section aria-label="질문 시작">
         <label htmlFor="adaptive-question">질문</label>

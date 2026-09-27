@@ -1,6 +1,5 @@
 import {
   CONTRACT_ERROR_MESSAGE,
-  DATABASE_ID,
   START_PATH,
   SUBMIT_PATH,
   TRANSPORT_ERROR_MESSAGE,
@@ -12,6 +11,7 @@ import {
   type StartSuccess,
   type SubmitSuccess,
 } from './contracts.ts';
+import { isDatabaseId } from './databases.ts';
 
 export interface FetchInit {
   method: string;
@@ -74,15 +74,17 @@ async function readServerError(response: FetchResponseLike): Promise<PrototypeCl
 export async function startClarification(
   fetchFn: FetchLike,
   question: string,
-  options?: { requestId?: string; signal?: AbortSignal },
+  options: { databaseId: string; requestId?: string; signal?: AbortSignal },
 ): Promise<StartSuccess> {
   const trimmed = question.trim();
   if (trimmed.length === 0 || trimmed.length > 2000) {
     throw new PrototypeClientError('contract');
   }
+  const databaseId = options.databaseId;
+  if (!isDatabaseId(databaseId)) throw new PrototypeClientError('contract');
   const body = {
-    request_id: options?.requestId ?? newRequestId(),
-    database_id: DATABASE_ID,
+    request_id: options.requestId ?? newRequestId(),
+    database_id: databaseId,
     question: trimmed,
   };
   let response: FetchResponseLike;
@@ -91,7 +93,7 @@ export async function startClarification(
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify(body),
-      signal: options?.signal,
+      signal: options.signal,
     });
   } catch (error) {
     if (error instanceof PrototypeClientError) throw error;
