@@ -41,7 +41,7 @@ MAX_LABEL_LENGTH = 64
 
 _DB_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 _LABEL_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _().-]{0,63}$")
-_SCHEMA_VALUES = frozenset({"flat", "legacy"})
+_SCHEMA_VALUES = frozenset({"flat", "legacy", "private"})
 
 # Canonical semantic refs (server-owned, never caller-supplied).
 _COURSE_CODE_REF = "Course.code"
@@ -150,7 +150,7 @@ class DatabaseEntry(BaseModel):
 
     database_id: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
     label: str = Field(min_length=1, max_length=64)
-    schema_variant: str = Field(alias="schema", pattern=r"^(flat|legacy)$")
+    schema_variant: str = Field(alias="schema", pattern=r"^(flat|legacy|private)$")
 
 
 class CanonicalCourse(BaseModel):
@@ -206,6 +206,16 @@ def is_valid_label(value: Any) -> bool:
     )
 
 
+def is_valid_private_label(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    if not 1 <= len(value) <= MAX_LABEL_LENGTH:
+        return False
+    if not value.strip():
+        return False
+    return not any(ord(char) < 0x20 or ord(char) == 0x7F for char in value)
+
+
 class SyntheticDatabaseRegistry:
     """Server-owned immutable-view registry (no caller injection)."""
 
@@ -221,7 +231,12 @@ class SyntheticDatabaseRegistry:
                 parsed = DatabaseEntry.model_validate(entry)
             except Exception:
                 raise SyntheticCatalogConfigError() from None
-            if not is_valid_label(parsed.label) or parsed.schema_variant not in _SCHEMA_VALUES:
+            if parsed.schema_variant not in _SCHEMA_VALUES:
+                raise SyntheticCatalogConfigError()
+            if parsed.schema_variant == "private":
+                if not is_valid_private_label(parsed.label):
+                    raise SyntheticCatalogConfigError()
+            elif not is_valid_label(parsed.label):
                 raise SyntheticCatalogConfigError()
             if parsed.database_id in seen:
                 raise SyntheticCatalogConfigError()
@@ -355,6 +370,61 @@ def _parse_query_params(request: Request) -> dict[str, Any] | None:
     return params
 
 
+def _discover_private_activations(app: Any, *, fixed_ids: set[str]) -> list[dict[str, str]]:
+    """Strict-load valid private activations; hide failures per ID."""
+    try:
+        root_raw = getattr(getattr(app, "state", None), "mapping_review_repository_root", None)
+        if root_raw is None:
+            root_raw = getattr(getattr(app, "state", None), "sqlite_upload_repository_root", None)
+        if root_raw is None:
+            return []
+        from ..registration import reviews as _reviews
+
+        activations = _reviews.list_activations(repository_root=str(root_raw))
+    except Exception:
+        return []
+    entries: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for activation in activations:
+        try:
+            database_id = str(activation.database_id)
+            label = str(activation.label)
+        except Exception:
+            continue
+        if not is_valid_database_id(database_id) or not is_valid_private_label(label):
+            continue
+        if database_id in seen or database_id in fixed_ids:
+            continue
+        seen.add(database_id)
+        entries.append({"database_id": database_id, "label": label, "schema": "private"})
+    entries.sort(key=lambda item: item["database_id"])
+    return entries
+
+
+def _load_private_activation(app: Any, database_id: Any) -> Any | None:
+    """Strict-load one private activation; return None on any failure."""
+    try:
+        if not is_valid_database_id(database_id):
+            return None
+        root_raw = getattr(getattr(app, "state", None), "mapping_review_repository_root", None)
+        if root_raw is None:
+            root_raw = getattr(getattr(app, "state", None), "sqlite_upload_repository_root", None)
+        if root_raw is None:
+            return None
+        from ..registration import reviews as _reviews
+
+        activation = _reviews.load_activation(
+            repository_root=str(root_raw), database_id=str(database_id)
+        )
+        if activation.database_id != database_id:
+            return None
+        if not is_valid_private_label(activation.label):
+            return None
+        return activation
+    except Exception:
+        return None
+
+
 def register_synthetic_database_routes(
     app: FastAPI,
     *,
@@ -383,12 +453,16 @@ def register_synthetic_database_routes(
         raise SyntheticCatalogConfigError()
     frozen_schema_by_id = dict(registered_schemas)
 
+    fixed_ids = set(registry.database_ids())
+
     @app.get(DATABASES_PATH)
     async def list_databases(_request: Request) -> JSONResponse:
         try:
+            fixed = registry.snapshot()
+            private = _discover_private_activations(app, fixed_ids=fixed_ids)
             payload = {
                 "version": SYNTHETIC_REGISTRY_VERSION,
-                "databases": registry.snapshot(),
+                "databases": [*fixed, *private],
             }
             text = json.dumps(payload, ensure_ascii=False, sort_keys=True)
             return JSONResponse(status_code=200, content=json.loads(text))
@@ -405,36 +479,59 @@ def register_synthetic_database_routes(
             if any(key not in allowed for key in params):
                 return _error_response(SyntheticCatalogErrorCode.INVALID_REQUEST.value)
             database_id = params.get("database_id")
-            if not is_valid_database_id(database_id) or not registry.is_known(database_id):
-                if not is_valid_database_id(database_id):
-                    return _error_response(SyntheticCatalogErrorCode.INVALID_REQUEST.value)
-                return _error_response(SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value)
+            if not is_valid_database_id(database_id):
+                return _error_response(SyntheticCatalogErrorCode.INVALID_REQUEST.value)
             keyword = params.get("keyword", "")
             if keyword is None:
                 keyword = ""
             if not isinstance(keyword, str) or len(keyword) > MAX_KEYWORD_LENGTH:
                 return _error_response(SyntheticCatalogErrorCode.INVALID_REQUEST.value)
-            try:
-                current_schema = schema_is_current(database_id)
-            except Exception:
-                current_schema = False
-            if current_schema is not True:
-                return _error_response(SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value)
-            schema = frozen_schema_by_id.get(database_id)
-            if schema not in _SCHEMA_VALUES:
-                return _error_response(SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value)
-            try:
-                mapping = build_catalog_mapping(database_id, schema)
-                from ..harness.contracts import MappingStatus
-
-                if (
-                    mapping.database_id != database_id
-                    or mapping.status is not MappingStatus.PUBLISHED
-                    or set(mapping.fields) != set(CANONICAL_SELECT)
-                ):
+            private_activation: Any = None
+            if not registry.is_known(database_id):
+                private_activation = _load_private_activation(app, database_id)
+                if private_activation is None:
                     return _error_response(SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value)
-            except Exception:
-                return _error_response(SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value)
+            if private_activation is None:
+                try:
+                    current_schema = schema_is_current(database_id)
+                except Exception:
+                    current_schema = False
+                if current_schema is not True:
+                    return _error_response(SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value)
+                schema = frozen_schema_by_id.get(database_id)
+                if schema not in _SCHEMA_VALUES:
+                    return _error_response(SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value)
+                try:
+                    mapping = build_catalog_mapping(database_id, schema)
+                    from ..harness.contracts import MappingStatus
+
+                    if (
+                        mapping.database_id != database_id
+                        or mapping.status is not MappingStatus.PUBLISHED
+                        or set(mapping.fields) != set(CANONICAL_SELECT)
+                    ):
+                        return _error_response(SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value)
+                except Exception:
+                    return _error_response(SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value)
+            else:
+                try:
+                    from ..mapping.bridge import to_harness_mapping
+                    from ..relations.physical import build_physical_relation_graph
+
+                    mapping = to_harness_mapping(private_activation.profile)
+                    if (
+                        mapping.database_id != database_id
+                        or set(mapping.fields) != set(CANONICAL_SELECT)
+                    ):
+                        return _error_response(SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value)
+                    graph = build_physical_relation_graph(private_activation.catalog)
+                    if (
+                        graph.database_id != database_id
+                        or graph.schema_fingerprint != private_activation.schema_fingerprint
+                    ):
+                        return _error_response(SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value)
+                except Exception:
+                    return _error_response(SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value)
             try:
                 from ..harness.contracts import QueryIR
 
@@ -448,15 +545,39 @@ def register_synthetic_database_routes(
                 )
             except Exception:
                 return _error_response(SyntheticCatalogErrorCode.INTERNAL_ERROR.value)
-            try:
-                compiled = compiler.compile(query_ir, mapping)
-                sql_policy.validate(compiled, query_ir=query_ir, mapping=mapping)
-            except Exception:
-                return _error_response(SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value)
-            try:
-                columns, rows = executor.execute(database_id, compiled)
-            except Exception:
-                return _error_response(SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value)
+            if private_activation is None:
+                try:
+                    compiled = compiler.compile(query_ir, mapping)
+                    sql_policy.validate(compiled, query_ir=query_ir, mapping=mapping)
+                except Exception:
+                    return _error_response(SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value)
+                try:
+                    columns, rows = executor.execute(database_id, compiled)
+                except Exception:
+                    return _error_response(SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value)
+            else:
+                try:
+                    from ..compiler.harness import SchemaAdaptiveSQLiteCompiler
+                    from ..harness.executor import SQLiteReadOnlyExecutor
+                    from ..policy.harness import SchemaAdaptiveAstPolicy
+
+                    adaptive_compiler = SchemaAdaptiveSQLiteCompiler(
+                        graph, private_activation.profile
+                    )
+                    adaptive_policy = SchemaAdaptiveAstPolicy(
+                        graph, private_activation.profile
+                    )
+                    compiled = adaptive_compiler.compile(query_ir, mapping)
+                    adaptive_policy.validate(compiled, query_ir=query_ir, mapping=mapping)
+                except Exception:
+                    return _error_response(SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value)
+                try:
+                    private_executor = SQLiteReadOnlyExecutor(
+                        {database_id: private_activation.database_path}
+                    )
+                    columns, rows = private_executor.execute(database_id, compiled)
+                except Exception:
+                    return _error_response(SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value)
             try:
                 if not isinstance(columns, list) or not isinstance(rows, list):
                     return _error_response(SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value)

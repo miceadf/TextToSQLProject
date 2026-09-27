@@ -1,0 +1,476 @@
+"""Private mapping review + publish boundary (Phase 6-19, synthetic-only).
+
+Minimal surface on the loopback synthetic prototype:
+
+- ``GET /api/adaptive/v1/registrations/review?database_id=...``
+- ``POST /api/adaptive/v1/registrations/review`` with a strict JSON body
+  carrying one of ``INIT`` / ``APPROVE`` / ``REMAP`` / ``PUBLISH``.
+
+All mutations reload the server-owned registration / proposal / catalog /
+draft on every call; callers cannot inject drafts, proposals, catalogs,
+statuses, versions, mappings, paths, or SQL. Success payloads carry
+read-only metadata only (no sample values, rows, SQL, paths, SQLite
+details, or tracebacks). Failures use fixed public codes only.
+"""
+
+from __future__ import annotations
+
+import json
+from enum import Enum
+from pathlib import Path
+from typing import Any, Callable, Literal
+from urllib.parse import unquote_plus
+
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict, Field
+
+from ..registration import reviews as review_storage
+from ..registration.reviews import ReviewError, ReviewErrorCode
+
+
+REVIEW_VERSION = "private-mapping-review-v1"
+REVIEW_PATH = "/api/adaptive/v1/registrations/review"
+
+_MAX_BODY_BYTES = 64 * 1024
+
+
+class MappingReviewErrorCode(str, Enum):
+    INVALID_REQUEST = "MAPPING_REVIEW_INVALID_REQUEST"
+    NOT_FOUND = "MAPPING_REVIEW_NOT_FOUND"
+    CONFLICT = "MAPPING_REVIEW_CONFLICT"
+    PUBLISH_BLOCKED = "MAPPING_REVIEW_PUBLISH_BLOCKED"
+    INTERNAL_ERROR = "MAPPING_REVIEW_INTERNAL_ERROR"
+
+
+def _status_for(code: str) -> int:
+    if code == MappingReviewErrorCode.INVALID_REQUEST.value:
+        return 400
+    if code == MappingReviewErrorCode.NOT_FOUND.value:
+        return 404
+    if code == MappingReviewErrorCode.CONFLICT.value:
+        return 409
+    if code == MappingReviewErrorCode.PUBLISH_BLOCKED.value:
+        return 422
+    return 500
+
+
+def _error_response(code: str) -> JSONResponse:
+    return JSONResponse(status_code=_status_for(code), content={"error": {"code": code}})
+
+
+def _publish_blocked_response(fields: list[str]) -> JSONResponse:
+    safe = [item for item in fields if isinstance(item, str)][:64]
+    return JSONResponse(
+        status_code=_status_for(MappingReviewErrorCode.PUBLISH_BLOCKED.value),
+        content={
+            "error": {
+                "code": MappingReviewErrorCode.PUBLISH_BLOCKED.value,
+                "fields": safe,
+            }
+        },
+    )
+
+
+def _review_to_public_code(exc: ReviewError) -> str:
+    code = exc.code
+    if code is ReviewErrorCode.INVALID_INPUT:
+        return MappingReviewErrorCode.INVALID_REQUEST.value
+    if code is ReviewErrorCode.REVIEW_CONFLICT:
+        return MappingReviewErrorCode.CONFLICT.value
+    if code is ReviewErrorCode.PUBLISH_BLOCKED:
+        return MappingReviewErrorCode.PUBLISH_BLOCKED.value
+    if code is ReviewErrorCode.ARTIFACT_MISMATCH:
+        return MappingReviewErrorCode.NOT_FOUND.value
+    return MappingReviewErrorCode.INTERNAL_ERROR.value
+
+
+class _InitBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+    action: Literal["INIT"] = "INIT"
+    database_id: str = Field(min_length=1, max_length=64)
+    reviewer: str = Field(min_length=1, max_length=64)
+
+
+class _ApproveBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+    action: Literal["APPROVE"] = "APPROVE"
+    database_id: str = Field(min_length=1, max_length=64)
+    semantic_field: str = Field(min_length=1, max_length=200)
+    candidate_index: int = Field(ge=0, le=64)
+    reviewer: str = Field(min_length=1, max_length=64)
+
+
+class _RemapBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+    action: Literal["REMAP"] = "REMAP"
+    database_id: str = Field(min_length=1, max_length=64)
+    semantic_field: str = Field(min_length=1, max_length=200)
+    table: str = Field(min_length=1, max_length=200)
+    column: str = Field(min_length=1, max_length=200)
+    reviewer: str = Field(min_length=1, max_length=64)
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class _PublishBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+    action: Literal["PUBLISH"] = "PUBLISH"
+    database_id: str = Field(min_length=1, max_length=64)
+    published_by: str = Field(min_length=1, max_length=64)
+
+
+def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate key")
+        result[key] = value
+    return result
+
+
+def _parse_strict_body(raw: bytes) -> dict[str, Any] | None:
+    if len(raw) > _MAX_BODY_BYTES:
+        return None
+    try:
+        payload = json.loads(
+            raw.decode("utf-8-sig"),
+            object_pairs_hook=_reject_duplicate_keys,
+            parse_constant=lambda _value: (_ for _ in ()).throw(ValueError()),
+        )
+    except (UnicodeError, ValueError, TypeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return payload
+
+
+async def _read_limited_body(request: Request) -> bytes | None:
+    """Read at most the review boundary limit without buffering an oversized body."""
+    body = bytearray()
+    try:
+        async for chunk in request.stream():
+            if not isinstance(chunk, bytes):
+                return None
+            if len(body) + len(chunk) > _MAX_BODY_BYTES:
+                return None
+            body.extend(chunk)
+    except Exception:
+        return None
+    return bytes(body)
+
+
+def _parse_query_params(request: Request) -> dict[str, str] | None:
+    try:
+        raw = request.url.query
+    except Exception:
+        return None
+    if not isinstance(raw, str) or raw == "":
+        return None
+    params: dict[str, str] = {}
+    try:
+        for part in raw.split("&"):
+            if not part:
+                return None
+            if "=" in part:
+                key, _, value = part.partition("=")
+            else:
+                key, value = part, ""
+            key = unquote_plus(key)
+            value = unquote_plus(value)
+            if key in params:
+                return None
+            params[key] = value
+    except Exception:
+        return None
+    return params
+
+
+def _summarize_review(loaded_registration: Any, draft: Any) -> dict[str, Any] | None:
+    try:
+        candidates = dict(loaded_registration.proposal.candidates)
+        catalog_tables = list(loaded_registration.catalog.tables)
+    except Exception:
+        return None
+    try:
+        allowed: list[dict[str, Any]] = []
+        for table in catalog_tables:
+            columns = [str(column.name) for column in list(table.columns)]
+            allowed.append({"name": str(table.name), "columns": sorted(columns)})
+        allowed.sort(key=lambda item: item["name"])
+        fields: list[dict[str, Any]] = []
+        for semantic_field in sorted(draft.fields.keys()):
+            entry = draft.fields[semantic_field]
+            options = list(candidates.get(semantic_field, []))
+            parsed_options: list[dict[str, Any]] = []
+            for index, option in enumerate(options):
+                if getattr(option, "semantic_field", None) != semantic_field:
+                    return None
+                review_status = getattr(option.review_status, "value", option.review_status)
+                parsed_options.append(
+                    {
+                        "index": index,
+                        "table": str(option.table),
+                        "column": str(option.column),
+                        "confidence": float(option.confidence),
+                        "review_status": str(review_status),
+                    }
+                )
+            decision = getattr(entry.decision, "value", entry.decision)
+            fields.append(
+                {
+                    "semantic_field": str(semantic_field),
+                    "decision": str(decision),
+                    "table": str(entry.table) if entry.table is not None else None,
+                    "column": str(entry.column) if entry.column is not None else None,
+                    "candidates": parsed_options,
+                }
+            )
+        return {
+            "field_count": len(fields),
+            "fields": fields,
+            "allowed_tables": allowed,
+        }
+    except Exception:
+        return None
+
+
+def _detail_payload(
+    *, database_id: str, loaded_registration: Any, draft: Any, published: Any, mapping_version: Any
+) -> dict[str, Any] | None:
+    try:
+        manifest = loaded_registration.manifest
+        summary = _summarize_review(loaded_registration, draft)
+        if summary is None:
+            return None
+        fingerprint = str(manifest.schema_fingerprint)
+        if len(fingerprint) != 64:
+            return None
+        payload: dict[str, Any] = {
+            "version": REVIEW_VERSION,
+            "database_id": str(manifest.database_id),
+            "label": str(manifest.label),
+            "status": "PUBLISHED" if published is not None else "PENDING_REVIEW",
+            "schema_fingerprint": fingerprint,
+            "ontology_version": int(manifest.ontology_version),
+            "review": summary,
+        }
+        if published is not None and mapping_version is not None:
+            payload["mapping_version"] = int(mapping_version)
+        text = json.dumps(payload, ensure_ascii=False, sort_keys=True, allow_nan=False)
+        return json.loads(text)
+    except Exception:
+        return None
+
+
+def _discover_repository_root() -> Path | None:
+    try:
+        here = Path(__file__).resolve()
+    except Exception:
+        return None
+    for parent in (here, *here.parents):
+        try:
+            if (parent / ".git").exists():
+                return parent
+        except Exception:
+            continue
+    return None
+
+
+def register_mapping_review_routes(
+    app: FastAPI,
+    *,
+    repository_root: str | Path | None = None,
+) -> None:
+    if repository_root is None:
+        resolved_root = _discover_repository_root()
+    else:
+        resolved_root = Path(repository_root)
+    if resolved_root is None:
+        raise RuntimeError("synthetic prototype unavailable")
+    try:
+        app.state.mapping_review_repository_root = str(resolved_root)
+    except Exception:
+        raise RuntimeError("synthetic prototype unavailable") from None
+
+    @app.get(REVIEW_PATH)
+    async def get_review(http_request: Request) -> JSONResponse:
+        try:
+            params = _parse_query_params(http_request)
+            if params is None or set(params) != {"database_id"}:
+                return _error_response(MappingReviewErrorCode.INVALID_REQUEST.value)
+            database_id = params["database_id"]
+            if not isinstance(database_id, str) or not database_id:
+                return _error_response(MappingReviewErrorCode.INVALID_REQUEST.value)
+            try:
+                root = Path(str(http_request.app.state.mapping_review_repository_root))
+            except Exception:
+                return _error_response(MappingReviewErrorCode.INTERNAL_ERROR.value)
+            try:
+                from ..registration.storage import load_registration as _load_registration
+
+                loaded_registration = _load_registration(
+                    repository_root=root, database_id=database_id
+                )
+            except Exception:
+                return _error_response(MappingReviewErrorCode.NOT_FOUND.value)
+            try:
+                review = review_storage.load_review(
+                    repository_root=root, database_id=database_id
+                )
+            except ReviewError as exc:
+                return _error_response(_review_to_public_code(exc))
+            except Exception:
+                return _error_response(MappingReviewErrorCode.INTERNAL_ERROR.value)
+            payload = _detail_payload(
+                database_id=database_id,
+                loaded_registration=loaded_registration,
+                draft=review.draft,
+                published=review.published,
+                mapping_version=review.mapping_version,
+            )
+            if payload is None:
+                return _error_response(MappingReviewErrorCode.INTERNAL_ERROR.value)
+            if payload.get("database_id") != database_id:
+                return _error_response(MappingReviewErrorCode.INTERNAL_ERROR.value)
+            return JSONResponse(status_code=200, content=payload)
+        except Exception:
+            return _error_response(MappingReviewErrorCode.INTERNAL_ERROR.value)
+
+    @app.post(REVIEW_PATH)
+    async def post_review(http_request: Request) -> JSONResponse:
+        try:
+            raw = await _read_limited_body(http_request)
+            if not isinstance(raw, (bytes, bytearray)) or len(raw) == 0:
+                return _error_response(MappingReviewErrorCode.INVALID_REQUEST.value)
+            payload = _parse_strict_body(bytes(raw))
+            if payload is None:
+                return _error_response(MappingReviewErrorCode.INVALID_REQUEST.value)
+            action = payload.get("action")
+            if action not in ("INIT", "APPROVE", "REMAP", "PUBLISH"):
+                return _error_response(MappingReviewErrorCode.INVALID_REQUEST.value)
+            try:
+                root = Path(str(http_request.app.state.mapping_review_repository_root))
+            except Exception:
+                return _error_response(MappingReviewErrorCode.INTERNAL_ERROR.value)
+            try:
+                if action == "INIT":
+                    body = _InitBody.model_validate(payload)
+                    if payload != body.model_dump(mode="json"):
+                        return _error_response(MappingReviewErrorCode.INVALID_REQUEST.value)
+                    review_storage.init_review(
+                        repository_root=root,
+                        database_id=body.database_id,
+                        reviewer=body.reviewer,
+                    )
+                    database_id = body.database_id
+                elif action == "APPROVE":
+                    body = _ApproveBody.model_validate(payload)
+                    if payload != body.model_dump(mode="json"):
+                        return _error_response(MappingReviewErrorCode.INVALID_REQUEST.value)
+                    review_storage.approve_field(
+                        repository_root=root,
+                        database_id=body.database_id,
+                        semantic_field=body.semantic_field,
+                        candidate_index=body.candidate_index,
+                        reviewer=body.reviewer,
+                    )
+                    database_id = body.database_id
+                elif action == "REMAP":
+                    body = _RemapBody.model_validate(payload)
+                    if payload != body.model_dump(mode="json"):
+                        return _error_response(MappingReviewErrorCode.INVALID_REQUEST.value)
+                    review_storage.remap_field(
+                        repository_root=root,
+                        database_id=body.database_id,
+                        semantic_field=body.semantic_field,
+                        table=body.table,
+                        column=body.column,
+                        reviewer=body.reviewer,
+                        reason=body.reason,
+                    )
+                    database_id = body.database_id
+                else:
+                    body = _PublishBody.model_validate(payload)
+                    if payload != body.model_dump(mode="json"):
+                        return _error_response(MappingReviewErrorCode.INVALID_REQUEST.value)
+                    try:
+                        activation = review_storage.publish_review(
+                            repository_root=root,
+                            database_id=body.database_id,
+                            published_by=body.published_by,
+                        )
+                    except ReviewError as exc:
+                        if exc.code is ReviewErrorCode.PUBLISH_BLOCKED:
+                            fields = review_storage.incomplete_field_ids(
+                                repository_root=root, database_id=body.database_id
+                            )
+                            return _publish_blocked_response(fields)
+                        return _error_response(_review_to_public_code(exc))
+                    try:
+                        reloaded = review_storage.load_activation(
+                            repository_root=root, database_id=body.database_id
+                        )
+                    except Exception:
+                        return _error_response(MappingReviewErrorCode.INTERNAL_ERROR.value)
+                    if (
+                        reloaded.mapping_version != activation.mapping_version
+                        or reloaded.database_id != body.database_id
+                    ):
+                        return _error_response(MappingReviewErrorCode.INTERNAL_ERROR.value)
+                    try:
+                        content = json.dumps(
+                            {
+                                "version": REVIEW_VERSION,
+                                "database_id": reloaded.database_id,
+                                "status": "PUBLISHED",
+                                "mapping_version": reloaded.mapping_version,
+                                "registry_eligible": True,
+                            },
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            allow_nan=False,
+                        )
+                        return JSONResponse(status_code=200, content=json.loads(content))
+                    except Exception:
+                        return _error_response(MappingReviewErrorCode.INTERNAL_ERROR.value)
+            except ReviewError as exc:
+                if action == "PUBLISH" and exc.code is ReviewErrorCode.PUBLISH_BLOCKED:
+                    try:
+                        fields = review_storage.incomplete_field_ids(
+                            repository_root=root, database_id=str(payload.get("database_id", ""))
+                        )
+                    except Exception:
+                        fields = []
+                    return _publish_blocked_response(fields)
+                return _error_response(_review_to_public_code(exc))
+            except Exception:
+                return _error_response(MappingReviewErrorCode.INVALID_REQUEST.value)
+            try:
+                from ..registration.storage import load_registration as _load_registration
+
+                loaded_registration = _load_registration(
+                    repository_root=root, database_id=database_id
+                )
+                review = review_storage.load_review(
+                    repository_root=root, database_id=database_id
+                )
+            except ReviewError as exc:
+                return _error_response(_review_to_public_code(exc))
+            except Exception:
+                return _error_response(MappingReviewErrorCode.INTERNAL_ERROR.value)
+            detail = _detail_payload(
+                database_id=database_id,
+                loaded_registration=loaded_registration,
+                draft=review.draft,
+                published=review.published,
+                mapping_version=review.mapping_version,
+            )
+            if detail is None:
+                return _error_response(MappingReviewErrorCode.INTERNAL_ERROR.value)
+            return JSONResponse(status_code=200, content=detail)
+        except Exception:
+            return _error_response(MappingReviewErrorCode.INTERNAL_ERROR.value)

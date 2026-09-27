@@ -19,7 +19,18 @@ const MAX_KEYWORD = 100;
 export interface RegistryDatabase {
   database_id: string;
   label: string;
-  schema: 'flat' | 'legacy';
+  schema: 'flat' | 'legacy' | 'private';
+}
+
+const PRIVATE_LABEL_MAX = 64;
+
+function isValidPrivateLabel(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  if (value.length < 1 || value.length > PRIVATE_LABEL_MAX) return false;
+  if (value.trim().length === 0) return false;
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001f\u007f]/.test(value)) return false;
+  return true;
 }
 
 export interface CanonicalCourse {
@@ -65,6 +76,15 @@ function parseRegistryEntry(value: unknown): RegistryDatabase | null {
   if (!hasOnlyKeys(value, ['database_id', 'label', 'schema'])) return null;
   if (!isDatabaseId(value['database_id'])) return null;
   if (value['database_id'] === LEGACY_SELECTION_ID) return null;
+  if (value['schema'] !== 'flat' && value['schema'] !== 'legacy' && value['schema'] !== 'private') return null;
+  if (value['schema'] === 'private') {
+    if (!isValidPrivateLabel(value['label'])) return null;
+    return {
+      database_id: value['database_id'],
+      label: value['label'],
+      schema: value['schema'],
+    };
+  }
   if (
     typeof value['label'] !== 'string' ||
     value['label'].length < 1 ||
@@ -73,7 +93,6 @@ function parseRegistryEntry(value: unknown): RegistryDatabase | null {
   ) {
     return null;
   }
-  if (value['schema'] !== 'flat' && value['schema'] !== 'legacy') return null;
   return {
     database_id: value['database_id'],
     label: value['label'],

@@ -44,6 +44,7 @@ from ..harness.executor import SQLiteReadOnlyExecutor
 from ..harness.policy import ConservativeSqlPolicy
 from .clarification_http import create_clarification_http_app
 from .registration_upload import register_sqlite_upload_routes
+from .review_publish import register_mapping_review_routes
 from .synthetic_registry import (
     SyntheticDatabaseRegistry,
     register_synthetic_database_routes,
@@ -76,6 +77,7 @@ __all__ = [
     "SYNTHETIC_FLAT_LABEL",
     "SYNTHETIC_LEGACY_LABEL",
     "create_synthetic_clarification_prototype",
+    "set_private_repository_root_for_tests",
     "main",
     "app",
 ]
@@ -139,6 +141,70 @@ def _build_rules() -> dict[str, Any]:
     }
 
 
+def _discover_private_repository_root() -> Path | None:
+    try:
+        here = Path(__file__).resolve()
+    except Exception:
+        return None
+    for parent in (here, *here.parents):
+        try:
+            if (parent / ".git").exists():
+                return parent
+        except Exception:
+            continue
+    return None
+
+
+# Repository root override for the clarification loader/executor, which have
+# no app reference. Production leaves this unset (checkout discovery applies);
+# tests point it at their temp git repo.
+_PRIVATE_REPOSITORY_ROOT_OVERRIDE: Path | None = None
+
+
+def set_private_repository_root_for_tests(root: str | Path | None) -> None:
+    global _PRIVATE_REPOSITORY_ROOT_OVERRIDE
+    _PRIVATE_REPOSITORY_ROOT_OVERRIDE = Path(root) if root is not None else None
+
+
+def _private_repository_root() -> Path | None:
+    if _PRIVATE_REPOSITORY_ROOT_OVERRIDE is not None:
+        return _PRIVATE_REPOSITORY_ROOT_OVERRIDE
+    return _discover_private_repository_root()
+
+
+def _load_private_clarification_mapping(database_id: str) -> Any | None:
+    """Build the 2-field clarification mapping from a strict activation."""
+    try:
+        from ..harness.contracts import FieldMapping, MappingProfile, MappingStatus
+        from ..registration import reviews as _reviews
+
+        root = _private_repository_root()
+        if root is None:
+            return None
+        activation = _reviews.load_activation(
+            repository_root=root, database_id=database_id
+        )
+        if activation.database_id != database_id:
+            return None
+        course = activation.profile.fields.get(_COURSE_NAME_REF)
+        instructor = activation.profile.fields.get(_INSTRUCTOR_NAME_REF)
+        if course is None or instructor is None:
+            return None
+        return MappingProfile(
+            database_id=database_id,
+            version=activation.mapping_version,
+            status=MappingStatus.PUBLISHED,
+            fields={
+                _COURSE_NAME_REF: FieldMapping(table=course.table, column=course.column),
+                _INSTRUCTOR_NAME_REF: FieldMapping(
+                    table=instructor.table, column=instructor.column
+                ),
+            },
+        )
+    except Exception:
+        return None
+
+
 class _PrototypeContextLoader:
     """Registry-backed loader returning a defensive copy per call."""
 
@@ -146,14 +212,26 @@ class _PrototypeContextLoader:
         self._schema_is_current = schema_is_current
 
     def load(self, database_id: str) -> tuple[Any, Any, Any]:
+        if database_id not in (
+            SYNTHETIC_PROTOTYPE_DATABASE_ID,
+            SYNTHETIC_LEGACY_DATABASE_ID,
+        ):
+            # Private activations skip the fixed-roster fingerprint guard;
+            # strict activation reload is the freshness check.
+            mapping = _load_private_clarification_mapping(database_id)
+            if mapping is None:
+                raise RuntimeError("synthetic context unavailable")
+            return (
+                copy.deepcopy(_build_ontology()),
+                copy.deepcopy(mapping),
+                copy.deepcopy(_build_rules()),
+            )
         if not self._schema_is_current(database_id):
             raise RuntimeError("synthetic context unavailable")
         if database_id == SYNTHETIC_PROTOTYPE_DATABASE_ID:
             mapping = _build_mapping()
-        elif database_id == SYNTHETIC_LEGACY_DATABASE_ID:
-            mapping = _build_legacy_mapping()
         else:
-            raise RuntimeError("synthetic context unavailable")
+            mapping = _build_legacy_mapping()
         return (
             copy.deepcopy(_build_ontology()),
             copy.deepcopy(mapping),
@@ -174,12 +252,60 @@ class _SchemaGuardedExecutor:
         except Exception:
             current = False
         if current is not True:
+            # Private activations are not covered by the fixed-roster
+            # schema guard; strict activation reload is the freshness check.
+            if database_id not in (
+                SYNTHETIC_PROTOTYPE_DATABASE_ID,
+                SYNTHETIC_LEGACY_DATABASE_ID,
+            ):
+                return self._execute_private(database_id, compiled)
             raise HarnessFailure(
                 HarnessErrorCode.MAPPING_NOT_PUBLISHED,
                 "published mapping is stale",
                 stage=HarnessStage.EXECUTED,
             )
+        if database_id not in (
+            SYNTHETIC_PROTOTYPE_DATABASE_ID,
+            SYNTHETIC_LEGACY_DATABASE_ID,
+        ):
+            return self._execute_private(database_id, compiled)
         return self._executor.execute(database_id, compiled)
+
+    def _execute_private(
+        self, database_id: str, compiled: Any
+    ) -> tuple[list[str], list[dict[str, Any]]]:
+        try:
+            from ..harness.executor import SQLiteReadOnlyExecutor
+            from ..registration import reviews as _reviews
+
+            root = _private_repository_root()
+            if root is None:
+                raise HarnessFailure(
+                    HarnessErrorCode.MAPPING_NOT_PUBLISHED,
+                    "published mapping is stale",
+                    stage=HarnessStage.EXECUTED,
+                )
+            activation = _reviews.load_activation(
+                repository_root=root, database_id=database_id
+            )
+            if activation.database_id != database_id:
+                raise HarnessFailure(
+                    HarnessErrorCode.MAPPING_NOT_PUBLISHED,
+                    "published mapping is stale",
+                    stage=HarnessStage.EXECUTED,
+                )
+            private_executor = SQLiteReadOnlyExecutor(
+                {database_id: activation.database_path}
+            )
+            return private_executor.execute(database_id, compiled)
+        except HarnessFailure:
+            raise
+        except Exception:
+            raise HarnessFailure(
+                HarnessErrorCode.MAPPING_NOT_PUBLISHED,
+                "published mapping is stale",
+                stage=HarnessStage.EXECUTED,
+            ) from None
 
 
 class _FixedConstraintProvider:
@@ -272,6 +398,10 @@ def create_synthetic_clarification_prototype() -> FastAPI:
         )
         try:
             register_sqlite_upload_routes(app)
+        except Exception:
+            raise RuntimeError(_PROTOTYPE_CREATION_FAILURE) from None
+        try:
+            register_mapping_review_routes(app)
         except Exception:
             raise RuntimeError(_PROTOTYPE_CREATION_FAILURE) from None
     except Exception:
