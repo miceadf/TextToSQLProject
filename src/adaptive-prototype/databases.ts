@@ -19,7 +19,7 @@ const MAX_KEYWORD = 100;
 export interface RegistryDatabase {
   database_id: string;
   label: string;
-  schema: 'flat' | 'legacy' | 'private';
+  schema: 'flat' | 'legacy' | 'private' | 'postgres';
 }
 
 const PRIVATE_LABEL_MAX = 64;
@@ -76,7 +76,7 @@ function parseRegistryEntry(value: unknown): RegistryDatabase | null {
   if (!hasOnlyKeys(value, ['database_id', 'label', 'schema'])) return null;
   if (!isDatabaseId(value['database_id'])) return null;
   if (value['database_id'] === LEGACY_SELECTION_ID) return null;
-  if (value['schema'] !== 'flat' && value['schema'] !== 'legacy' && value['schema'] !== 'private') return null;
+  if (value['schema'] !== 'flat' && value['schema'] !== 'legacy' && value['schema'] !== 'private' && value['schema'] !== 'postgres') return null;
   if (value['schema'] === 'private') {
     if (!isValidPrivateLabel(value['label'])) return null;
     return {
