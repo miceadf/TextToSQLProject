@@ -13,6 +13,12 @@ from backend.adaptive.catalog.contracts import DatabaseCatalog
 from backend.adaptive.evaluation import arm_live_cli as cli
 from backend.adaptive.evaluation.direct_sql import build_direct_sql_prompt
 from backend.adaptive.evaluation.loader import load_evaluation_set
+from backend.adaptive.evaluation.ollama_request_format import (
+    ALPACA_NO_SYSTEM_PREFIX,
+    ALPACA_NO_SYSTEM_SUFFIX,
+    RequestFormatError,
+    apply_request_format,
+)
 from backend.adaptive.evaluation.runner import _prepare_fixture_contexts
 from backend.adaptive.fixtures import build_fixture_bundle
 from backend.adaptive.fixtures.contracts import FixtureVariant
@@ -43,10 +49,15 @@ def oracle_transport(tmp_path_factory: Any) -> Any:
     class _Transport:
         def __init__(self) -> None:
             self.calls = 0
+            self.raw_flags: list[Any] = []
 
         def __call__(self, url: str, payload: dict[str, Any], timeout: float) -> Any:
             self.calls += 1
             prompt = payload["prompt"]
+            self.raw_flags.append(payload.get("raw"))
+            if payload.get("raw"):
+                assert prompt.startswith(ALPACA_NO_SYSTEM_PREFIX) and prompt.endswith(ALPACA_NO_SYSTEM_SUFFIX)
+                prompt = prompt[len(ALPACA_NO_SYSTEM_PREFIX):-len(ALPACA_NO_SYSTEM_SUFFIX)]
             if prompt in sql_by_prompt:
                 return {"response": sql_by_prompt[prompt]}
             question = prompt.rsplit("Question: ", 1)[1]
@@ -202,3 +213,85 @@ def test_publish_failure_leaves_no_partial_output(
     reports = tmp_path / ".schema-adaptive" / "reports"
     assert list(reports.iterdir()) == []
     assert "disk full" not in text
+
+
+def test_no_system_format_applies_to_both_arms(
+    tmp_path: Path, monkeypatch: Any, capsys: Any, oracle_transport: Any
+) -> None:
+    transport = oracle_transport()
+    monkeypatch.setattr(startup, "build_loopback_transport", lambda _config: transport)
+    code, payload, _ = _run(
+        ["--live-synthetic", "--ollama-model-tag", TAG, "--ollama-request-format", "alpaca-raw-no-system-v1",
+         "--repository-root", str(tmp_path), "--output-name", "run-n"],
+        capsys,
+    )
+    assert code == 0, payload
+    assert transport.calls == 240
+    assert transport.raw_flags == [True] * 240
+    assert payload["request_format"] == "alpaca-raw-no-system-v1"
+    assert payload["model_label"] == "synthetic-p519-latest.nosys"
+    assert payload["paired"]["both_correct"] == 120
+    comparison = json.loads((tmp_path / ".schema-adaptive" / "reports" / "run-n" / "comparison.json").read_text(encoding="utf-8"))
+    assert comparison["ir_model_run_id"] == "p520-nosys-ir-synthetic-p519-latest.nosys"
+    assert comparison["sql_model_run_id"] == "p520-nosys-sql-synthetic-p519-latest.nosys"
+
+
+def test_default_format_run_ids_cannot_collide_with_no_system(
+    tmp_path: Path, monkeypatch: Any, capsys: Any, oracle_transport: Any
+) -> None:
+    transport = oracle_transport()
+    monkeypatch.setattr(startup, "build_loopback_transport", lambda _config: transport)
+    code, _payload, _ = _run(
+        ["--live-synthetic", "--ollama-model-tag", "synthetic-p519-latest.nosys",
+         "--repository-root", str(tmp_path), "--output-name", "run-c"],
+        capsys,
+    )
+    assert code == 0
+    comparison = json.loads((tmp_path / ".schema-adaptive" / "reports" / "run-c" / "comparison.json").read_text(encoding="utf-8"))
+    assert comparison["ir_model_run_id"] == "p519-ir-synthetic-p519-latest.nosys"
+    assert comparison["ir_model_run_id"] != "p520-nosys-ir-synthetic-p519-latest.nosys"
+
+
+def test_default_format_sends_no_raw_flag(
+    tmp_path: Path, monkeypatch: Any, capsys: Any, oracle_transport: Any
+) -> None:
+    transport = oracle_transport()
+    monkeypatch.setattr(startup, "build_loopback_transport", lambda _config: transport)
+    code, payload, _ = _run(
+        ["--live-synthetic", "--ollama-model-tag", TAG, "--repository-root", str(tmp_path), "--output-name", "run-d"],
+        capsys,
+    )
+    assert code == 0
+    assert transport.raw_flags == [None] * 240
+    assert payload["request_format"] == "model-template"
+    assert payload["model_label"] == "synthetic-p519-latest"
+
+
+def test_invalid_request_format_is_config_error(tmp_path: Path, monkeypatch: Any, capsys: Any) -> None:
+    monkeypatch.setattr(startup, "build_loopback_transport", lambda _c: (_ for _ in ()).throw(AssertionError()))
+    code, payload, _ = _run(
+        ["--live-synthetic", "--ollama-model-tag", TAG, "--ollama-request-format", "raw",
+         "--repository-root", str(tmp_path), "--output-name", "run-x"],
+        capsys,
+    )
+    assert code == 2 and payload == {"status": "CONFIG_ERROR"}
+
+
+def test_no_system_wrapper_exact_bytes_and_no_mutation() -> None:
+    seen: list[Any] = []
+    wrapped = apply_request_format(lambda u, p, t: seen.append((u, p, t)) or {"response": "x"}, "alpaca-raw-no-system-v1")
+    original = {"model": "m", "prompt": "질문 본문", "stream": False, "options": {"temperature": 0}}
+    wrapped("http://127.0.0.1:1/api/generate", original, 5.0)
+    assert original == {"model": "m", "prompt": "질문 본문", "stream": False, "options": {"temperature": 0}}
+    sent = seen[0][1]
+    assert sent["raw"] is True
+    assert sent["prompt"] == (
+        "Below is an instruction that describes a task, paired with an input that provides further context. "
+        "Write a response that appropriately completes the request.\r\n\r\n### Instruction:\r\n\r\n\r\n"
+        "### Input:\r\n질문 본문\r\n\r\n### Response:\r\n"
+    )
+    for bad in ({"prompt": 1}, {"prompt": "x", "raw": False}, {"prompt": "x", "system": "s"}, "not-a-dict"):
+        with pytest.raises(RequestFormatError):
+            wrapped("u", bad, 1.0)  # type: ignore[arg-type]
+    with pytest.raises(RequestFormatError):
+        apply_request_format(lambda *a: None, "other")

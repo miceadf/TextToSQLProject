@@ -19,6 +19,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from ..api import ollama_startup
 from ..api.ollama_startup import build_startup_ollama_model, parse_ollama_startup_config
 from ..fixtures import build_fixture_bundle
 from ..ontology.loader import load_default_ontology
@@ -26,6 +27,12 @@ from .arm_comparison import compare_arms
 from .direct_sql import run_direct_sql_evaluation
 from .direct_sql_ollama import OllamaDirectSqlModel
 from .loader import load_evaluation_set
+from .ollama_request_format import (
+    REQUEST_FORMAT_MODEL_TEMPLATE,
+    REQUEST_FORMATS,
+    apply_request_format,
+    request_format_label,
+)
 from .run_contracts import EvaluationRunConfig
 from .runner import run_evaluation
 
@@ -70,7 +77,10 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--check", action=_FlagOnce)
     parser.add_argument("--live-synthetic", action=_FlagOnce, dest="live_synthetic")
-    for name in ("--ollama-model-tag", "--ollama-base-url", "--ollama-timeout", "--repository-root", "--output-name"):
+    for name in (
+        "--ollama-model-tag", "--ollama-base-url", "--ollama-timeout", "--ollama-request-format",
+        "--repository-root", "--output-name",
+    ):
         parser.add_argument(name, action=_StoreOnce, default=None)
     return parser
 
@@ -83,10 +93,11 @@ def _metric(value: Any) -> dict[str, int]:
     return {"count": value.count, "denominator": value.denominator}
 
 
-def _summary(ir: Any, sql: Any, comparison: Any) -> dict[str, Any]:
+def _summary(ir: Any, sql: Any, comparison: Any, request_format: str) -> dict[str, Any]:
     return {
         "status": "COMPLETED",
         "model_label": comparison.ir_model_label,
+        "request_format": request_format,
         "gold_human_review_pending": comparison.gold_human_review_pending,
         "warnings": comparison.warnings,
         "ir_arm": {
@@ -105,6 +116,11 @@ def _summary(ir: Any, sql: Any, comparison: Any) -> dict[str, Any]:
             name: counts.model_dump(mode="json") for name, counts in comparison.by_variant.items()
         },
     }
+
+
+def _transport(config: Any, request_format: str) -> Any:
+    """Same loopback transport and request format for both arms."""
+    return apply_request_format(ollama_startup.build_loopback_transport(config), request_format)
 
 
 def _is_link(path: Path) -> bool:
@@ -142,8 +158,18 @@ def main(argv: list[str] | None = None) -> int:
         )
         if _OUTPUT_NAME.fullmatch(args.output_name) is None:
             raise ValueError(_FIXED_ERROR)
+        request_format = args.ollama_request_format or REQUEST_FORMAT_MODEL_TEMPLATE
+        if request_format not in REQUEST_FORMATS:
+            raise ValueError(_FIXED_ERROR)
         label = config.model_tag.replace(":", "-")
-        ir_run_id, sql_run_id = f"p519-ir-{label}", f"p519-sql-{label}"
+        # model-template keeps the Phase 5-19 IDs; other formats get a prefix a
+        # model tag cannot produce, so tag/format combinations never share run IDs.
+        run_prefix = "p519"
+        if request_format != REQUEST_FORMAT_MODEL_TEMPLATE:
+            short = request_format_label(request_format)
+            label = f"{label}.{short}"
+            run_prefix = f"p520-{short}"
+        ir_run_id, sql_run_id = f"{run_prefix}-ir-{label}", f"{run_prefix}-sql-{label}"
         if any(_RUN_ID.fullmatch(value) is None for value in (label, ir_run_id, sql_run_id)):
             raise ValueError(_FIXED_ERROR)
         root = Path(args.repository_root or Path.cwd()).resolve()
@@ -174,10 +200,18 @@ def main(argv: list[str] | None = None) -> int:
                 _emit({"status": "CHECKED", "cases": len(gold.cases), "variants": VARIANTS, "model_calls": 0})
                 return 0
             ir_report = run_evaluation(
-                gold, build_startup_ollama_model(config), ir_config, bundle, ontology=ontology
+                gold,
+                build_startup_ollama_model(config, transport=_transport(config, request_format)),
+                ir_config,
+                bundle,
+                ontology=ontology,
             )
             sql_report = run_direct_sql_evaluation(
-                gold, OllamaDirectSqlModel(config), sql_config, bundle, ontology=ontology
+                gold,
+                OllamaDirectSqlModel(config, transport=_transport(config, request_format)),
+                sql_config,
+                bundle,
+                ontology=ontology,
             )
         comparison = compare_arms(ir_report, sql_report)
         _publish(reports_root, output_dir, root, (
@@ -185,7 +219,7 @@ def main(argv: list[str] | None = None) -> int:
             ("sql-report.json", sql_report),
             ("comparison.json", comparison),
         ))
-        _emit(_summary(ir_report, sql_report, comparison))
+        _emit(_summary(ir_report, sql_report, comparison, request_format))
         return 0
     except Exception:
         _emit(_RUN_ERROR)

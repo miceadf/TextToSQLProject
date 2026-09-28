@@ -4,6 +4,8 @@
 
 > **잠정치.** gold 40건은 모두 `NEEDS_HUMAN_REVIEW`이며 L1(gold 검토)·L3(결과 검토) 전이다. 논문의 확정 성능이나 우열 결론으로 쓰지 않는다.
 
+> **정정(2026-09-29, Phase 5-20).** 이 실행은 `text2sql_qwen:latest`의 Modelfile에 내장된 CNU `courses` schema SYSTEM이 두 arm의 모든 호출에 주입된 조건이었다(입력 token 114개 차이로 확인). 아래 "CNU schema 재현 경향"은 모델 암기라기보다 이 SYSTEM을 따른 결과였을 가능성이 높으므로 해석으로 쓰지 않는다. 오염을 제거한 재실행 결과(IR 93, SQL 72)는 [`phase5-20-decontaminated-arm-comparison-results-2026-09-29.md`](phase5-20-decontaminated-arm-comparison-results-2026-09-29.md)를 기준으로 한다. 아래 수치는 조건 기록으로만 보존한다.
+
 ## 환경
 
 - Windows 데스크톱, 로컬 Ollama `0.34.4`, 기본 loopback URL, timeout 60초, temperature 0, attempt당 1회·retry 없음.
@@ -42,7 +44,7 @@ paired count:
 
 ## 해석과 한계
 
-- 관찰: 기존 fine-tuned 모델은 동적 schema를 prompt로 받아도 학습한 CNU table·column을 재현하는 경향이 강했다. 이는 §4.2 "특정 schema 암기" 가설과 일치하는 **관찰**이며 확정 결론이 아니다.
+- ~~관찰: 기존 fine-tuned 모델은 동적 schema를 prompt로 받아도 학습한 CNU table·column을 재현하는 경향이 강했다.~~ **정정됨:** 모델이 내장 SYSTEM으로 CNU schema를 직접 받은 조건이었으므로 암기의 근거가 아니다(Phase 5-20).
 - 같은 모델에서 QueryIR 경로는 물리 schema를 모델에 노출하지 않고 compiler가 fixture별 SQL을 만들기 때문에 이 암기 문제를 우회한다. 다만 IR arm에도 `UNKNOWN_FIELD` 21건 등 별도 실패가 있다.
 - 공정성 한계:
   - 모델은 CNU 단일 schema SQL로 fine-tune되었으므로 동적 schema SQL은 학습 분포 밖이다. base instruct 모델(§15.1-3)과의 비교가 있어야 "QueryIR 방식 자체"의 효과를 분리할 수 있다. 로컬에는 base tag가 아직 없다.
