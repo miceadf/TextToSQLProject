@@ -208,10 +208,29 @@ def _load_private_clarification_mapping(database_id: str) -> Any | None:
 class _PrototypeContextLoader:
     """Registry-backed loader returning a defensive copy per call."""
 
-    def __init__(self, schema_is_current: Any) -> None:
+    def __init__(self, schema_is_current: Any, pg_contexts: Any = None) -> None:
         self._schema_is_current = schema_is_current
+        self._pg_contexts = dict(pg_contexts) if isinstance(pg_contexts, dict) else {}
 
     def load(self, database_id: str) -> tuple[Any, Any, Any]:
+        pg_context = self._pg_contexts.get(database_id) if isinstance(database_id, str) else None
+        if pg_context is not None:
+            try:
+                from .postgres_runtime import is_postgres_context_current
+
+                current = is_postgres_context_current(pg_context)
+            except Exception:
+                current = False
+            if current is not True:
+                raise RuntimeError("synthetic context unavailable")
+            try:
+                return (
+                    copy.deepcopy(_build_ontology()),
+                    copy.deepcopy(pg_context.harness_mapping()),
+                    copy.deepcopy(_build_rules()),
+                )
+            except Exception:
+                raise RuntimeError("synthetic context unavailable") from None
         if database_id not in (
             SYNTHETIC_PROTOTYPE_DATABASE_ID,
             SYNTHETIC_LEGACY_DATABASE_ID,
@@ -327,10 +346,95 @@ class _FixedConstraintProvider:
         return {"entity": entity, "select": [ref], "filters": [], "limit": 50}
 
 
-def create_synthetic_clarification_prototype() -> FastAPI:
+def create_synthetic_clarification_prototype(
+    postgres_profiles: list[Any] | None = None,
+    postgres_adapters: dict[str, Any] | None = None,
+    postgres_executors: dict[str, Any] | None = None,
+) -> FastAPI:
     """Assemble the synthetic clarification prototype app."""
     tmp: Any = None
     try:
+        if postgres_profiles is None:
+            pg_profiles: list[Any] = []
+        elif isinstance(postgres_profiles, list):
+            pg_profiles = list(postgres_profiles)
+        else:
+            raise RuntimeError(_PROTOTYPE_CREATION_FAILURE)
+        if postgres_adapters is None:
+            pg_adapter_overrides: dict[str, Any] = {}
+        elif isinstance(postgres_adapters, dict):
+            pg_adapter_overrides = dict(postgres_adapters)
+        else:
+            raise RuntimeError(_PROTOTYPE_CREATION_FAILURE)
+        if postgres_executors is None:
+            pg_executor_overrides: dict[str, Any] = {}
+        elif isinstance(postgres_executors, dict):
+            pg_executor_overrides = dict(postgres_executors)
+        else:
+            raise RuntimeError(_PROTOTYPE_CREATION_FAILURE)
+        try:
+            from .postgres_runtime import (
+                DatabaseRoutingCompiler,
+                DatabaseRoutingExecutor,
+                DatabaseRoutingPolicy,
+                PostgresRuntimeProfile,
+                build_validated_contexts,
+            )
+            from .synthetic_registry import MAX_DATABASES
+        except Exception:
+            raise RuntimeError(_PROTOTYPE_CREATION_FAILURE) from None
+        fixed_ids = frozenset({SYNTHETIC_PROTOTYPE_DATABASE_ID, SYNTHETIC_LEGACY_DATABASE_ID})
+        for _profile in pg_profiles:
+            if not isinstance(_profile, PostgresRuntimeProfile):
+                raise RuntimeError(_PROTOTYPE_CREATION_FAILURE)
+        if len(fixed_ids) + len(pg_profiles) > int(MAX_DATABASES):
+            raise RuntimeError(_PROTOTYPE_CREATION_FAILURE)
+        ordered_pg_profiles = sorted(pg_profiles, key=lambda item: item.database_id)
+        try:
+            from ..ontology.loader import load_default_ontology
+
+            _expected_ontology_version = int(load_default_ontology().version)
+        except Exception:
+            raise RuntimeError(_PROTOTYPE_CREATION_FAILURE) from None
+        adapters_by_id: dict[str, Any] = {}
+        executors_by_id: dict[str, Any] = {}
+        try:
+            from ..catalog.postgres import PostgresAdapter
+            from ..harness.postgres import PostgresReadOnlyExecutor
+        except Exception:
+            raise RuntimeError(_PROTOTYPE_CREATION_FAILURE) from None
+        for _profile in ordered_pg_profiles:
+            _db_id = _profile.database_id
+            if _db_id in fixed_ids or _db_id in adapters_by_id:
+                raise RuntimeError(_PROTOTYPE_CREATION_FAILURE)
+            _adapter = pg_adapter_overrides.get(_db_id)
+            if _adapter is None:
+                try:
+                    _adapter = PostgresAdapter({_db_id: _profile.connection_config})
+                except Exception:
+                    raise RuntimeError(_PROTOTYPE_CREATION_FAILURE) from None
+            _executor = pg_executor_overrides.get(_db_id)
+            if _executor is None:
+                try:
+                    _executor = PostgresReadOnlyExecutor({_db_id: _profile.connection_config})
+                except Exception:
+                    raise RuntimeError(_PROTOTYPE_CREATION_FAILURE) from None
+            adapters_by_id[_db_id] = _adapter
+            executors_by_id[_db_id] = _executor
+        for _key in (*pg_adapter_overrides, *pg_executor_overrides):
+            if _key not in adapters_by_id:
+                raise RuntimeError(_PROTOTYPE_CREATION_FAILURE)
+        try:
+            pg_contexts = build_validated_contexts(
+                ordered_pg_profiles,
+                adapters_by_id=adapters_by_id,
+                executors_by_id=executors_by_id,
+                expected_ontology_version=_expected_ontology_version,
+                fixed_database_ids=fixed_ids,
+                max_databases=int(MAX_DATABASES),
+            )
+        except Exception:
+            raise RuntimeError(_PROTOTYPE_CREATION_FAILURE) from None
         tmp = tempfile.TemporaryDirectory(prefix="synth-clarify-")
         flat_path = build_flat_database(Path(tmp.name) / "flat.sqlite3", seed=DEFAULT_SEED)
         legacy_path = build_legacy_database(Path(tmp.name) / "legacy.sqlite3", seed=DEFAULT_SEED)
@@ -354,47 +458,65 @@ def create_synthetic_clarification_prototype() -> FastAPI:
                 return False
             return actual == expected
 
-        loader = _PrototypeContextLoader(schema_is_current)
+        loader = _PrototypeContextLoader(schema_is_current, pg_contexts)
         provider = _FixedConstraintProvider()
         executor = SQLiteReadOnlyExecutor(database_paths)
         guarded_executor = _SchemaGuardedExecutor(executor, schema_is_current)
         compiler = SingleTableSQLiteCompiler()
         sql_policy = ConservativeSqlPolicy()
         coordinator = ClarificationSessionCoordinator()
+        if pg_contexts:
+            wired_compiler: Any = DatabaseRoutingCompiler(compiler, pg_contexts)
+            wired_policy: Any = DatabaseRoutingPolicy(sql_policy, pg_contexts)
+            wired_executor: Any = DatabaseRoutingExecutor(guarded_executor, pg_contexts)
+        else:
+            wired_compiler = compiler
+            wired_policy = sql_policy
+            wired_executor = guarded_executor
         app = create_clarification_http_app(
             coordinator,
             loader,
             provider,
-            guarded_executor,
-            compiler=compiler,
-            sql_policy=sql_policy,
+            wired_executor,
+            compiler=wired_compiler,
+            sql_policy=wired_policy,
         )
-        registry = SyntheticDatabaseRegistry(
-            [
+        registry_entries = [
+            {
+                "database_id": SYNTHETIC_PROTOTYPE_DATABASE_ID,
+                "label": SYNTHETIC_FLAT_LABEL,
+                "schema": "flat",
+            },
+            {
+                "database_id": SYNTHETIC_LEGACY_DATABASE_ID,
+                "label": SYNTHETIC_LEGACY_LABEL,
+                "schema": "legacy",
+            },
+        ]
+        for _db_id in sorted(pg_contexts):
+            registry_entries.append(
                 {
-                    "database_id": SYNTHETIC_PROTOTYPE_DATABASE_ID,
-                    "label": SYNTHETIC_FLAT_LABEL,
-                    "schema": "flat",
-                },
-                {
-                    "database_id": SYNTHETIC_LEGACY_DATABASE_ID,
-                    "label": SYNTHETIC_LEGACY_LABEL,
-                    "schema": "legacy",
-                },
-            ]
-        )
+                    "database_id": _db_id,
+                    "label": pg_contexts[_db_id].label,
+                    "schema": "postgres",
+                }
+            )
+        registry = SyntheticDatabaseRegistry(registry_entries)
         schema_by_id = {
             SYNTHETIC_PROTOTYPE_DATABASE_ID: "flat",
             SYNTHETIC_LEGACY_DATABASE_ID: "legacy",
         }
+        for _db_id in sorted(pg_contexts):
+            schema_by_id[_db_id] = "postgres"
         register_synthetic_database_routes(
             app,
             registry=registry,
-            executor=guarded_executor,
-            compiler=compiler,
-            sql_policy=sql_policy,
+            executor=wired_executor,
+            compiler=wired_compiler,
+            sql_policy=wired_policy,
             schema_by_id=schema_by_id,
             schema_is_current=schema_is_current,
+            postgres_contexts=pg_contexts,
         )
         try:
             register_sqlite_upload_routes(app)
@@ -462,6 +584,7 @@ def create_synthetic_clarification_prototype() -> FastAPI:
         app.state.synthetic_prototype_coordinator = coordinator
         app.state.synthetic_prototype_tmpdir = tmp.name
         app.state.synthetic_prototype_cleanup = _cleanup
+        app.state.synthetic_postgres_database_ids = tuple(sorted(pg_contexts))
     except Exception:
         try:
             _cleanup()

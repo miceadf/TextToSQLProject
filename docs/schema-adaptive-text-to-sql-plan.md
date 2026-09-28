@@ -651,6 +651,7 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 - [x] `pg_catalog` 기반 table/column/PK/FK 분석(실 PostgreSQL 검증은 별도)
 - [x] Phase 7-02 PostgreSQL QueryIR compiler·AST policy·read-only executor(`%s`, postgres dialect, fake connector 통합)
 - [x] Phase 7-03 완전 합성 PostgreSQL live integration smoke(inspect→mapping→compiler/policy/executor, 격리 schema·cleanup)
+- [x] Phase 7-04 server-owned PostgreSQL profile의 adaptive registry/catalog/clarification runtime 조립
 - [ ] 데스크톱 Ollama provider 통합
 - [ ] 실제 CNU DB regression test
 - [ ] SQL dialect 차이 처리
@@ -1003,7 +1004,9 @@ Phase 7-02에서 기존 QueryIR의 `select`·`filters`·`joins`·`limit` subset�
 
 Phase 7-03에서 `DEFAULT_SEED` 기반 정규화 PostgreSQL fixture와 opt-in CLI를 추가하고, 별도 로컬 PostgreSQL 18 임시 cluster에서 inspector→mapping proposal→relation graph→PostgreSQL compiler/policy/read-only executor를 두 QueryIR로 실제 연결했다. 생성 schema는 제한된 이름·quoted identifier·bound value만 사용하고 성공·실패 뒤 제거한다. live 검증에서 드러난 PostgreSQL 18 다중 배열 `unnest` 호환 문제를 `generate_subscripts` 기반 FK ordinal 결합으로 수정했고, executor는 검사한 단일 schema를 transaction-local `search_path`로 고정한다. Luna review-only의 setup 실패 cleanup과 느슨한 FK 검증을 rollback·idempotent cleanup·정확한 FK tuple 비교로 보완했다. 실제 CNU·기존 PostgreSQL service data·Ollama·registry/UI는 사용하지 않았다. 구현 지침은 [`docs/prompts/phase7-03-synthetic-postgres-live-smoke.md`](prompts/phase7-03-synthetic-postgres-live-smoke.md)에 둔다.
 
-다음 시작점은 Phase 7-04로, server-owned PostgreSQL profile을 기존 adaptive backend registry/runtime에 안전하게 조립하는 범위를 설계한다. DSN은 클라이언트·응답·로그에 노출하지 않고 실제 학교 DB mapping publish·질의 전 L2를 유지한다. UI 선택과 Ollama provider 연결은 각각 후속 단계로 분리한다.
+Phase 7-04에서 Python server code만 만들 수 있는 immutable PostgreSQL profile과 startup validation을 추가했다. profile은 redacted `PostgresConnectionConfig`와 승인된 15-field `PublishedMappingProfile`을 묶으며 startup에서 sample 없는 catalog, database ID·ontology version·schema fingerprint, table/column, 중복 physical mapping, relation graph를 검증한다. 검증된 profile은 기존 registry에 `schema=postgres`로 나타나고 catalog와 clarification이 database ID 기반 compiler/policy/executor router를 사용한다. context load와 실행 직전마다 재검사해 drift를 차단한다. 독립 Luna 검토의 compiler/policy 예외 redaction과 catalog의 executor router 우회를 수정했고, 실제 PostgreSQL 18 HTTP smoke에서 `NUMERIC`의 `Decimal` JSON 직렬화 결함을 찾아 validated DTO JSON dump로 보완했다. 기본 앱은 profile 0개·PostgreSQL 연결 0회다. 실제 CNU·Ollama·UI 변경은 없다. 구현 지침은 [`docs/prompts/phase7-04-server-owned-postgres-runtime-registry.md`](prompts/phase7-04-server-owned-postgres-runtime-registry.md)에 둔다.
+
+다음 시작점은 Phase 7-05로, Git 비추적 private metadata와 별도 secret 환경변수에서 server-owned PostgreSQL profile을 strict load해 loopback prototype CLI startup에 주입하는 범위를 다룬다. mapping은 이미 승인된 immutable artifact만 허용하고 UI parser/browser 선택과 Ollama provider 연결은 이후 단계로 분리한다.
 
 완료된 adapter 계약은 [`docs/prompts/phase5-07-ollama-querymodel-adapter.md`](prompts/phase5-07-ollama-querymodel-adapter.md)에, 합성 live smoke의 수행 지침은 [`docs/prompts/phase5-08-ollama-adapter-live-smoke.md`](prompts/phase5-08-ollama-adapter-live-smoke.md)에 둔다. 모델이 반환한 SQL 등 비 JSON 텍스트는 원문 문자열로 보존해 후속 Query IR 검증 실패로 드러내며, provider 호출 실패와 혼합하지 않는다.
 
@@ -1526,6 +1529,13 @@ SQLite DB 입력
 - 결정: Phase 7-03 live smoke는 `--live-synthetic`와 전용 loopback DSN이 함께 있을 때만 실행하며 DB 이름을 `schema_adaptive_synthetic`으로 고정한다. 매 실행마다 제한된 무작위 schema를 만들고 identifier는 `psycopg2.sql.Identifier`, 값은 `%s`로 전달한다. fixture setup 실패는 rollback한 뒤 exact schema에 `DROP SCHEMA IF EXISTS ... CASCADE`를 한 번만 시도한다. inspector catalog의 table·PK·FK·sample 부재를 정확히 확인하고 동일 schema를 executor의 transaction-local `search_path`로 고정한 뒤 두 고정 QueryIR 결과를 검증한다. 공개 출력은 고정 상태·집계·fingerprint만 포함한다.
 - 이유: 실제 학교 DB나 기존 service database로 첫 통합을 검증하면 데이터 사용 관문과 구현 결함 진단이 섞인다. 완전 합성 DB와 실행별 schema 격리, strict preflight, cleanup, redaction을 함께 고정하면 실제 driver/catalog/dialect 차이는 찾으면서 기존 데이터·credential·runtime registry에는 영향을 주지 않는다.
 
+### ADR-051: PostgreSQL 실행 노출은 server-owned 승인 profile과 요청 시 drift 재검사를 요구
+
+- 날짜: 2026-09-28
+- 상태: 채택
+- 결정: PostgreSQL profile은 HTTP 입력이 아니라 server Python 경계에서만 생성하며 database ID, 안전한 label, 방어적으로 복사한 connection config, 승인된 immutable Published Mapping을 묶는다. startup inspection이 ID·dialect·ontology version·fingerprint·canonical 15-field 물리 mapping·relation graph를 모두 확인한 profile만 registry에 추가한다. catalog와 clarification은 database ID router로 PostgreSQL compiler·policy·executor를 선택하며 context load와 실제 execute 직전에 fingerprint를 다시 검사한다. compiler·policy·executor·driver 예외는 fixed redacted 오류로 변환하고 기본 app에는 profile을 주입하지 않아 PostgreSQL 연결을 만들지 않는다.
+- 이유: registry 표시만으로 DBMS 실행 권한을 올리거나 startup 시점 검증만 신뢰하면 client injection과 schema drift 사이에서 오래된 mapping·dialect가 실행될 수 있다. server-owned 승인 profile, DB별 runtime router, 실행 직전 재검사를 함께 적용하면 SQLite baseline을 보존하면서 PostgreSQL 실행 권한과 credential을 HTTP 경계 밖에 둘 수 있다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -1741,3 +1751,4 @@ SQLite DB 입력
 ### 2026-09-28
 
 - Phase 7-03 완전 합성 PostgreSQL live integration smoke 완료. opt-in loopback DSN preflight, 실행별 격리 schema fixture, sample 없는 inspector·mapping proposal·physical graph, 두 QueryIR의 compiler/policy/read-only execution, 고정 JSON/redaction, 성공·실패 cleanup을 구현했다. Luna review-only의 aborted transaction cleanup과 FK 검증 결함을 rollback·idempotent drop·정확 tuple 비교로 수정했고, 실제 PostgreSQL 18 smoke에서 발견한 schema-qualified 다중 `unnest` 비호환과 executor schema 미고정을 `generate_subscripts`와 transaction-local `search_path`로 수정했다. 관련 57개·18 subtests, 전체 pytest 762개·5 skip·470 subtests, compileall, diff check 통과. 임시 cluster와 schema는 제거했고 실제 CNU·기존 PostgreSQL 데이터·Ollama·registry/UI는 사용하지 않았다. ADR-050 추가
+- Phase 7-04 server-owned PostgreSQL runtime registry 조립 완료. strict immutable profile, startup catalog/mapping/graph 검증, registry `postgres` entry, catalog·clarification DB별 compiler/policy/executor routing, context load·실행 직전 drift 차단, credential·physical identifier·SQL·driver 오류 redaction을 구현했다. Luna review-only의 compiler/policy 예외 반사와 catalog executor 우회를 수정했고, 실제 PostgreSQL 18 HTTP smoke에서 registry 200·canonical catalog 6행·clarification 성공을 확인하며 `Decimal` JSON 직렬화 결함을 수정했다. 관련 신규·회귀 90개·7 subtests 및 private 회귀 45개·1 skip, 전체 pytest 772개·5 skip·470 subtests, compileall, diff check 통과. 임시 cluster/schema 제거 완료. 기본 app은 profile 0개이며 실제 CNU·Ollama·frontend 변경은 없다. ADR-051 추가

@@ -41,7 +41,7 @@ MAX_LABEL_LENGTH = 64
 
 _DB_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 _LABEL_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _().-]{0,63}$")
-_SCHEMA_VALUES = frozenset({"flat", "legacy", "private"})
+_SCHEMA_VALUES = frozenset({"flat", "legacy", "private", "postgres"})
 
 # Canonical semantic refs (server-owned, never caller-supplied).
 _COURSE_CODE_REF = "Course.code"
@@ -150,7 +150,7 @@ class DatabaseEntry(BaseModel):
 
     database_id: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
     label: str = Field(min_length=1, max_length=64)
-    schema_variant: str = Field(alias="schema", pattern=r"^(flat|legacy|private)$")
+    schema_variant: str = Field(alias="schema", pattern=r"^(flat|legacy|private|postgres)$")
 
 
 class CanonicalCourse(BaseModel):
@@ -295,8 +295,8 @@ def coerce_canonical_row(row: dict[str, Any]) -> dict[str, Any] | None:
         for ref in CANONICAL_SELECT:
             key = _REF_TO_DTO_KEY[ref]
             converted[key] = row[ref]
-        CanonicalCourse.model_validate(converted)
-        return converted
+        validated = CanonicalCourse.model_validate(converted)
+        return validated.model_dump(mode="json")
     except Exception:
         return None
 
@@ -434,6 +434,7 @@ def register_synthetic_database_routes(
     sql_policy: Any,
     schema_by_id: dict[str, str],
     schema_is_current: Callable[[str], bool],
+    postgres_contexts: dict[str, Any] | None = None,
 ) -> None:
     if not callable(getattr(executor, "execute", None)):
         raise SyntheticCatalogConfigError()
@@ -443,6 +444,12 @@ def register_synthetic_database_routes(
         raise SyntheticCatalogConfigError()
     if not isinstance(schema_by_id, dict) or not callable(schema_is_current):
         raise SyntheticCatalogConfigError()
+    if postgres_contexts is None:
+        frozen_postgres: dict[str, Any] = {}
+    else:
+        if not isinstance(postgres_contexts, dict):
+            raise SyntheticCatalogConfigError()
+        frozen_postgres = dict(postgres_contexts)
     registered_schemas = {
         entry["database_id"]: entry["schema"] for entry in registry.snapshot()
     }
@@ -486,6 +493,85 @@ def register_synthetic_database_routes(
                 keyword = ""
             if not isinstance(keyword, str) or len(keyword) > MAX_KEYWORD_LENGTH:
                 return _error_response(SyntheticCatalogErrorCode.INVALID_REQUEST.value)
+            postgres_context = frozen_postgres.get(database_id) if isinstance(database_id, str) else None
+            if postgres_context is not None:
+                try:
+                    from .postgres_runtime import is_postgres_context_current
+                    from ..harness.contracts import MappingStatus as _PgMappingStatus
+                    from ..harness.contracts import QueryIR as _PgQueryIR
+
+                    try:
+                        pg_current = is_postgres_context_current(postgres_context)
+                    except Exception:
+                        pg_current = False
+                    if pg_current is not True:
+                        return _error_response(SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value)
+                    pg_mapping = postgres_context.harness_mapping()
+                    if (
+                        pg_mapping.database_id != database_id
+                        or pg_mapping.status is not _PgMappingStatus.PUBLISHED
+                        or set(pg_mapping.fields) != set(CANONICAL_SELECT)
+                    ):
+                        return _error_response(SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value)
+                    pg_query_ir = _PgQueryIR.model_validate(
+                        {
+                            "entity": "CourseOffering",
+                            "select": list(CANONICAL_SELECT),
+                            "filters": [],
+                            "limit": MAX_ITEMS,
+                        }
+                    )
+                except Exception:
+                    return _error_response(SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value)
+                try:
+                    pg_compiled = compiler.compile(pg_query_ir, pg_mapping)
+                    sql_policy.validate(
+                        pg_compiled, query_ir=pg_query_ir, mapping=pg_mapping
+                    )
+                except Exception:
+                    return _error_response(SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value)
+                try:
+                    pg_columns, pg_rows = executor.execute(database_id, pg_compiled)
+                except Exception:
+                    return _error_response(SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value)
+                try:
+                    if not isinstance(pg_columns, list) or not isinstance(pg_rows, list):
+                        return _error_response(SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value)
+                    if set(pg_columns) != set(CANONICAL_SELECT) or len(pg_columns) != len(set(pg_columns)):
+                        return _error_response(SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value)
+                    if len(pg_rows) > MAX_ITEMS:
+                        return _error_response(SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value)
+                    pg_items: list[dict[str, Any]] = []
+                    for pg_row in pg_rows:
+                        if not isinstance(pg_row, dict) or set(pg_row.keys()) != set(pg_columns):
+                            return _error_response(SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value)
+                        pg_normalized = {str(key): pg_row[key] for key in pg_columns}
+                        pg_dto = coerce_canonical_row(pg_normalized)
+                        if pg_dto is None:
+                            return _error_response(SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value)
+                        pg_items.append(pg_dto)
+                    pg_items = sorted(
+                        pg_items,
+                        key=lambda item: (
+                            int(item["year"]),
+                            str(item["semester"]),
+                            str(item["course_code"]),
+                            str(item["section"]),
+                        ),
+                    )
+                    pg_items = apply_keyword_filter(pg_items, keyword)
+                    pg_payload = {
+                        "version": SYNTHETIC_CATALOG_VERSION,
+                        "database_id": database_id,
+                        "items": pg_items,
+                        "total": len(pg_items),
+                    }
+                    pg_text = json.dumps(pg_payload, ensure_ascii=False, sort_keys=True)
+                    return JSONResponse(status_code=200, content=json.loads(pg_text))
+                except Exception:
+                    return _error_response(SyntheticCatalogErrorCode.INTERNAL_ERROR.value)
+            if frozen_schema_by_id.get(database_id) == "postgres":
+                return _error_response(SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value)
             private_activation: Any = None
             if not registry.is_known(database_id):
                 private_activation = _load_private_activation(app, database_id)
