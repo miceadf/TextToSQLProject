@@ -472,3 +472,13 @@ def test_runtime_modules_do_not_import_direct_sql() -> None:
                 if isinstance(node, ast.Import):
                     for alias in node.names:
                         assert "direct_sql" not in alias.name, path
+
+
+def test_ollama_sql_provider_uses_patchable_transport_factory(monkeypatch: Any) -> None:
+    import backend.adaptive.api.ollama_startup as startup
+
+    transport = _Transport({"response": "SELECT 1"})
+    monkeypatch.setattr(startup, "build_loopback_transport", lambda _config: transport)
+    model = OllamaDirectSqlModel(parse_ollama_startup_config("synthetic-518:latest"))
+    assert model.generate_sql(_request()) == "SELECT 1"
+    assert len(transport.calls) == 1

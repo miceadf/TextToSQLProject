@@ -11,7 +11,8 @@ from __future__ import annotations
 import socket
 from typing import Any
 
-from ..api.ollama_startup import OllamaStartupConfig, build_loopback_transport
+from ..api import ollama_startup
+from ..api.ollama_startup import OllamaStartupConfig
 from ..harness.ollama import GENERATION_OPTIONS
 from .direct_sql import DirectSqlOutcome, DirectSqlProviderError, DirectSqlRequest
 
@@ -24,7 +25,8 @@ class OllamaDirectSqlModel:
     __slots__ = ("_url", "_model_tag", "_timeout", "_transport")
 
     def __init__(self, config: OllamaStartupConfig, *, transport: Any = None) -> None:
-        bound = build_loopback_transport(config) if transport is None else transport
+        # Module lookup (not a bound name) keeps one patchable transport factory.
+        bound = ollama_startup.build_loopback_transport(config) if transport is None else transport
         if not callable(bound):
             raise ValueError("INVALID_TRANSPORT")
         self._url = config.base_url + _GENERATE_PATH
