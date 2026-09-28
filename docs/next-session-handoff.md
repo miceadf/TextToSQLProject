@@ -58,7 +58,7 @@
 
 ## 새 대화의 최소 시작 순서
 
-1. 저장소 루트에서 `AGENTS.md`와 이 문서, 계획 문서의 **Phase 7 현재 체크포인트·ADR-048/049/050/051/052/053/054·다음 시작점**, `docs/human-validation-checkpoints.md`의 E3/L1/L2/L3/L4/L5를 읽는다.
+1. 저장소 루트에서 `AGENTS.md`와 이 문서, 계획 문서의 **Phase 7 현재 체크포인트·ADR-048/049/050/051/052/053/054/055·다음 시작점**, `docs/human-validation-checkpoints.md`의 E3/L1/L2/L3/L4/L5를 읽는다.
 2. `git status --short`, 최근 commit, 관련 코드·테스트를 확인한다. 문서는 방향을 알려주지만 구현 상태와 테스트 통과를 대신하지 않는다. Phase 7-08 범위는 `docs/prompts/phase7-08-server-owned-ollama-startup.md`에 둔다. 이 sandbox에서는 pytest 기본 임시 경로 쓰기가 막힐 수 있어 `--basetemp`와 `-p no:cacheprovider`를 쓴다.
 3. 현재 작업에 필요한 파일만 더 읽고 해당 범위의 테스트부터 실행한다. 이전 대화 전체나 저장소 전체를 다시 요약할 필요는 없다.
 
