@@ -350,6 +350,7 @@ def create_synthetic_clarification_prototype(
     postgres_profiles: list[Any] | None = None,
     postgres_adapters: dict[str, Any] | None = None,
     postgres_executors: dict[str, Any] | None = None,
+    ollama_model: Any | None = None,
 ) -> FastAPI:
     """Assemble the synthetic clarification prototype app."""
     tmp: Any = None
@@ -459,7 +460,20 @@ def create_synthetic_clarification_prototype(
             return actual == expected
 
         loader = _PrototypeContextLoader(schema_is_current, pg_contexts)
-        provider = _FixedConstraintProvider()
+        if ollama_model is None:
+            provider = _FixedConstraintProvider()
+        else:
+            try:
+                from ..harness.ollama import OllamaQueryModel
+                from ..harness.ollama_constraint import OllamaConstraintProvider
+            except Exception:
+                raise RuntimeError(_PROTOTYPE_CREATION_FAILURE) from None
+            if not isinstance(ollama_model, OllamaQueryModel):
+                raise RuntimeError(_PROTOTYPE_CREATION_FAILURE) from None
+            try:
+                provider = OllamaConstraintProvider(ollama_model)
+            except Exception:
+                raise RuntimeError(_PROTOTYPE_CREATION_FAILURE) from None
         executor = SQLiteReadOnlyExecutor(database_paths)
         guarded_executor = _SchemaGuardedExecutor(executor, schema_is_current)
         compiler = SingleTableSQLiteCompiler()

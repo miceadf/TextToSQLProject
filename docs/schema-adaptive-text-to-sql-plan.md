@@ -654,7 +654,8 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 - [x] Phase 7-04 server-owned PostgreSQL profile의 adaptive registry/catalog/clarification runtime 조립
 - [x] Phase 7-05 Git 비추적 private PostgreSQL startup profile strict load와 loopback CLI 주입
 - [x] Phase 7-06 frontend strict registry의 PostgreSQL 선택·catalog·clarification ID 연결
-- [ ] 데스크톱 Ollama provider 통합
+- [x] Phase 7-07 확인된 clarification constraint를 기존 Ollama provider에 연결하는 합성 transport 경계
+- [ ] Phase 7-08 server-owned Ollama startup 설정과 명시적 provider 선택
 - [ ] 실제 CNU DB regression test
 - [ ] SQL dialect 차이 처리
 - [ ] 응답시간·GPU/메모리 사용량 기록
@@ -1012,7 +1013,9 @@ Phase 7-05에서 loopback prototype CLI가 반복 가능한 database ID로 `.sch
 
 Phase 7-06에서 frontend strict registry의 허용 schema를 `flat | legacy | private | postgres`로 확장했다. PostgreSQL entry는 Phase 7-04와 같은 ASCII safe label만 허용하며 private DB의 한국어 label 예외는 확대하지 않는다. 메인 `DB 변경`의 기존 server-owned registry radio·명시적 적용·상태 초기화·sessionStorage 재검증을 그대로 재사용하고, 같은 database ID를 course catalog query와 prototype URL·clarification body에 전달한다. 저장된 ID가 registry에서 사라지거나 registry가 invalid/unavailable하면 legacy로 fail closed한다. DSN·환경변수 이름·host·port·physical schema/mapping/SQL을 browser state·URL·DOM에 추가하지 않았다. Luna가 제기한 JavaScript `$` trailing newline 가능성은 현재 Node에서 LF·CR·U+2028·U+2029 모두 재현되지 않아 적용하지 않았다. 관련 Node 30개, 변경 파일 ESLint, frontend build, 전체 pytest 780개·5 skip·470 subtests, compileall, diff check가 통과했다. 실제 PostgreSQL profile browser smoke·Ollama·CNU 자료는 사용하지 않았다. 구현 지침은 [`docs/prompts/phase7-06-postgres-frontend-selection.md`](prompts/phase7-06-postgres-frontend-selection.md)에 둔다.
 
-다음 시작점은 Phase 7-07로, 기존 `OllamaQueryModel`을 adaptive clarification의 server-owned provider 경계에 연결해 SQLite와 PostgreSQL 모두 동일한 DB 독립 QueryIR을 생성하도록 하는 합성 범위다. raw SQL fallback과 재학습은 추가하지 않고, live Ollama 호출·실제 학교 DB·성능 평가는 별도 opt-in 검증으로 분리한다.
+Phase 7-07에서 기존 `OllamaQueryModel`을 clarification의 `ConstraintAwareProvider` 경계에 연결했다. 확인된 entity/field 하나에 맞춰 ontology와 Published Mapping의 semantic context만 축소하고 모델을 정확히 한 번 호출한다. 모델 출력은 보정하지 않고 기존 QueryIR 검증·compiler·AST policy·DB별 executor를 그대로 통과한다. factory가 model을 명시적으로 주입한 경우에만 이 provider를 사용하고, 기본 synthetic provider는 유지한다. 독립 `gpt-6-luna` high review-only에서 nested ontology/mapping extra key가 strict 재검증을 통과하는 결함을 확인해 exact nested key 검사와 회귀 테스트를 추가했다. 관련 113개와 전체 pytest 816개·5 skip·470 subtests, compileall, diff check가 통과했다. live Ollama·CLI 설정·raw SQL fallback·재학습·실제 PostgreSQL/CNU 자료·frontend는 사용하거나 변경하지 않았다. 구현 지침은 [`docs/prompts/phase7-07-ollama-constraint-provider.md`](prompts/phase7-07-ollama-constraint-provider.md)에 둔다.
+
+다음 시작점은 Phase 7-08로, loopback CLI가 제한된 server-owned Ollama 설정을 명시적으로 받아 provider를 선택하도록 연결하는 범위다. 기본 app은 결정론 provider와 network 0회를 유지하고, startup에서 live 호출하지 않으며, 실제 Ollama smoke와 성능 평가는 별도 opt-in 단계로 분리한다.
 
 완료된 adapter 계약은 [`docs/prompts/phase5-07-ollama-querymodel-adapter.md`](prompts/phase5-07-ollama-querymodel-adapter.md)에, 합성 live smoke의 수행 지침은 [`docs/prompts/phase5-08-ollama-adapter-live-smoke.md`](prompts/phase5-08-ollama-adapter-live-smoke.md)에 둔다. 모델이 반환한 SQL 등 비 JSON 텍스트는 원문 문자열로 보존해 후속 Query IR 검증 실패로 드러내며, provider 호출 실패와 혼합하지 않는다.
 
@@ -1556,6 +1559,13 @@ SQLite DB 입력
 - 결정: frontend strict registry는 기존 exact entry shape를 유지한 채 `schema=postgres` literal만 추가로 허용한다. PostgreSQL label은 backend profile과 같은 ASCII safe 형식을 요구하고, 항목을 하드코딩하거나 browser에서 profile·credential을 만들지 않는다. 메인 화면과 prototype은 registry membership으로 선택·복원을 재검증하고, 명시적 적용 뒤 기존 상태 초기화를 수행하며, 동일 database ID만 catalog와 clarification에 전달한다. registry에서 사라진 ID와 invalid/unavailable registry는 legacy 기준선으로 되돌린다.
 - 이유: DBMS별 frontend 실행 분기를 새로 만들면 browser가 dialect·credential·mapping 권한을 갖거나 catalog와 clarification이 서로 다른 DB를 사용할 위험이 생긴다. server-owned registry ID만 기존 공통 흐름에 통과시키면 PostgreSQL 실행 권한은 backend에 남고 SQLite·legacy 상태 전이를 회귀 없이 재사용할 수 있다.
 
+### ADR-054: Ollama는 확인된 semantic constraint 안에서 QueryIR만 생성하고 기존 실행 경계를 우회하지 않음
+
+- 날짜: 2026-09-28
+- 상태: 채택
+- 결정: adaptive clarification은 server-owned factory가 명시적으로 주입한 기존 `OllamaQueryModel`을 `ConstraintAwareProvider`로 감싼다. provider는 request·ontology·Published Mapping·constraint를 strict 재검증하고, 확인된 entity 또는 field에 필요한 semantic context만 전달해 모델을 정확히 한 번 호출한다. 모델 응답은 수정하거나 raw SQL로 대체하지 않고 기존 QueryIR constraint 검증, compiler, AST policy, DB별 read-only executor에 맡긴다. provider 미주입 기본 app은 기존 결정론 provider와 network 0회를 유지한다.
+- 이유: 모델이 전체 schema나 physical identifier를 보거나 DBMS별 SQL을 직접 만들게 하면 확인 선택의 의미 제한과 dialect·정책 경계가 약해진다. semantic context 최소화와 기존 실행 파이프라인 재사용은 SQLite/PostgreSQL에 같은 DB 독립 QueryIR 계약을 적용하고 provider 오류·잘못된 출력을 fail closed로 유지한다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -1774,3 +1784,4 @@ SQLite DB 입력
 - Phase 7-04 server-owned PostgreSQL runtime registry 조립 완료. strict immutable profile, startup catalog/mapping/graph 검증, registry `postgres` entry, catalog·clarification DB별 compiler/policy/executor routing, context load·실행 직전 drift 차단, credential·physical identifier·SQL·driver 오류 redaction을 구현했다. Luna review-only의 compiler/policy 예외 반사와 catalog executor 우회를 수정했고, 실제 PostgreSQL 18 HTTP smoke에서 registry 200·canonical catalog 6행·clarification 성공을 확인하며 `Decimal` JSON 직렬화 결함을 수정했다. 관련 신규·회귀 90개·7 subtests 및 private 회귀 45개·1 skip, 전체 pytest 772개·5 skip·470 subtests, compileall, diff check 통과. 임시 cluster/schema 제거 완료. 기본 app은 profile 0개이며 실제 CNU·Ollama·frontend 변경은 없다. ADR-051 추가
 - Phase 7-05 private PostgreSQL startup profile 완료. CLI database ID를 고정 Git ignored·untracked profile/mapping 경로에만 연결하고, 256 KiB bounded read·strict JSON·mapping SHA-256·명시적 `PUBLISHED`·별도 DSN 환경변수로 Phase 7-04 runtime profile을 조립한다. option 없는 기본 app은 private/environment/PostgreSQL 접근 0회다. Luna review-only actionable 결함은 없었고, Luna residual risk와 메인 독립 검토에서 확인한 제한 전 전체 파일 read를 공용 private reader의 하위 호환 `max_bytes`로 수정했다. 관련 51개·2 skip, 전체 pytest 780개·5 skip·470 subtests, compileall, diff check 통과. 실제 PostgreSQL/CNU/Ollama/frontend 변경 없음. ADR-052 추가
 - Phase 7-06 PostgreSQL frontend 선택 연결 완료. strict registry parser에 `postgres` literal과 backend 동등 ASCII label 계약을 추가하고, 기존 server-owned radio·명시적 적용·sessionStorage 재검증·상태 초기화·catalog/clarification 동일 ID 전달을 재사용했다. DSN·physical metadata·SQL은 browser에 추가하지 않았다. Luna의 trailing newline 정규식 지적은 Node에서 LF·CR·U+2028·U+2029 모두 재현되지 않아 미적용했다. 관련 Node 30개, ESLint, frontend build, 전체 pytest 780개·5 skip·470 subtests, compileall, diff check 통과. 실제 PostgreSQL browser smoke·Ollama·CNU 자료 없음. ADR-053 추가
+- Phase 7-07 Ollama clarification constraint provider 완료. 확인된 entity/field에 맞춰 ontology·Published Mapping semantic context를 축소하고 기존 `OllamaQueryModel`을 1회 호출하며, 응답은 기존 QueryIR validation/compiler/policy/executor 경계를 그대로 통과한다. server-owned factory 명시 주입만 허용하고 기본 synthetic provider·network 0회를 유지했다. Luna review-only에서 확인한 nested extra-key 허용을 strict nested shape 검사로 수정했다. 관련 113개와 전체 pytest 816개·5 skip·470 subtests, compileall, diff check 통과. live Ollama·CLI 설정·raw SQL fallback·재학습·실제 PostgreSQL/CNU·frontend 변경 없음. ADR-054 추가
