@@ -681,6 +681,13 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="SECONDS",
         help="Ollama request timeout in seconds (1-120).",
     )
+    parser.add_argument(
+        "--ollama-request-format",
+        action=_StoreOnce,
+        default=None,
+        metavar="FORMAT",
+        help="Required with Ollama: model-template or alpaca-raw-no-system-v1.",
+    )
     return parser
 
 
@@ -729,6 +736,7 @@ def main(argv: list[str] | None = None) -> int:
         getattr(args, "ollama_model_tag", None),
         getattr(args, "ollama_base_url", None),
         getattr(args, "ollama_timeout", None),
+        getattr(args, "ollama_request_format", None),
     )
     ollama_model: Any = None
     if any(value is not None for value in ollama_values):
@@ -739,7 +747,8 @@ def main(argv: list[str] | None = None) -> int:
                 parse_ollama_startup_config,
             )
 
-            if ollama_values[0] is None:
+            # Enabling Ollama requires both the tag and an explicit request format.
+            if ollama_values[0] is None or ollama_values[3] is None:
                 raise ValueError(_CLI_CONFIG_FAILURE)
             ollama_model = build_startup_ollama_model(
                 parse_ollama_startup_config(*ollama_values)

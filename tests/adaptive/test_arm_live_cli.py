@@ -295,3 +295,13 @@ def test_no_system_wrapper_exact_bytes_and_no_mutation() -> None:
             wrapped("u", bad, 1.0)  # type: ignore[arg-type]
     with pytest.raises(RequestFormatError):
         apply_request_format(lambda *a: None, "other")
+
+
+@pytest.mark.parametrize("extra", [["--ollama-request-format", ""], ["--repository-root", ""]])
+def test_empty_values_fail_closed(tmp_path: Path, monkeypatch: Any, capsys: Any, extra: list[str]) -> None:
+    monkeypatch.setattr(startup, "build_loopback_transport", lambda _c: (_ for _ in ()).throw(AssertionError()))
+    argv = ["--live-synthetic", "--ollama-model-tag", TAG, "--output-name", "run-e", *extra]
+    if "--repository-root" not in extra:
+        argv += ["--repository-root", str(tmp_path)]
+    code, payload, _ = _run(argv, capsys)
+    assert code == 2 and payload == {"status": "CONFIG_ERROR"}

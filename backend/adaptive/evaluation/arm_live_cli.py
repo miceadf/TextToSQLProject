@@ -19,7 +19,6 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from ..api import ollama_startup
 from ..api.ollama_startup import build_startup_ollama_model, parse_ollama_startup_config
 from ..fixtures import build_fixture_bundle
 from ..ontology.loader import load_default_ontology
@@ -29,8 +28,6 @@ from .direct_sql_ollama import OllamaDirectSqlModel
 from .loader import load_evaluation_set
 from .ollama_request_format import (
     REQUEST_FORMAT_MODEL_TEMPLATE,
-    REQUEST_FORMATS,
-    apply_request_format,
     request_format_label,
 )
 from .run_contracts import EvaluationRunConfig
@@ -118,11 +115,6 @@ def _summary(ir: Any, sql: Any, comparison: Any, request_format: str) -> dict[st
     }
 
 
-def _transport(config: Any, request_format: str) -> Any:
-    """Same loopback transport and request format for both arms."""
-    return apply_request_format(ollama_startup.build_loopback_transport(config), request_format)
-
-
 def _is_link(path: Path) -> bool:
     """Symlink or Windows junction (``is_junction`` exists on Python 3.12+)."""
     return path.is_symlink() or bool(getattr(path, "is_junction", lambda: False)())
@@ -154,13 +146,15 @@ def main(argv: list[str] | None = None) -> int:
         if args.ollama_model_tag is None or args.output_name is None:
             raise ValueError(_FIXED_ERROR)
         config = parse_ollama_startup_config(
-            args.ollama_model_tag, args.ollama_base_url, args.ollama_timeout
+            args.ollama_model_tag,
+            args.ollama_base_url,
+            args.ollama_timeout,
+            # None only means "not given"; an empty value must fail closed in the parser.
+            args.ollama_request_format,
         )
         if _OUTPUT_NAME.fullmatch(args.output_name) is None:
             raise ValueError(_FIXED_ERROR)
-        request_format = args.ollama_request_format or REQUEST_FORMAT_MODEL_TEMPLATE
-        if request_format not in REQUEST_FORMATS:
-            raise ValueError(_FIXED_ERROR)
+        request_format = config.request_format
         label = config.model_tag.replace(":", "-")
         # model-template keeps the Phase 5-19 IDs; other formats get a prefix a
         # model tag cannot produce, so tag/format combinations never share run IDs.
@@ -172,7 +166,9 @@ def main(argv: list[str] | None = None) -> int:
         ir_run_id, sql_run_id = f"{run_prefix}-ir-{label}", f"{run_prefix}-sql-{label}"
         if any(_RUN_ID.fullmatch(value) is None for value in (label, ir_run_id, sql_run_id)):
             raise ValueError(_FIXED_ERROR)
-        root = Path(args.repository_root or Path.cwd()).resolve()
+        if args.repository_root is not None and not args.repository_root:
+            raise ValueError(_FIXED_ERROR)
+        root = Path(Path.cwd() if args.repository_root is None else args.repository_root).resolve()
         private_dir = root / ".schema-adaptive"
         reports_root = private_dir / "reports"
         output_dir = reports_root / args.output_name
@@ -201,14 +197,14 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             ir_report = run_evaluation(
                 gold,
-                build_startup_ollama_model(config, transport=_transport(config, request_format)),
+                build_startup_ollama_model(config),
                 ir_config,
                 bundle,
                 ontology=ontology,
             )
             sql_report = run_direct_sql_evaluation(
                 gold,
-                OllamaDirectSqlModel(config, transport=_transport(config, request_format)),
+                OllamaDirectSqlModel(config),
                 sql_config,
                 bundle,
                 ontology=ontology,

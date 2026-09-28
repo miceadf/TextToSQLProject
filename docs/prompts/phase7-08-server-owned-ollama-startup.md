@@ -1,5 +1,7 @@
 # Phase 7-08 구현 지침: server-owned Ollama startup 설정과 명시적 provider 선택
 
+> Phase 7-10 이후: Ollama를 켤 때 `--ollama-request-format`(`model-template`|`alpaca-raw-no-system-v1`)이 필수다. 최신 계약은 [`phase7-10-runtime-ollama-request-format.md`](phase7-10-runtime-ollama-request-format.md)를 따른다.
+
 ## 목표
 
 loopback prototype CLI(`python -m backend.adaptive.api.synthetic_prototype`)가 제한된 server-owned Ollama 설정을 명시적 option으로만 받아 기존 `OllamaQueryModel`을 조립하고, Phase 7-07 factory 인자 `ollama_model=`로 주입한다. option이 없으면 기존 결정론 `_FixedConstraintProvider`, environment·Ollama 접근 0회, network 0회를 그대로 유지한다. startup은 설정 검증과 adapter 조립만 하고 모델을 호출하지 않는다. 실제 호출은 clarification `submit`의 확인된 option 실행 시점에만 일어난다.

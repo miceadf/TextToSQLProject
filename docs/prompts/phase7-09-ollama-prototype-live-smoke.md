@@ -1,5 +1,7 @@
 # Phase 7-09 구현 지침: 합성 prototype Ollama end-to-end live smoke
 
+> Phase 7-10 이후: Ollama를 켤 때 `--ollama-request-format`(`model-template`|`alpaca-raw-no-system-v1`)이 필수다. 최신 계약은 [`phase7-10-runtime-ollama-request-format.md`](phase7-10-runtime-ollama-request-format.md)를 따른다.
+
 ## 목표
 
 Phase 7-08 server-owned Ollama 설정으로 조립한 합성 clarification prototype을 로컬 Ollama에 실제로 연결해, 완전 합성 질문으로 `start → option 선택 → submit → QueryIR 검증 → compile → policy → read-only 실행` 전체 경계가 live 환경에서 유지되는지 확인한다. 이 단계는 **형식·경계 smoke**이며 모델 정확도·성능 평가가 아니다.

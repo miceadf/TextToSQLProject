@@ -14,6 +14,7 @@ from typing import Any
 from ..api import ollama_startup
 from ..api.ollama_startup import OllamaStartupConfig
 from ..harness.ollama import GENERATION_OPTIONS
+from ..harness.ollama_request_format import apply_request_format
 from .direct_sql import DirectSqlOutcome, DirectSqlProviderError, DirectSqlRequest
 
 
@@ -26,9 +27,11 @@ class OllamaDirectSqlModel:
 
     def __init__(self, config: OllamaStartupConfig, *, transport: Any = None) -> None:
         # Module lookup (not a bound name) keeps one patchable transport factory.
-        bound = ollama_startup.build_loopback_transport(config) if transport is None else transport
-        if not callable(bound):
+        base = ollama_startup.build_loopback_transport(config) if transport is None else transport
+        if not callable(base):
             raise ValueError("INVALID_TRANSPORT")
+        # Same single application of the config's request format as the IR arm.
+        bound = apply_request_format(base, config.request_format)
         self._url = config.base_url + _GENERATE_PATH
         self._model_tag = config.model_tag
         self._timeout = config.timeout_seconds

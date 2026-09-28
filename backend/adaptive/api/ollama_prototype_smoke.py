@@ -248,6 +248,7 @@ def run_prototype_smoke(config: Any) -> dict[str, Any]:
         "version": OLLAMA_PROTOTYPE_SMOKE_VERSION,
         "status": "COMPLETED" if boundary_ok else "BOUNDARY_VIOLATION",
         "model_tag": config.model_tag,
+        "request_format": config.request_format,
         "prompt_version": OLLAMA_STARTUP_PROMPT_VERSION,
         "timeout_seconds": config.timeout_seconds,
         "summary": {
@@ -278,6 +279,7 @@ def check_prototype_smoke(config: Any) -> dict[str, Any]:
         "version": OLLAMA_PROTOTYPE_SMOKE_VERSION,
         "status": "CHECKED",
         "model_tag": config.model_tag,
+        "request_format": config.request_format,
         "prompt_version": OLLAMA_STARTUP_PROMPT_VERSION,
         "timeout_seconds": config.timeout_seconds,
         "model_calls": 0,
@@ -295,6 +297,7 @@ def _build_parser() -> Any:
     parser.add_argument("--ollama-model-tag", action=_StoreOnce, default=None, metavar="TAG")
     parser.add_argument("--ollama-base-url", action=_StoreOnce, default=None, metavar="URL")
     parser.add_argument("--ollama-timeout", action=_StoreOnce, default=None, metavar="SECONDS")
+    parser.add_argument("--ollama-request-format", action=_StoreOnce, default=None, metavar="FORMAT")
     return parser
 
 
@@ -308,10 +311,13 @@ def main(argv: list[str] | None = None) -> int:
         _emit(_CONFIG_ERROR)
         return 2
     try:
-        if args.ollama_model_tag is None:
+        if args.ollama_model_tag is None or args.ollama_request_format is None:
             raise ValueError(_CLI_CONFIG_FAILURE)
         config = parse_ollama_startup_config(
-            args.ollama_model_tag, args.ollama_base_url, args.ollama_timeout
+            args.ollama_model_tag,
+            args.ollama_base_url,
+            args.ollama_timeout,
+            args.ollama_request_format,
         )
     except Exception:
         _emit(_CONFIG_ERROR)

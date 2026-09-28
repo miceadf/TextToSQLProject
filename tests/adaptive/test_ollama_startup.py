@@ -37,6 +37,7 @@ from backend.adaptive.api.synthetic_prototype import (
 )
 from backend.adaptive.harness import OllamaQueryModel
 from backend.adaptive.harness.ollama_constraint import OllamaConstraintProvider
+from backend.adaptive.harness.ollama_request_format import ALPACA_NO_SYSTEM_PREFIX, ALPACA_NO_SYSTEM_SUFFIX
 from tests.adaptive.test_ollama_constraint_provider import (
     PG_DATABASE_ID,
     QUESTION_BASE,
@@ -129,7 +130,7 @@ def test_parse_rejects_bad_timeout(timeout: Any) -> None:
 def test_config_repr_and_errors_do_not_leak_values() -> None:
     config = parse_ollama_startup_config(TAG, "http://127.0.0.1:11999", "7")
     for text in (repr(config), str(config)):
-        assert text == "OllamaStartupConfig(version='ollama-startup-config-v1')"
+        assert text == "OllamaStartupConfig(version='ollama-startup-config-v2')"
     with pytest.raises(OllamaStartupConfigError) as info:
         parse_ollama_startup_config(f"{SECRET_URL_MARKER}\n", "http://127.0.0.1:11999")
     _assert_fixed_config_error(info.value)
@@ -482,6 +483,7 @@ def test_cli_with_options_injects_model_without_calling_it(
         "--ollama-model-tag", TAG,
         "--ollama-base-url", "http://[::1]:11777",
         "--ollama-timeout", "45",
+        "--ollama-request-format", "model-template",
     ]
     assert proto.main(argv) == 0
     assert set(seen["kwargs"]) == {"ollama_model"}
@@ -508,7 +510,7 @@ def test_cli_with_postgres_and_ollama_passes_both(monkeypatch: Any) -> None:
         pg_startup, "load_postgres_startup_profiles", lambda **_k: sentinel_profiles
     )
     _uvicorn, seen = _install_fakes(monkeypatch)
-    assert proto.main(["--postgres-profile-id", "synth-pg", "--ollama-model-tag", TAG]) == 0
+    assert proto.main(["--postgres-profile-id", "synth-pg", "--ollama-model-tag", TAG, "--ollama-request-format", "model-template"]) == 0
     assert seen["kwargs"]["postgres_profiles"] is sentinel_profiles
     assert type(seen["kwargs"]["ollama_model"]) is OllamaQueryModel
 
@@ -577,7 +579,7 @@ def test_cli_real_factory_end_to_end_with_synthetic_transport(
         results["text"] = response.text
 
     monkeypatch.setitem(sys.modules, "uvicorn", _FakeUvicorn(on_run))
-    assert proto.main(["--ollama-model-tag", TAG, "--ollama-timeout", "9"]) == 0
+    assert proto.main(["--ollama-model-tag", TAG, "--ollama-timeout", "9", "--ollama-request-format", "alpaca-raw-no-system-v1"]) == 0
     assert results["status"] == 200
     assert results["body"]["execution"]["status"] == "SUCCEEDED"
     assert results["body"]["execution"]["columns"] == ["Instructor.name"]
@@ -586,6 +588,9 @@ def test_cli_real_factory_end_to_end_with_synthetic_transport(
     assert url == DEFAULT_OLLAMA_BASE_URL + "/api/generate"
     assert timeout == 9.0
     assert payload["model"] == TAG
+    assert payload["raw"] is True
+    assert payload["prompt"].startswith(ALPACA_NO_SYSTEM_PREFIX)
+    assert payload["prompt"].endswith(ALPACA_NO_SYSTEM_SUFFIX)
     context = json.loads(payload["prompt"].split("Context: ", 1)[1].split("\nQuestion:", 1)[0])
     assert context["available_fields"] == ["Instructor.name"]
     assert context["entities"] == ["Instructor"]
@@ -666,3 +671,60 @@ def test_startup_model_transport_failure_is_redacted_http_error() -> None:
     assert len(failing.calls) == 1
     for secret in (TAG, "OLLAMA_LOOPBACK_TRANSPORT_ERROR", "127.0.0.1"):
         assert secret not in response.text
+
+
+# --------------------------------------------------------------------------
+# Phase 7-10: explicit request format
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--ollama-model-tag", TAG],
+        ["--ollama-request-format", "alpaca-raw-no-system-v1"],
+        ["--ollama-model-tag", TAG, "--ollama-request-format", "raw"],
+        ["--ollama-model-tag", TAG, "--ollama-request-format", "model-template", "--ollama-request-format", "model-template"],
+    ],
+)
+def test_cli_requires_explicit_valid_request_format(monkeypatch: Any, capsys: Any, argv: list[str]) -> None:
+    uvicorn, seen = _install_fakes(monkeypatch)
+    monkeypatch.setattr(startup, "build_loopback_transport", _explode)
+    try:
+        code = proto.main(argv)
+    except SystemExit as exc:
+        code = exc.code
+    assert code == 2
+    assert seen["factory_calls"] == 0 and uvicorn.calls == []
+    out, err = capsys.readouterr()
+    assert err.strip() == FIXED_CLI_ERROR
+
+
+def test_config_request_format_contract() -> None:
+    assert parse_ollama_startup_config(TAG).request_format == "model-template"
+    assert parse_ollama_startup_config(TAG, None, None, "alpaca-raw-no-system-v1").request_format == "alpaca-raw-no-system-v1"
+    for bad in ("raw", "", " model-template", 1, b"model-template"):
+        with pytest.raises(OllamaStartupConfigError):
+            parse_ollama_startup_config(TAG, None, None, bad)
+    forged = OllamaStartupConfig(DEFAULT_OLLAMA_BASE_URL, TAG, 30.0, "raw")
+    with pytest.raises(OllamaStartupConfigError):
+        build_startup_ollama_model(forged, transport=CountingTransport([]))
+    config = parse_ollama_startup_config(TAG, None, None, "alpaca-raw-no-system-v1")
+    assert "alpaca" not in repr(config) and TAG not in repr(config)
+
+
+def test_builder_applies_request_format_once() -> None:
+    from backend.adaptive.harness import HarnessRequest
+    from backend.adaptive.api.synthetic_prototype import _build_mapping, _build_ontology
+
+    request = HarnessRequest(request_id="r710", database_id=SYNTHETIC_PROTOTYPE_DATABASE_ID, question="합성 질문 P710")
+    for fmt, raw in (("model-template", None), ("alpaca-raw-no-system-v1", True)):
+        transport = CountingTransport([{"response": "{}"}])
+        model = build_startup_ollama_model(parse_ollama_startup_config(TAG, None, None, fmt), transport=transport)
+        model.generate_ir(request, _build_ontology(), _build_mapping())
+        sent = transport.calls[0][1]
+        assert sent.get("raw") is raw
+        if raw:
+            assert sent["prompt"].count(ALPACA_NO_SYSTEM_PREFIX) == 1
+            assert sent["prompt"].endswith("합성 질문 P710" + ALPACA_NO_SYSTEM_SUFFIX)
+        else:
+            assert ALPACA_NO_SYSTEM_PREFIX not in sent["prompt"]

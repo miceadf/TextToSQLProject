@@ -58,7 +58,10 @@ def _record_http(monkeypatch: Any) -> dict[str, list[str]]:
 
 
 def _live(capsys: Any, *extra: str) -> tuple[int, dict[str, Any], str]:
-    return _run(["--live-synthetic", "--ollama-model-tag", TAG, *extra], capsys)
+    return _run(
+        ["--live-synthetic", "--ollama-model-tag", TAG, "--ollama-request-format", "alpaca-raw-no-system-v1", *extra],
+        capsys,
+    )
 
 
 def test_live_smoke_success_path(monkeypatch: Any, capsys: Any) -> None:
@@ -76,6 +79,7 @@ def test_live_smoke_success_path(monkeypatch: Any, capsys: Any) -> None:
     assert payload["version"] == "ollama-prototype-smoke-v1"
     assert payload["model_tag"] == TAG
     assert payload["prompt_version"] == "query-ir-v1"
+    assert payload["request_format"] == "alpaca-raw-no-system-v1"
     assert payload["timeout_seconds"] == 60.0
     assert payload["summary"] == {
         "submit_cases": 4,
@@ -112,6 +116,7 @@ def test_live_smoke_success_path(monkeypatch: Any, capsys: Any) -> None:
         transport.calls, ["Course.name", "Instructor.name", "Course.name", "Instructor.name"]
     ):
         assert timeout == 60.0
+        assert payload_sent["raw"] is True
         context = json.loads(payload_sent["prompt"].split("Context: ", 1)[1].split("\nQuestion:", 1)[0])
         assert context["available_fields"] == [ref]
     for secret in ("127.0.0.1", "11434", "강의", "SELECT", "session_token", "option_id"):
@@ -235,7 +240,7 @@ def test_check_mode_assembles_without_calls(monkeypatch: Any, capsys: Any) -> No
         return app
 
     monkeypatch.setattr(smoke, "create_synthetic_clarification_prototype", _factory)
-    code, payload, _text = _run(["--check", "--ollama-model-tag", TAG], capsys)
+    code, payload, _text = _run(["--check", "--ollama-model-tag", TAG, "--ollama-request-format", "model-template"], capsys)
     assert code == 0
     assert payload["status"] == "CHECKED"
     assert payload["model_calls"] == 0
@@ -314,3 +319,17 @@ def test_argparse_errors_are_fixed(monkeypatch: Any, capsys: Any, argv: list[str
     assert err.strip() == "synthetic prototype invalid configuration"
     assert SECRET_MARKER not in out + err
     assert TAG not in out + err
+
+
+
+def test_request_format_is_required(monkeypatch: Any, capsys: Any) -> None:
+    def _explode(*_a: Any, **_k: Any) -> Any:
+        raise AssertionError("must not assemble")
+
+    monkeypatch.setattr(startup, "build_loopback_transport", _explode)
+    for argv in (
+        ["--live-synthetic", "--ollama-model-tag", TAG],
+        ["--check", "--ollama-model-tag", TAG, "--ollama-request-format", "raw"],
+    ):
+        code, payload, _ = _run(argv, capsys)
+        assert code == 2 and payload == {"status": "CONFIG_ERROR"}

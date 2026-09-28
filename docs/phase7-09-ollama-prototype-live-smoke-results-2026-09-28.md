@@ -44,3 +44,11 @@ smoke 뒤 같은 설정으로 별도 진단 호출 3건(flat 2건 + 재확인 1�
 ## 사람 관문
 
 완전 합성 입력만 사용해 E3·L5 대상 자료가 없다. 실제 학교 DB(L2)·UX 확정(L4)과 무관하며 승인 상태는 바꾸지 않았다.
+
+## 추가 기록: 내장 SYSTEM 제거 후 재실행 (Phase 7-10, 2026-09-29)
+
+- 이 smoke의 원래 실행은 `text2sql_qwen:latest` Modelfile의 내장 CNU `courses` SYSTEM이 주입된 조건이었다(ADR-058).
+- Phase 7-10에서 runtime 요청 형식을 명시하게 한 뒤 `--ollama-request-format alpaca-raw-no-system-v1`로 `--check`(호출 0회)와 `--live-synthetic` 1회를 다시 실행했다. 경계는 `COMPLETED`(호출 4/4, cancel·no-match 0회)였다.
+- `Instructor.name` submit 2건(flat·legacy)은 `EXECUTED_SUCCEEDED`, columns가 선택 field와 일치했으나 0행이었다. **성공 실행 경로(QueryIR 검증→compile→policy→read-only 실행)가 처음으로 live로 통과**했다.
+- `Course.name` submit 2건은 여전히 `CONSTRAINT_INVALID_QUERY_IR`였다. 비노출 구조 분류(진단 4 호출)에서 Course는 질문 전체를 값으로 한 `equals` filter(reflection guard 거부), Instructor는 질문의 일부 문자열을 값으로 한 `contains` filter(guard 통과, 0행)였다.
+- 해석: 목록 전체를 묻는 질문에 불필요한 filter를 붙이는 경향은 내장 SYSTEM과 무관하게 남는 모델 출력 특성이다. 고정 합성 질문의 `합성 스모크 P709:` 접두어가 이를 유도했을 가능성도 있다. guard·prompt는 바꾸지 않았고 prompt 개선 후보로 남긴다.

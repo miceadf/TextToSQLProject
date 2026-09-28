@@ -30,10 +30,15 @@ from ..harness.ollama import (
     _reject_duplicate_keys,
     _reject_non_finite,
 )
+from ..harness.ollama_request_format import (
+    REQUEST_FORMAT_MODEL_TEMPLATE,
+    REQUEST_FORMATS,
+    apply_request_format,
+)
 from ..harness.recording_bundle_contracts import SAFE_LABEL_PATTERN
 
 
-OLLAMA_STARTUP_CONFIG_VERSION = "ollama-startup-config-v1"
+OLLAMA_STARTUP_CONFIG_VERSION = "ollama-startup-config-v2"
 OLLAMA_STARTUP_PROMPT_VERSION = "query-ir-v1"
 DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434"
 DEFAULT_OLLAMA_TIMEOUT = "30"
@@ -75,6 +80,7 @@ class OllamaStartupConfig:
     base_url: str
     model_tag: str
     timeout_seconds: float
+    request_format: str = REQUEST_FORMAT_MODEL_TEMPLATE
 
     def __repr__(self) -> str:
         return _CONFIG_REPR
@@ -119,25 +125,38 @@ def parse_ollama_startup_config(
     model_tag: object,
     base_url: object = None,
     timeout: object = None,
+    request_format: object = None,
 ) -> OllamaStartupConfig:
     """Build a config from raw CLI strings; ``None`` selects the default.
 
     ``model_tag`` has no default: it is the explicit activation switch.
+    ``request_format`` defaults to ``model-template`` for existing callers;
+    runtime CLIs require it explicitly (ADR-059).
     """
     try:
         url = DEFAULT_OLLAMA_BASE_URL if base_url is None else base_url
         raw_timeout = DEFAULT_OLLAMA_TIMEOUT if timeout is None else timeout
-        if not _valid_model_tag(model_tag) or not _valid_base_url(url):
+        fmt = REQUEST_FORMAT_MODEL_TEMPLATE if request_format is None else request_format
+        if (
+            not _valid_model_tag(model_tag)
+            or not _valid_base_url(url)
+            or not _valid_request_format(fmt)
+        ):
             raise OllamaStartupConfigError()
         return OllamaStartupConfig(
             base_url=url,  # type: ignore[arg-type]
             model_tag=model_tag,  # type: ignore[arg-type]
             timeout_seconds=_parse_timeout(raw_timeout),
+            request_format=fmt,  # type: ignore[arg-type]
         )
     except OllamaStartupConfigError:
         raise OllamaStartupConfigError() from None
     except Exception:
         raise OllamaStartupConfigError() from None
+
+
+def _valid_request_format(value: object) -> bool:
+    return type(value) is str and value in REQUEST_FORMATS
 
 
 def _validate_config(config: object) -> OllamaStartupConfig:
@@ -146,6 +165,7 @@ def _validate_config(config: object) -> OllamaStartupConfig:
         or not _valid_base_url(config.base_url)
         or not _valid_model_tag(config.model_tag)
         or not _valid_timeout_seconds(config.timeout_seconds)
+        or not _valid_request_format(config.request_format)
     ):
         raise OllamaStartupConfigError()
     return config
@@ -249,7 +269,9 @@ def build_startup_ollama_model(
     """Assemble the existing adapter without calling it."""
     try:
         valid = _validate_config(config)
-        bound = build_loopback_transport(valid) if transport is None else transport
+        base = build_loopback_transport(valid) if transport is None else transport
+        # The config's request format is applied exactly once, here.
+        bound = apply_request_format(base, valid.request_format)
         return OllamaQueryModel(
             valid.base_url,
             valid.model_tag,
