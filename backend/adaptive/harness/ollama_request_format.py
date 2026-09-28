@@ -65,6 +65,9 @@ class _NoSystemTransport:
 
 
 def apply_request_format(transport: Any, request_format: str) -> Any:
+    # Check the original transport first so no format can mask a bad one.
+    if not callable(transport):
+        raise RequestFormatError()
     if request_format == REQUEST_FORMAT_MODEL_TEMPLATE:
         return transport
     if request_format == REQUEST_FORMAT_NO_SYSTEM:

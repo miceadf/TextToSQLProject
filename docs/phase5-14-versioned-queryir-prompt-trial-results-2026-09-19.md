@@ -1,5 +1,7 @@
 # Phase 5-14 versioned QueryIR prompt 단일 탐색 비교 (2026-09-19)
 
+> 추가 기록(2026-09-29, Phase 5-20·7-11): 이 실행의 Ollama 호출은 `text2sql_qwen:latest` Modelfile에 내장된 CNU `courses` schema SYSTEM이 주입된 조건(`model-template`)이었다. 수집 당시 provenance에는 이 조건이 드러나지 않는다. no-system 조건과 비교할 때는 ADR-058~060을 따른다.
+
 > 상태: **같은 미승인 합성 개발 세트의 잠정 결과**. Gold 40건 모두 `NEEDS_HUMAN_REVIEW`. 모델 성능 확정 또는 일반화 근거가 아니다.
 
 ## 가설과 조건

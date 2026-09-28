@@ -728,3 +728,68 @@ def test_builder_applies_request_format_once() -> None:
             assert sent["prompt"].endswith("합성 질문 P710" + ALPACA_NO_SYSTEM_SUFFIX)
         else:
             assert ALPACA_NO_SYSTEM_PREFIX not in sent["prompt"]
+
+
+# --------------------------------------------------------------------------
+# Phase 7-11: request format inside the model, fail-fast, provenance
+
+
+@pytest.mark.parametrize("fmt", ["model-template", "alpaca-raw-no-system-v1"])
+def test_non_callable_transport_fails_at_build_for_every_format(fmt: str) -> None:
+    from backend.adaptive.evaluation.direct_sql_ollama import OllamaDirectSqlModel
+    from backend.adaptive.harness.ollama_request_format import RequestFormatError, apply_request_format
+
+    config = parse_ollama_startup_config(TAG, None, None, fmt)
+    with pytest.raises(OllamaStartupConfigError) as info:
+        build_startup_ollama_model(config, transport=object())
+    _assert_fixed_config_error(info.value)
+    with pytest.raises(ValueError, match="^INVALID_OLLAMA_TRANSPORT$"):
+        OllamaQueryModel(DEFAULT_OLLAMA_BASE_URL, TAG, 30.0, transport=object(), request_format=fmt)  # type: ignore[arg-type]
+    with pytest.raises(RequestFormatError):
+        apply_request_format(object(), fmt)
+    with pytest.raises(ValueError):
+        OllamaDirectSqlModel(config, transport=object())
+
+
+def test_model_rejects_unknown_request_format() -> None:
+    for bad in ("raw", "", 1):
+        with pytest.raises(ValueError, match="^INVALID_OLLAMA_REQUEST_FORMAT$"):
+            OllamaQueryModel(DEFAULT_OLLAMA_BASE_URL, TAG, 30.0, transport=CountingTransport([]), request_format=bad)  # type: ignore[arg-type]
+
+
+def test_provenance_distinguishes_request_format_and_keeps_template_hash() -> None:
+    def _prov(fmt: str | None) -> Any:
+        model = OllamaQueryModel(
+            "http://127.0.0.1:11434", "text2sql_qwen:latest", 30.0,
+            transport=CountingTransport([]), request_format=fmt,
+        )
+        return model.declared_provenance("0.34.4")
+
+    legacy = _prov(None)
+    template = _prov("model-template")
+    no_system = _prov("alpaca-raw-no-system-v1")
+    # Value recorded before Phase 7-11; keeps 5-15 paired contract and bundles valid.
+    assert template.generation_config_sha256 == "48ba68c94123f52c8d0d5f531f69fa29cdea6107a8a2fe69e2d937cfa14126e0"
+    assert template.prompt_template_sha256 == "9546599f1b1cb0f733c7ff6a7d02c0d47d6dba6a0767263acc37869bb74774d5"
+    assert legacy == template
+    assert no_system != template
+    assert no_system.generation_config_sha256 != template.generation_config_sha256
+    assert no_system == _prov("alpaca-raw-no-system-v1")
+    dumped = no_system.model_dump_json()
+    for marker in ("127.0.0.1", "11434", "Below is an instruction", "courses"):
+        assert marker not in dumped
+
+
+def test_startup_builder_applies_format_exactly_once_via_model() -> None:
+    config = parse_ollama_startup_config(TAG, None, None, "alpaca-raw-no-system-v1")
+    transport = CountingTransport([{"response": "{}"}])
+    model = build_startup_ollama_model(config, transport=transport)
+    assert model.request_format == "alpaca-raw-no-system-v1"
+    from backend.adaptive.harness import HarnessRequest
+    from backend.adaptive.api.synthetic_prototype import _build_mapping, _build_ontology
+
+    model.generate_ir(
+        HarnessRequest(request_id="r711", database_id=SYNTHETIC_PROTOTYPE_DATABASE_ID, question="합성 P711"),
+        _build_ontology(), _build_mapping(),
+    )
+    assert transport.calls[0][1]["prompt"].count(ALPACA_NO_SYSTEM_PREFIX) == 1

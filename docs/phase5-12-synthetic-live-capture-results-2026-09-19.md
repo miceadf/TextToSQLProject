@@ -1,5 +1,7 @@
 # Phase 5-12 합성 private live capture 결과 (2026-09-19)
 
+> 추가 기록(2026-09-29, Phase 5-20·7-11): 이 실행의 Ollama 호출은 `text2sql_qwen:latest` Modelfile에 내장된 CNU `courses` schema SYSTEM이 주입된 조건(`model-template`)이었다. 수집 당시 provenance에는 이 조건이 드러나지 않는다. no-system 조건과 비교할 때는 ADR-058~060을 따른다.
+
 기준: `docs/prompts/phase5-12-synthetic-live-private-capture.md`. 완전 합성 질문·ontology·mapping 2건만 로컬 Ollama에 전송했다. 질문·모델 응답·프롬프트·HTTP body·물리 mapping·SQL·DB 행은 이 문서와 공개 로그에 기록하지 않았다.
 
 ## 환경과 실행

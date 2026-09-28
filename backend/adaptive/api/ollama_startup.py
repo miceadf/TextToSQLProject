@@ -33,7 +33,6 @@ from ..harness.ollama import (
 from ..harness.ollama_request_format import (
     REQUEST_FORMAT_MODEL_TEMPLATE,
     REQUEST_FORMATS,
-    apply_request_format,
 )
 from ..harness.recording_bundle_contracts import SAFE_LABEL_PATTERN
 
@@ -269,15 +268,14 @@ def build_startup_ollama_model(
     """Assemble the existing adapter without calling it."""
     try:
         valid = _validate_config(config)
-        base = build_loopback_transport(valid) if transport is None else transport
-        # The config's request format is applied exactly once, here.
-        bound = apply_request_format(base, valid.request_format)
+        bound = build_loopback_transport(valid) if transport is None else transport
         return OllamaQueryModel(
             valid.base_url,
             valid.model_tag,
             valid.timeout_seconds,
             transport=bound,  # type: ignore[arg-type]
             prompt_version=OLLAMA_STARTUP_PROMPT_VERSION,
+            request_format=valid.request_format,
         )
     except Exception:
         raise OllamaStartupConfigError() from None

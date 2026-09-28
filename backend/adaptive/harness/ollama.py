@@ -14,6 +14,13 @@ from dataclasses import dataclass, field
 from urllib import error, parse, request
 
 from .contracts import HarnessRequest, MappingProfile, MappingStatus, Ontology
+from .ollama_request_format import (
+    ALPACA_NO_SYSTEM_SHA256,
+    REQUEST_FORMAT_MODEL_TEMPLATE,
+    REQUEST_FORMAT_NO_SYSTEM,
+    REQUEST_FORMATS,
+    apply_request_format,
+)
 from .recorded import RecordedFailureCode
 from .recording_bundle_contracts import (
     ProviderKind,
@@ -138,6 +145,7 @@ class OllamaQueryModel:
         *,
         transport: OllamaTransport = _default_transport,
         prompt_version: str | None = None,
+        request_format: str | None = None,
     ) -> None:
         try:
             parsed = parse.urlsplit(base_url)
@@ -159,13 +167,18 @@ class OllamaQueryModel:
             raise ValueError("INVALID_OLLAMA_TIMEOUT")
         if not callable(transport):
             raise ValueError("INVALID_OLLAMA_TRANSPORT")
+        fmt = REQUEST_FORMAT_MODEL_TEMPLATE if request_format is None else request_format
+        if type(fmt) is not str or fmt not in REQUEST_FORMATS:
+            raise ValueError("INVALID_OLLAMA_REQUEST_FORMAT")
         version = PROMPT_VERSION if prompt_version is None else prompt_version
         _versioned_template(version)
         self._url = base_url.rstrip("/") + "/api/generate"
         self._model_tag = model_tag
         self._timeout = float(timeout)
-        self._transport = transport
+        # The single application point of the request format (ADR-060).
+        self._transport = apply_request_format(transport, fmt)
         self.prompt_version = version
+        self.request_format = fmt
 
     def declared_provenance(
         self, provider_version: str, model_digest: str | None = None
@@ -181,11 +194,16 @@ class OllamaQueryModel:
             ))
         ):
             raise ValueError("INVALID_OLLAMA_PROVENANCE")
-        generation_config = {
+        generation_config: dict[str, object] = {
             "stream": False,
             "options": dict(GENERATION_OPTIONS),
             "timeout_seconds": self._timeout,
         }
+        # model-template keeps the historical hash; other formats are declared.
+        if self.request_format == REQUEST_FORMAT_NO_SYSTEM:
+            generation_config["request_format"] = self.request_format
+            generation_config["raw"] = True
+            generation_config["request_template_sha256"] = ALPACA_NO_SYSTEM_SHA256
         config_bytes = json.dumps(
             generation_config,
             ensure_ascii=False,
