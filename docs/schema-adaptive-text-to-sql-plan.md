@@ -652,6 +652,7 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 - [x] Phase 7-02 PostgreSQL QueryIR compiler·AST policy·read-only executor(`%s`, postgres dialect, fake connector 통합)
 - [x] Phase 7-03 완전 합성 PostgreSQL live integration smoke(inspect→mapping→compiler/policy/executor, 격리 schema·cleanup)
 - [x] Phase 7-04 server-owned PostgreSQL profile의 adaptive registry/catalog/clarification runtime 조립
+- [x] Phase 7-05 Git 비추적 private PostgreSQL startup profile strict load와 loopback CLI 주입
 - [ ] 데스크톱 Ollama provider 통합
 - [ ] 실제 CNU DB regression test
 - [ ] SQL dialect 차이 처리
@@ -1006,7 +1007,9 @@ Phase 7-03에서 `DEFAULT_SEED` 기반 정규화 PostgreSQL fixture와 opt-in CL
 
 Phase 7-04에서 Python server code만 만들 수 있는 immutable PostgreSQL profile과 startup validation을 추가했다. profile은 redacted `PostgresConnectionConfig`와 승인된 15-field `PublishedMappingProfile`을 묶으며 startup에서 sample 없는 catalog, database ID·ontology version·schema fingerprint, table/column, 중복 physical mapping, relation graph를 검증한다. 검증된 profile은 기존 registry에 `schema=postgres`로 나타나고 catalog와 clarification이 database ID 기반 compiler/policy/executor router를 사용한다. context load와 실행 직전마다 재검사해 drift를 차단한다. 독립 Luna 검토의 compiler/policy 예외 redaction과 catalog의 executor router 우회를 수정했고, 실제 PostgreSQL 18 HTTP smoke에서 `NUMERIC`의 `Decimal` JSON 직렬화 결함을 찾아 validated DTO JSON dump로 보완했다. 기본 앱은 profile 0개·PostgreSQL 연결 0회다. 실제 CNU·Ollama·UI 변경은 없다. 구현 지침은 [`docs/prompts/phase7-04-server-owned-postgres-runtime-registry.md`](prompts/phase7-04-server-owned-postgres-runtime-registry.md)에 둔다.
 
-다음 시작점은 Phase 7-05로, Git 비추적 private metadata와 별도 secret 환경변수에서 server-owned PostgreSQL profile을 strict load해 loopback prototype CLI startup에 주입하는 범위를 다룬다. mapping은 이미 승인된 immutable artifact만 허용하고 UI parser/browser 선택과 Ollama provider 연결은 이후 단계로 분리한다.
+Phase 7-05에서 loopback prototype CLI가 반복 가능한 database ID로 `.schema-adaptive/postgres-profiles/<id>/profile.json`과 `mapping.json`만 찾도록 고정했다. 기존 Git ignored·untracked private path guard를 재사용하고 두 파일을 256 KiB bounded read, UTF-8·duplicate key·exact shape·type, mapping SHA-256, 명시적 `PUBLISHED`, timezone-aware publish time으로 strict load한다. DSN은 제한된 이름의 별도 process environment에서만 읽고 profile·mapping·CLI 오류에는 반사하지 않는다. 성공 profile만 Phase 7-04 factory에 전달하며 option이 없으면 private 파일·환경변수·PostgreSQL 접근 0회인 기존 synthetic-only 동작을 유지한다. Luna review-only의 residual risk와 메인 독립 검토에서 공용 private reader가 제한 적용 전에 전체 파일을 읽는 문제를 확인해 하위 호환 `max_bytes` bounded read로 수정했다. 관련 51개 통과·2 skip, 전체 pytest 780개·5 skip·470 subtests, compileall, diff check가 통과했다. 실제 PostgreSQL·CNU·Ollama·frontend는 사용하거나 변경하지 않았다. 구현 지침은 [`docs/prompts/phase7-05-private-postgres-startup.md`](prompts/phase7-05-private-postgres-startup.md)에 둔다.
+
+다음 시작점은 Phase 7-06으로, strict registry response의 `schema=postgres`를 frontend parser가 허용하고 메인 `DB 변경`에서 startup 검증된 PostgreSQL profile을 선택해 기존 catalog·clarification에 같은 database ID를 보내는 범위다. DSN·schema·mapping은 browser에 노출하지 않고 Ollama provider 연결과 실제 학교 DB는 이후 단계로 분리한다.
 
 완료된 adapter 계약은 [`docs/prompts/phase5-07-ollama-querymodel-adapter.md`](prompts/phase5-07-ollama-querymodel-adapter.md)에, 합성 live smoke의 수행 지침은 [`docs/prompts/phase5-08-ollama-adapter-live-smoke.md`](prompts/phase5-08-ollama-adapter-live-smoke.md)에 둔다. 모델이 반환한 SQL 등 비 JSON 텍스트는 원문 문자열로 보존해 후속 Query IR 검증 실패로 드러내며, provider 호출 실패와 혼합하지 않는다.
 
@@ -1536,6 +1539,13 @@ SQLite DB 입력
 - 결정: PostgreSQL profile은 HTTP 입력이 아니라 server Python 경계에서만 생성하며 database ID, 안전한 label, 방어적으로 복사한 connection config, 승인된 immutable Published Mapping을 묶는다. startup inspection이 ID·dialect·ontology version·fingerprint·canonical 15-field 물리 mapping·relation graph를 모두 확인한 profile만 registry에 추가한다. catalog와 clarification은 database ID router로 PostgreSQL compiler·policy·executor를 선택하며 context load와 실제 execute 직전에 fingerprint를 다시 검사한다. compiler·policy·executor·driver 예외는 fixed redacted 오류로 변환하고 기본 app에는 profile을 주입하지 않아 PostgreSQL 연결을 만들지 않는다.
 - 이유: registry 표시만으로 DBMS 실행 권한을 올리거나 startup 시점 검증만 신뢰하면 client injection과 schema drift 사이에서 오래된 mapping·dialect가 실행될 수 있다. server-owned 승인 profile, DB별 runtime router, 실행 직전 재검사를 함께 적용하면 SQLite baseline을 보존하면서 PostgreSQL 실행 권한과 credential을 HTTP 경계 밖에 둘 수 있다.
 
+### ADR-052: PostgreSQL startup은 고정 private artifact와 별도 DSN 환경변수에서만 profile을 조립
+
+- 날짜: 2026-09-28
+- 상태: 채택
+- 결정: loopback prototype CLI만 반복 가능한 database ID를 받아 저장소 안의 고정 `.schema-adaptive/postgres-profiles/<id>/profile.json`·`mapping.json`을 기존 Git ignored·untracked private guard로 읽는다. 두 JSON은 256 KiB bounded read, duplicate key와 extra/coercion 거부, exact database ID, mapping SHA-256, 명시적 `PUBLISHED`를 요구한다. profile metadata에는 제한된 DSN 환경변수 이름만 두고 실제 DSN은 process environment에서 분리해 읽는다. 모든 profile이 strict load된 뒤에만 Phase 7-04 factory에 전달하며, option이 없으면 loader·environment·PostgreSQL 접근을 하지 않는다. 공개 실패는 고정 redacted 문구로 정규화한다.
+- 이유: DSN과 mapping을 CLI/HTTP 입력이나 하나의 파일에 합치면 credential 노출·path injection·미승인 mapping 실행 위험이 커진다. 고정 private 경로, content hash, strict published artifact, 별도 secret source, all-or-nothing startup을 함께 요구하면 browser가 credential을 다루지 않으면서 승인 profile만 registry에 편입할 수 있다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -1752,3 +1762,4 @@ SQLite DB 입력
 
 - Phase 7-03 완전 합성 PostgreSQL live integration smoke 완료. opt-in loopback DSN preflight, 실행별 격리 schema fixture, sample 없는 inspector·mapping proposal·physical graph, 두 QueryIR의 compiler/policy/read-only execution, 고정 JSON/redaction, 성공·실패 cleanup을 구현했다. Luna review-only의 aborted transaction cleanup과 FK 검증 결함을 rollback·idempotent drop·정확 tuple 비교로 수정했고, 실제 PostgreSQL 18 smoke에서 발견한 schema-qualified 다중 `unnest` 비호환과 executor schema 미고정을 `generate_subscripts`와 transaction-local `search_path`로 수정했다. 관련 57개·18 subtests, 전체 pytest 762개·5 skip·470 subtests, compileall, diff check 통과. 임시 cluster와 schema는 제거했고 실제 CNU·기존 PostgreSQL 데이터·Ollama·registry/UI는 사용하지 않았다. ADR-050 추가
 - Phase 7-04 server-owned PostgreSQL runtime registry 조립 완료. strict immutable profile, startup catalog/mapping/graph 검증, registry `postgres` entry, catalog·clarification DB별 compiler/policy/executor routing, context load·실행 직전 drift 차단, credential·physical identifier·SQL·driver 오류 redaction을 구현했다. Luna review-only의 compiler/policy 예외 반사와 catalog executor 우회를 수정했고, 실제 PostgreSQL 18 HTTP smoke에서 registry 200·canonical catalog 6행·clarification 성공을 확인하며 `Decimal` JSON 직렬화 결함을 수정했다. 관련 신규·회귀 90개·7 subtests 및 private 회귀 45개·1 skip, 전체 pytest 772개·5 skip·470 subtests, compileall, diff check 통과. 임시 cluster/schema 제거 완료. 기본 app은 profile 0개이며 실제 CNU·Ollama·frontend 변경은 없다. ADR-051 추가
+- Phase 7-05 private PostgreSQL startup profile 완료. CLI database ID를 고정 Git ignored·untracked profile/mapping 경로에만 연결하고, 256 KiB bounded read·strict JSON·mapping SHA-256·명시적 `PUBLISHED`·별도 DSN 환경변수로 Phase 7-04 runtime profile을 조립한다. option 없는 기본 app은 private/environment/PostgreSQL 접근 0회다. Luna review-only actionable 결함은 없었고, Luna residual risk와 메인 독립 검토에서 확인한 제한 전 전체 파일 read를 공용 private reader의 하위 호환 `max_bytes`로 수정했다. 관련 51개·2 skip, 전체 pytest 780개·5 skip·470 subtests, compileall, diff check 통과. 실제 PostgreSQL/CNU/Ollama/frontend 변경 없음. ADR-052 추가

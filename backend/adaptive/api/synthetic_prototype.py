@@ -605,6 +605,21 @@ def _build_parser() -> argparse.ArgumentParser:
         default=_DEFAULT_PORT,
         help=f"Local port ({_MIN_PORT}-{_MAX_PORT}).",
     )
+    parser.add_argument(
+        "--repository-root",
+        type=_parse_repository_root,
+        default=str(Path.cwd()),
+        help="Repository root for private file validation.",
+    )
+    parser.add_argument(
+        "--postgres-profile-id",
+        type=_parse_postgres_profile_id,
+        action="append",
+        default=None,
+        dest="postgres_profile_id",
+        metavar="DATABASE_ID",
+        help="Private PostgreSQL profile ID (repeatable).",
+    )
     return parser
 
 
@@ -618,7 +633,35 @@ def _parse_port(value: str) -> int:
     return port
 
 
+def _parse_repository_root(value: str) -> str:
+    try:
+        if not isinstance(value, str) or not value:
+            raise argparse.ArgumentTypeError(_CLI_CONFIG_FAILURE)
+        return value
+    except argparse.ArgumentTypeError:
+        raise
+    except Exception:
+        raise argparse.ArgumentTypeError(_CLI_CONFIG_FAILURE) from None
+
+
+def _parse_postgres_profile_id(value: str) -> str:
+    try:
+        import re as _re
+
+        if not isinstance(value, str):
+            raise argparse.ArgumentTypeError(_CLI_CONFIG_FAILURE)
+        if _re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", value) is None:
+            raise argparse.ArgumentTypeError(_CLI_CONFIG_FAILURE)
+        return value
+    except argparse.ArgumentTypeError:
+        raise
+    except Exception:
+        raise argparse.ArgumentTypeError(_CLI_CONFIG_FAILURE) from None
+
+
 def main(argv: list[str] | None = None) -> int:
+    import sys as _sys
+
     parser = _build_parser()
     args = parser.parse_args(argv)
     try:
@@ -626,11 +669,34 @@ def main(argv: list[str] | None = None) -> int:
     except Exception:
         print(_PROTOTYPE_CREATION_FAILURE, flush=True)
         return 2
-    try:
-        local_app = create_synthetic_clarification_prototype()
-    except Exception:
-        print(_PROTOTYPE_CREATION_FAILURE, flush=True)
-        return 2
+    profile_ids = getattr(args, "postgres_profile_id", None)
+    if profile_ids:
+        try:
+            from .postgres_startup_profile import load_postgres_startup_profiles
+        except Exception:
+            print(_CLI_CONFIG_FAILURE, file=_sys.stderr, flush=True)
+            return 2
+        try:
+            pg_profiles = load_postgres_startup_profiles(
+                repository_root=getattr(args, "repository_root"),
+                database_ids=list(profile_ids),
+            )
+        except Exception:
+            print(_CLI_CONFIG_FAILURE, file=_sys.stderr, flush=True)
+            return 2
+        try:
+            local_app = create_synthetic_clarification_prototype(
+                postgres_profiles=pg_profiles
+            )
+        except Exception:
+            print(_CLI_CONFIG_FAILURE, file=_sys.stderr, flush=True)
+            return 2
+    else:
+        try:
+            local_app = create_synthetic_clarification_prototype()
+        except Exception:
+            print(_PROTOTYPE_CREATION_FAILURE, flush=True)
+            return 2
     print(f"synthetic clarification prototype ready ({SYNTHETIC_CLARIFICATION_PROTOTYPE_VERSION})", flush=True)
     try:
         uvicorn.run(

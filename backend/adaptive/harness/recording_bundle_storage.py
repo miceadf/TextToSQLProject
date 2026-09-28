@@ -90,6 +90,8 @@ def _read_private_file(
     path: Path,
     expected_parent: Path,
     error_code: RecordingBundleErrorCode,
+    *,
+    max_bytes: int | None = None,
 ) -> bytes:
     if _is_redirect(path) or not path.is_file():
         raise RecordingBundleError(error_code)
@@ -100,6 +102,18 @@ def _read_private_file(
             metadata = os.fstat(stream.fileno())
             if metadata.st_nlink != 1:
                 raise RecordingBundleError(error_code)
+            if max_bytes is not None:
+                if (
+                    not isinstance(max_bytes, int)
+                    or isinstance(max_bytes, bool)
+                    or max_bytes < 1
+                    or metadata.st_size > max_bytes
+                ):
+                    raise RecordingBundleError(error_code)
+                content = stream.read(max_bytes + 1)
+                if len(content) > max_bytes:
+                    raise RecordingBundleError(error_code)
+                return content
             return stream.read()
     except RecordingBundleError:
         raise
@@ -624,6 +638,7 @@ def read_private_snapshot_bytes(
     snapshot_path: str | Path,
     *,
     repository_root: str | Path,
+    max_bytes: int | None = None,
 ) -> bytes:
     """Read a single private snapshot file through the shared bundle guard.
 
@@ -638,7 +653,10 @@ def read_private_snapshot_bytes(
         )
         parent = target.parent
         return _read_private_file(
-            target, parent, RecordingBundleErrorCode.INCOMPLETE_BUNDLE
+            target,
+            parent,
+            RecordingBundleErrorCode.INCOMPLETE_BUNDLE,
+            max_bytes=max_bytes,
         )
     except RecordingBundleError:
         raise
