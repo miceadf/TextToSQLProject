@@ -655,7 +655,8 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 - [x] Phase 7-05 Git 비추적 private PostgreSQL startup profile strict load와 loopback CLI 주입
 - [x] Phase 7-06 frontend strict registry의 PostgreSQL 선택·catalog·clarification ID 연결
 - [x] Phase 7-07 확인된 clarification constraint를 기존 Ollama provider에 연결하는 합성 transport 경계
-- [ ] Phase 7-08 server-owned Ollama startup 설정과 명시적 provider 선택
+- [x] Phase 7-08 server-owned Ollama startup 설정과 명시적 provider 선택(loopback 전용 CLI option·proxy/redirect 차단 transport, synthetic transport 검증; live 호출 없음)
+- [ ] 데스크톱 Ollama provider 실통합(합성 질문 opt-in live smoke)
 - [ ] 실제 CNU DB regression test
 - [ ] SQL dialect 차이 처리
 - [ ] 응답시간·GPU/메모리 사용량 기록
@@ -1015,7 +1016,9 @@ Phase 7-06에서 frontend strict registry의 허용 schema를 `flat | legacy | p
 
 Phase 7-07에서 기존 `OllamaQueryModel`을 clarification의 `ConstraintAwareProvider` 경계에 연결했다. 확인된 entity/field 하나에 맞춰 ontology와 Published Mapping의 semantic context만 축소하고 모델을 정확히 한 번 호출한다. 모델 출력은 보정하지 않고 기존 QueryIR 검증·compiler·AST policy·DB별 executor를 그대로 통과한다. factory가 model을 명시적으로 주입한 경우에만 이 provider를 사용하고, 기본 synthetic provider는 유지한다. 독립 `gpt-6-luna` high review-only에서 nested ontology/mapping extra key가 strict 재검증을 통과하는 결함을 확인해 exact nested key 검사와 회귀 테스트를 추가했다. 관련 113개와 전체 pytest 816개·5 skip·470 subtests, compileall, diff check가 통과했다. live Ollama·CLI 설정·raw SQL fallback·재학습·실제 PostgreSQL/CNU 자료·frontend는 사용하거나 변경하지 않았다. 구현 지침은 [`docs/prompts/phase7-07-ollama-constraint-provider.md`](prompts/phase7-07-ollama-constraint-provider.md)에 둔다.
 
-다음 시작점은 Phase 7-08로, loopback CLI가 제한된 server-owned Ollama 설정을 명시적으로 받아 provider를 선택하도록 연결하는 범위다. 기본 app은 결정론 provider와 network 0회를 유지하고, startup에서 live 호출하지 않으며, 실제 Ollama smoke와 성능 평가는 별도 opt-in 단계로 분리한다.
+Phase 7-08에서 loopback prototype CLI에 `--ollama-model-tag`·`--ollama-base-url`·`--ollama-timeout`을 추가했다. tag가 있을 때만 `ollama-startup-config-v1` strict 설정(127.0.0.1/[::1] loopback URL, 1~120초, `query-ir-v1` 고정)으로 기존 `OllamaQueryModel`을 조립해 Phase 7-07 factory에 주입하며, startup과 clarification start에서는 호출하지 않는다. 주입 transport는 빈 `ProxyHandler`·redirect 거부·1 MiB 응답 상한을 적용하고 오류를 고정 code 또는 원문 없는 `TimeoutError`로 바꾼다. 반복·축약·unknown option은 고정 문구로 fail closed하고, option이 없으면 factory를 인자 없이 호출한다. 상세 결과는 변경 이력에, 구현 지침은 [`docs/prompts/phase7-08-server-owned-ollama-startup.md`](prompts/phase7-08-server-owned-ollama-startup.md)에 둔다.
+
+다음 시작점은 Phase 7-09로, 데스크톱 로컬 Ollama에 완전 합성 질문만 보내는 opt-in prototype end-to-end live smoke다. 형식·경계 확인이며 성능 평가가 아니다. 그 뒤에는 기능 hardening보다 Phase 0 baseline과 Phase 5 실제 모델 비교(기존 직접 SQL 대 QueryIR) 준비를 우선한다.
 
 완료된 adapter 계약은 [`docs/prompts/phase5-07-ollama-querymodel-adapter.md`](prompts/phase5-07-ollama-querymodel-adapter.md)에, 합성 live smoke의 수행 지침은 [`docs/prompts/phase5-08-ollama-adapter-live-smoke.md`](prompts/phase5-08-ollama-adapter-live-smoke.md)에 둔다. 모델이 반환한 SQL 등 비 JSON 텍스트는 원문 문자열로 보존해 후속 Query IR 검증 실패로 드러내며, provider 호출 실패와 혼합하지 않는다.
 
@@ -1566,6 +1569,13 @@ SQLite DB 입력
 - 결정: adaptive clarification은 server-owned factory가 명시적으로 주입한 기존 `OllamaQueryModel`을 `ConstraintAwareProvider`로 감싼다. provider는 request·ontology·Published Mapping·constraint를 strict 재검증하고, 확인된 entity 또는 field에 필요한 semantic context만 전달해 모델을 정확히 한 번 호출한다. 모델 응답은 수정하거나 raw SQL로 대체하지 않고 기존 QueryIR constraint 검증, compiler, AST policy, DB별 read-only executor에 맡긴다. provider 미주입 기본 app은 기존 결정론 provider와 network 0회를 유지한다.
 - 이유: 모델이 전체 schema나 physical identifier를 보거나 DBMS별 SQL을 직접 만들게 하면 확인 선택의 의미 제한과 dialect·정책 경계가 약해진다. semantic context 최소화와 기존 실행 파이프라인 재사용은 SQLite/PostgreSQL에 같은 DB 독립 QueryIR 계약을 적용하고 provider 오류·잘못된 출력을 fail closed로 유지한다.
 
+### ADR-055: Ollama 활성화는 loopback 전용 CLI option과 proxy·redirect 없는 transport로만 허용
+
+- 날짜: 2026-09-28
+- 상태: 채택
+- 결정: loopback prototype CLI의 `--ollama-model-tag`가 있을 때만 Ollama provider를 켠다. base URL은 `http://127.0.0.1:<port>`와 `http://[::1]:<port>`만, timeout은 1~120초 10진 문자열만, prompt는 `query-ir-v1` 고정이다. option 반복·축약·unknown 인자는 고정 문구로 fail closed하고 입력을 반사하지 않는다. 설정은 환경변수·파일에서 읽지 않는다. startup은 기존 `OllamaQueryModel`에 빈 `ProxyHandler`와 redirect 거부 handler, 1 MiB 응답 상한을 가진 loopback transport를 주입해 Phase 7-07 factory에 넘길 뿐 호출하지 않는다. option이 없으면 factory를 인자 없이 호출해 결정론 provider와 network 0회를 유지한다.
+- 이유: 기본 urllib 경로는 환경·시스템 proxy를 따르고 POST redirect를 외부 host GET으로 따라갈 수 있어, loopback 주소만 검사해도 질문이 담긴 prompt가 host 밖으로 나갈 수 있다. 활성화를 명시적 server CLI로 한정하고 transport 경계에서 proxy·redirect·응답 크기를 막으면 browser·HTTP가 모델 endpoint를 고를 수 없고, 기존 adapter·constraint·실행 경계를 바꾸지 않고도 live 통합 전에 설정 경계를 합성 검증할 수 있다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -1785,3 +1795,4 @@ SQLite DB 입력
 - Phase 7-05 private PostgreSQL startup profile 완료. CLI database ID를 고정 Git ignored·untracked profile/mapping 경로에만 연결하고, 256 KiB bounded read·strict JSON·mapping SHA-256·명시적 `PUBLISHED`·별도 DSN 환경변수로 Phase 7-04 runtime profile을 조립한다. option 없는 기본 app은 private/environment/PostgreSQL 접근 0회다. Luna review-only actionable 결함은 없었고, Luna residual risk와 메인 독립 검토에서 확인한 제한 전 전체 파일 read를 공용 private reader의 하위 호환 `max_bytes`로 수정했다. 관련 51개·2 skip, 전체 pytest 780개·5 skip·470 subtests, compileall, diff check 통과. 실제 PostgreSQL/CNU/Ollama/frontend 변경 없음. ADR-052 추가
 - Phase 7-06 PostgreSQL frontend 선택 연결 완료. strict registry parser에 `postgres` literal과 backend 동등 ASCII label 계약을 추가하고, 기존 server-owned radio·명시적 적용·sessionStorage 재검증·상태 초기화·catalog/clarification 동일 ID 전달을 재사용했다. DSN·physical metadata·SQL은 browser에 추가하지 않았다. Luna의 trailing newline 정규식 지적은 Node에서 LF·CR·U+2028·U+2029 모두 재현되지 않아 미적용했다. 관련 Node 30개, ESLint, frontend build, 전체 pytest 780개·5 skip·470 subtests, compileall, diff check 통과. 실제 PostgreSQL browser smoke·Ollama·CNU 자료 없음. ADR-053 추가
 - Phase 7-07 Ollama clarification constraint provider 완료. 확인된 entity/field에 맞춰 ontology·Published Mapping semantic context를 축소하고 기존 `OllamaQueryModel`을 1회 호출하며, 응답은 기존 QueryIR validation/compiler/policy/executor 경계를 그대로 통과한다. server-owned factory 명시 주입만 허용하고 기본 synthetic provider·network 0회를 유지했다. Luna review-only에서 확인한 nested extra-key 허용을 strict nested shape 검사로 수정했다. 관련 113개와 전체 pytest 816개·5 skip·470 subtests, compileall, diff check 통과. live Ollama·CLI 설정·raw SQL fallback·재학습·실제 PostgreSQL/CNU·frontend 변경 없음. ADR-054 추가
+- Phase 7-08 server-owned Ollama startup 완료. 신규 `backend/adaptive/api/ollama_startup.py`가 CLI 원문 문자열을 `ollama-startup-config-v1`(127.0.0.1/[::1] loopback URL, `SAFE_LABEL_PATTERN` ASCII tag, 1~120초 10진 timeout, `query-ir-v1` 고정)로 strict 검증하고, 기존 `OllamaQueryModel`에 빈 `ProxyHandler`·redirect 거부·exact URL·1 MiB 응답 상한 transport를 주입한다. prototype CLI는 `--ollama-model-tag`가 있을 때만 model을 Phase 7-07 factory에 넘기고 반복·축약·unknown option을 고정 문구로 거부하며, option이 없으면 factory 인자 없음·환경변수·network 0회를 유지한다. app state에는 `provider_kind`만 추가했다. 이번 단계는 Claude Code가 직접 구현했고 `gpt-6-luna` high review-only(OpenCode read-only `plan` agent)는 actionable 결함 없음으로 보고했다. Luna 잔여 위험 중 실제 IPv6 loopback 연결 미검증은 `[::1]` 임시 server 테스트로 보완했다. Windows에서 닫힌 loopback port 연결은 refused 대신 timeout으로 분류될 수 있음을 테스트에 반영했다. 관련 169개·10 subtests 통과 뒤 IPv6 테스트를 추가해 신규 파일 99개 재통과, 전체 pytest 915개·5 skip·470 subtests, compileall, diff check 통과. 테스트는 sandbox 제약으로 `--basetemp`를 scratchpad로 지정해 실행했다. live Ollama·model 조회·warm-up·raw SQL fallback·재학습·실제 PostgreSQL/CNU·frontend·legacy 변경 없음. ADR-055 추가

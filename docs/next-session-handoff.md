@@ -1,6 +1,6 @@
 # 새 Codex 대화용 짧은 인수인계
 
-현재 기준: 2026-09-28, Phase 7-07 Ollama clarification constraint provider까지 구현·검증 완료. 최신 상태는 항상 Git과 코드로 다시 확인한다. 설계와 로드맵의 원본은 [`schema-adaptive-text-to-sql-plan.md`](schema-adaptive-text-to-sql-plan.md), 독립 평가 세트 설계 기준은 [`independent-evaluation-set-design.md`](independent-evaluation-set-design.md), 안전한 잠정 비교는 [`phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md`](phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md)다.
+현재 기준: 2026-09-28, Phase 7-08 server-owned Ollama startup 설정까지 구현·검증 완료. 최신 상태는 항상 Git과 코드로 다시 확인한다. 설계와 로드맵의 원본은 [`schema-adaptive-text-to-sql-plan.md`](schema-adaptive-text-to-sql-plan.md), 독립 평가 세트 설계 기준은 [`independent-evaluation-set-design.md`](independent-evaluation-set-design.md), 안전한 잠정 비교는 [`phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md`](phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md)다.
 
 ## 프로젝트와 현재 경계
 
@@ -44,13 +44,14 @@
 - Phase 7-05: loopback CLI가 database ID별 고정 private profile/mapping을 기존 Git ignored·untracked guard와 256 KiB bounded read로 strict load한다. exact JSON·mapping SHA-256·명시적 `PUBLISHED`·별도 제한된 DSN 환경변수를 요구하고, 전부 성공한 profile만 Phase 7-04 factory에 주입한다. option 없는 기본 app은 loader/environment/PostgreSQL 접근 0회다. Luna actionable 결함은 없었고, 메인 검토에서 제한 전 전체 파일 read를 공용 reader의 `max_bytes`로 수정했다. 관련 51개·2 skip, 전체 pytest 780개·5 skip·470 subtests, compileall, diff check 통과. 실제 PostgreSQL·CNU·Ollama·frontend 변경 없음.
 - Phase 7-06: frontend strict registry에 `schema=postgres`와 backend 동등 ASCII label 검증을 추가했다. 메인 `DB 변경`은 server registry만 렌더링하고 명시적 적용·상태 초기화·sessionStorage membership 재검증을 유지하며, 동일 ID를 catalog와 clarification에 전달한다. profile이 registry에서 사라지거나 registry가 invalid/unavailable이면 legacy로 fallback한다. DSN·physical metadata·SQL browser 노출 없음. Luna의 trailing newline 지적은 현재 Node에서 재현되지 않아 미적용했다. Node 30개, ESLint, build, 전체 pytest 780개·5 skip·470 subtests, compileall, diff check 통과. 실제 PostgreSQL browser smoke·Ollama·CNU 자료 없음.
 - Phase 7-07: 기존 `OllamaQueryModel`을 clarification `ConstraintAwareProvider`에 연결했다. 확인된 entity/field 하나에 맞춰 ontology·Published Mapping의 semantic context만 축소하고 모델을 1회 호출한다. 응답은 기존 QueryIR constraint 검증·compiler·AST policy·DB별 executor를 우회하지 않는다. factory 명시 주입만 허용하고 기본 deterministic provider·network 0회를 유지한다. Luna가 찾은 nested ontology/mapping extra-key 허용을 메인에서 재현해 exact nested shape 검사로 수정했다. 관련 113개, 전체 pytest 816개·5 skip·470 subtests, compileall, diff check 통과. live Ollama·CLI 설정·raw SQL fallback·재학습·실제 PostgreSQL/CNU·frontend 변경 없음.
+- Phase 7-08: prototype CLI `--ollama-model-tag`(필수 스위치)·`--ollama-base-url`(127.0.0.1/[::1] loopback만)·`--ollama-timeout`(1~120초)으로만 Ollama provider를 켠다. startup은 proxy·redirect 차단 transport를 가진 기존 `OllamaQueryModel`을 조립만 하고, option 없으면 기존 결정론 provider다. synthetic transport와 loopback 임시 server로만 검증했다. 상세는 계획 문서 변경 이력과 ADR-055.
 - 현재 로컬에는 fine-tuned tag만 확인되어 base instruct 평가는 정확한 tag가 별도로 준비될 때 진행한다. E3·L5 팀 결정 대기와 합성 개발은 병행한다.
 - `docs/desktop-test-handoff.md`는 초기 데스크톱 이전 시점의 기록이다.
 
 ## 다음 작은 작업
 
-1. Phase 7-08은 loopback CLI에 제한된 server-owned Ollama 설정과 명시적 provider 선택을 연결한다. option 없는 기본 app은 deterministic provider와 network 0회를 유지한다.
-2. startup은 설정만 조립하고 live 호출하지 않는다. synthetic transport로 선택·redaction·호출 경계를 검증하며 실제 Ollama smoke는 별도 opt-in 단계로 분리한다.
+1. Phase 7-09는 데스크톱 로컬 Ollama에 완전 합성 질문만 보내는 opt-in prototype end-to-end live smoke다. 형식·경계 확인이며 성능 평가가 아니다.
+2. 그 뒤에는 hardening보다 Phase 0 baseline과 Phase 5 실제 모델 비교(기존 직접 SQL 대 QueryIR) 준비를 우선한다. 확정 수치는 L1/L3 이후다.
 3. Phase 6-20의 합성 SQLite browser end-to-end smoke는 별도 잔여 작업이며 L4 승인이 아니다.
 4. 실 PostgreSQL 학교 DB publish·질의 전 L2, 실제 CNU 자료 사용·공유 전 E3, 외부 시연 전 L5를 적용한다.
 5. 운영 검토 큐 current pointer·동시성/잠금과 새 30건 사람 검토·모델 성능 관문은 별도다.
@@ -58,7 +59,7 @@
 ## 새 대화의 최소 시작 순서
 
 1. 저장소 루트에서 `AGENTS.md`와 이 문서, 계획 문서의 **Phase 7 현재 체크포인트·ADR-048/049/050/051/052/053/054·다음 시작점**, `docs/human-validation-checkpoints.md`의 E3/L1/L2/L3/L4/L5를 읽는다.
-2. `git status --short`, 최근 commit, 관련 코드·테스트를 확인한다. 문서는 방향을 알려주지만 구현 상태와 테스트 통과를 대신하지 않는다. Phase 7-07 범위는 `docs/prompts/phase7-07-ollama-constraint-provider.md`에 둔다.
+2. `git status --short`, 최근 commit, 관련 코드·테스트를 확인한다. 문서는 방향을 알려주지만 구현 상태와 테스트 통과를 대신하지 않는다. Phase 7-08 범위는 `docs/prompts/phase7-08-server-owned-ollama-startup.md`에 둔다. 이 sandbox에서는 pytest 기본 임시 경로 쓰기가 막힐 수 있어 `--basetemp`와 `-p no:cacheprovider`를 쓴다.
 3. 현재 작업에 필요한 파일만 더 읽고 해당 범위의 테스트부터 실행한다. 이전 대화 전체나 저장소 전체를 다시 요약할 필요는 없다.
 
 실제 질문·응답, DB 행·dump, 모델 weight, 비밀값, private recording은 Git이나 공개 문서에 복사하지 않는다.

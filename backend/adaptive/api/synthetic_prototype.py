@@ -6,7 +6,10 @@ start -> option select -> submit -> read-only result over local HTTP.
 
 Not a deployment service. No legacy mount, real data, model server,
 PostgreSQL, UI, external network dependency, or environment-file access
-happens here; the CLI serves only on local loopback.
+happens here by default; the CLI serves only on local loopback. Explicit
+CLI options may add server-owned PostgreSQL profiles (Phase 7-05) or a
+loopback-only Ollama QueryIR provider (Phase 7-08); neither is contacted at
+startup.
 """
 
 from __future__ import annotations
@@ -590,6 +593,9 @@ def create_synthetic_clarification_prototype(
         app.state.synthetic_prototype_schema_by_id = dict(schema_by_id)
         app.state.synthetic_prototype_loader = loader
         app.state.synthetic_prototype_provider = provider
+        app.state.synthetic_prototype_provider_kind = (
+            "deterministic" if ollama_model is None else "ollama"
+        )
         app.state.synthetic_prototype_executor = executor
         app.state.synthetic_prototype_guarded_executor = guarded_executor
         app.state.synthetic_prototype_schema_fingerprints = dict(expected_fingerprints)
@@ -608,10 +614,30 @@ def create_synthetic_clarification_prototype(
     return app
 
 
+class _StrictArgumentParser(argparse.ArgumentParser):
+    """Report every parse failure with one fixed line; never echo arguments."""
+
+    def error(self, message: str) -> Any:  # noqa: ARG002
+        import sys as _sys
+
+        print(_CLI_CONFIG_FAILURE, file=_sys.stderr, flush=True)
+        raise SystemExit(2)
+
+
+class _StoreOnce(argparse.Action):
+    """Store a raw string once; a repeated option is a configuration error."""
+
+    def __call__(self, parser, namespace, values, option_string=None):  # noqa: ANN001
+        if getattr(namespace, self.dest, None) is not None:
+            parser.error(_CLI_CONFIG_FAILURE)
+        setattr(namespace, self.dest, values)
+
+
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = _StrictArgumentParser(
         prog="backend.adaptive.api.synthetic_prototype",
         description="Synthetic clarification prototype (local loopback only).",
+        allow_abbrev=False,
     )
     parser.add_argument(
         "--port",
@@ -633,6 +659,27 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="postgres_profile_id",
         metavar="DATABASE_ID",
         help="Private PostgreSQL profile ID (repeatable).",
+    )
+    parser.add_argument(
+        "--ollama-model-tag",
+        action=_StoreOnce,
+        default=None,
+        metavar="TAG",
+        help="Enable the loopback Ollama QueryIR provider with this model tag.",
+    )
+    parser.add_argument(
+        "--ollama-base-url",
+        action=_StoreOnce,
+        default=None,
+        metavar="URL",
+        help="Loopback Ollama URL: http://127.0.0.1:PORT or http://[::1]:PORT.",
+    )
+    parser.add_argument(
+        "--ollama-timeout",
+        action=_StoreOnce,
+        default=None,
+        metavar="SECONDS",
+        help="Ollama request timeout in seconds (1-120).",
     )
     return parser
 
@@ -678,6 +725,28 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = _build_parser()
     args = parser.parse_args(argv)
+    ollama_values = (
+        getattr(args, "ollama_model_tag", None),
+        getattr(args, "ollama_base_url", None),
+        getattr(args, "ollama_timeout", None),
+    )
+    ollama_model: Any = None
+    if any(value is not None for value in ollama_values):
+        # Explicit opt-in only; builds the adapter without contacting Ollama.
+        try:
+            from .ollama_startup import (
+                build_startup_ollama_model,
+                parse_ollama_startup_config,
+            )
+
+            if ollama_values[0] is None:
+                raise ValueError(_CLI_CONFIG_FAILURE)
+            ollama_model = build_startup_ollama_model(
+                parse_ollama_startup_config(*ollama_values)
+            )
+        except Exception:
+            print(_CLI_CONFIG_FAILURE, file=_sys.stderr, flush=True)
+            return 2
     try:
         import uvicorn
     except Exception:
@@ -698,10 +767,17 @@ def main(argv: list[str] | None = None) -> int:
         except Exception:
             print(_CLI_CONFIG_FAILURE, file=_sys.stderr, flush=True)
             return 2
+        factory_kwargs: dict[str, Any] = {"postgres_profiles": pg_profiles}
+        if ollama_model is not None:
+            factory_kwargs["ollama_model"] = ollama_model
         try:
-            local_app = create_synthetic_clarification_prototype(
-                postgres_profiles=pg_profiles
-            )
+            local_app = create_synthetic_clarification_prototype(**factory_kwargs)
+        except Exception:
+            print(_CLI_CONFIG_FAILURE, file=_sys.stderr, flush=True)
+            return 2
+    elif ollama_model is not None:
+        try:
+            local_app = create_synthetic_clarification_prototype(ollama_model=ollama_model)
         except Exception:
             print(_CLI_CONFIG_FAILURE, file=_sys.stderr, flush=True)
             return 2
