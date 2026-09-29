@@ -16,6 +16,7 @@ import {
   type ReviewMappingVersion,
 } from './mappingReview.ts';
 import { isStaleResponse, nextOperation } from './state.ts';
+import TestQueryPanel from './TestQueryPanel.tsx';
 
 const domReviewFetch: ReviewFetchLike = (url, init) =>
   fetch(url, {
@@ -237,6 +238,8 @@ export default function MappingReviewPanel({ databaseId, fetchFn, onPublished, b
   const [publishedVersion, setPublishedVersion] = useState<number | null>(null);
   const [pendingActivation, setPendingActivation] = useState<number | null>(null);
   const [activatedVersion, setActivatedVersion] = useState<number | null>(null);
+  // Bumped on every committed publish/activation so previews never outlive them.
+  const [previewEpoch, setPreviewEpoch] = useState(0);
 
   const operationRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
@@ -367,6 +370,7 @@ export default function MappingReviewPanel({ databaseId, fetchFn, onPublished, b
       if (!mountedRef.current || isStaleResponse(operationRef.current, operation)) return;
       if (controller.signal.aborted) return;
       setPublishedVersion(result.mapping_version);
+      setPreviewEpoch((value) => value + 1);
       setError(null);
       setStatus('published');
       onPublished?.(databaseId);
@@ -410,6 +414,7 @@ export default function MappingReviewPanel({ databaseId, fetchFn, onPublished, b
       if (controller.signal.aborted) return;
       setPendingActivation(null);
       setActivatedVersion(result.mapping_version);
+      setPreviewEpoch((value) => value + 1);
       onPublished?.(databaseId);
       try {
         const refreshed = await fetchReviewDetail(caller, databaseId, { signal: controller.signal });
@@ -545,6 +550,15 @@ export default function MappingReviewPanel({ databaseId, fetchFn, onPublished, b
               }}
               onCancel={() => setPendingActivation(null)}
               onConfirm={(version) => void handleActivate(version)}
+            />
+          ) : null}
+          {detail.status === 'PUBLISHED' &&
+          detail.active_mapping_version !== null &&
+          (activatedVersion === null || activatedVersion === detail.active_mapping_version) ? (
+            <TestQueryPanel
+              key={`test-query-${detail.active_mapping_version}-${previewEpoch}`}
+              databaseId={databaseId}
+              activeVersion={detail.active_mapping_version}
             />
           ) : null}
           <div className="flex items-center gap-2">

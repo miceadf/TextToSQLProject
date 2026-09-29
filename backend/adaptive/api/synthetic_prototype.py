@@ -45,6 +45,7 @@ from ..harness.contracts import (
 from ..harness.errors import HarnessFailure
 from ..harness.executor import SQLiteReadOnlyExecutor
 from ..harness.policy import ConservativeSqlPolicy
+from .admin_test_queries import register_admin_test_query_routes
 from .clarification_http import create_clarification_http_app
 from .registration_upload import register_sqlite_upload_routes
 from .review_publish import register_mapping_review_routes
@@ -575,6 +576,7 @@ def create_synthetic_clarification_prototype(
             raise RuntimeError(_PROTOTYPE_CREATION_FAILURE) from None
         try:
             register_mapping_review_routes(app)
+            register_admin_test_query_routes(app)
         except Exception:
             raise RuntimeError(_PROTOTYPE_CREATION_FAILURE) from None
     except Exception:
