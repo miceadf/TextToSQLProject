@@ -72,6 +72,15 @@ export interface ReviewMappingVersion {
   activatable: boolean;
 }
 
+export type StaleFieldStatus = 'TYPE_CHANGED' | 'COLUMN_MISSING' | 'TABLE_MISSING';
+
+export interface ReviewSuccession {
+  base_database_id: string;
+  base_mapping_version: number;
+  carried_fields: string[];
+  stale_fields: { semantic_field: string; status: StaleFieldStatus }[];
+}
+
 export interface ReviewDetail {
   database_id: string;
   label: string;
@@ -82,6 +91,8 @@ export interface ReviewDetail {
   /** Version the server executes (activation record); null when none loads. */
   active_mapping_version: number | null;
   mapping_versions: ReviewMappingVersion[];
+  /** Carry-over record (Phase 8-03); null when the review did not start from a base. */
+  succession: ReviewSuccession | null;
   fields: ReviewField[];
   allowed_tables: ReviewAllowedTable[];
 }
@@ -248,6 +259,44 @@ function parseVersionHistory(
   return versions;
 }
 
+const STALE_STATUSES: readonly string[] = ['TYPE_CHANGED', 'COLUMN_MISSING', 'TABLE_MISSING'];
+
+function parseSuccession(value: unknown, fieldNames: Set<string>, ownId: string): ReviewSuccession | null {
+  if (!isPlainObject(value)) return null;
+  const keys = ['base_database_id', 'base_mapping_version', 'carried_fields', 'stale_fields'];
+  if (!hasOnlyKeys(value, keys) || Object.keys(value).length !== keys.length) return null;
+  if (!isDatabaseId(value['base_database_id']) || value['base_database_id'] === ownId) return null;
+  if (!isMappingVersionNumber(value['base_mapping_version'])) return null;
+  const carried = value['carried_fields'];
+  const stale = value['stale_fields'];
+  if (!Array.isArray(carried) || !Array.isArray(stale)) return null;
+  const carriedNames: string[] = [];
+  for (const entry of carried) {
+    if (typeof entry !== 'string' || !fieldNames.has(entry)) return null;
+    carriedNames.push(entry);
+  }
+  const staleFields: ReviewSuccession['stale_fields'] = [];
+  for (const entry of stale) {
+    if (!isPlainObject(entry) || !hasOnlyKeys(entry, ['semantic_field', 'status']) || Object.keys(entry).length !== 2) {
+      return null;
+    }
+    const name = entry['semantic_field'];
+    const status = entry['status'];
+    if (typeof name !== 'string' || !fieldNames.has(name)) return null;
+    if (typeof status !== 'string' || !STALE_STATUSES.includes(status)) return null;
+    staleFields.push({ semantic_field: name, status: status as StaleFieldStatus });
+  }
+  // Every review field is classified exactly once: carried or stale.
+  const all = [...carriedNames, ...staleFields.map((entry) => entry.semantic_field)];
+  if (new Set(all).size !== all.length || all.length !== fieldNames.size) return null;
+  return {
+    base_database_id: value['base_database_id'] as string,
+    base_mapping_version: value['base_mapping_version'] as number,
+    carried_fields: carriedNames,
+    stale_fields: staleFields,
+  };
+}
+
 export function parseReviewDetail(value: unknown): ReviewDetail | null {
   if (!isPlainObject(value)) return null;
   if (
@@ -262,6 +311,7 @@ export function parseReviewDetail(value: unknown): ReviewDetail | null {
       'mapping_version',
       'active_mapping_version',
       'mapping_versions',
+      'succession',
     ]) &&
     !hasOnlyKeys(value, [
       'version',
@@ -271,6 +321,7 @@ export function parseReviewDetail(value: unknown): ReviewDetail | null {
       'schema_fingerprint',
       'ontology_version',
       'review',
+      'succession',
     ])
   ) {
     return null;
@@ -321,6 +372,15 @@ export function parseReviewDetail(value: unknown): ReviewDetail | null {
     if (parsedHistory === null) return null;
     history = parsedHistory;
   }
+  let succession: ReviewSuccession | null = null;
+  if ('succession' in value) {
+    succession = parseSuccession(
+      value['succession'],
+      new Set(fields.map((field) => field.semantic_field)),
+      value['database_id'] as string,
+    );
+    if (succession === null) return null;
+  }
   return {
     database_id: value['database_id'],
     label: value['label'],
@@ -330,6 +390,7 @@ export function parseReviewDetail(value: unknown): ReviewDetail | null {
     mapping_version: mappingVersion,
     active_mapping_version: activeVersion,
     mapping_versions: history,
+    succession,
     fields,
     allowed_tables: allowedTables,
   };
@@ -536,6 +597,34 @@ export async function publishReview(
   );
   const parsed = parseReviewPublish(payload);
   if (parsed === null || parsed.database_id !== databaseId) {
+    throw new MappingReviewClientError('contract');
+  }
+  return parsed;
+}
+
+/** Start the first review of a registration from a published base (Phase 8-03). */
+export async function carryOverReview(
+  fetchFn: ReviewFetchLike,
+  databaseId: string,
+  baseDatabaseId: string,
+  reviewer: string,
+  options?: { signal?: AbortSignal },
+): Promise<ReviewDetail> {
+  if (!isDatabaseId(databaseId) || !isDatabaseId(baseDatabaseId)) throw new MappingReviewClientError('contract');
+  if (databaseId === baseDatabaseId) throw new MappingReviewClientError('contract');
+  if (!isValidReviewer(reviewer)) throw new MappingReviewClientError('contract');
+  const payload = await postAction(
+    fetchFn,
+    { action: 'CARRY_OVER', database_id: databaseId, base_database_id: baseDatabaseId, reviewer },
+    options,
+  );
+  const parsed = parseReviewDetail(payload);
+  if (
+    parsed === null ||
+    parsed.database_id !== databaseId ||
+    parsed.succession === null ||
+    parsed.succession.base_database_id !== baseDatabaseId
+  ) {
     throw new MappingReviewClientError('contract');
   }
   return parsed;

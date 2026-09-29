@@ -755,6 +755,7 @@ export default function MainPage({
                     key={uploadResult.database_id}
                     databaseId={uploadResult.database_id}
                     onPublished={() => setRegistryRetry((value) => value + 1)}
+                    baseOptions={registry.filter((entry) => entry.schema === 'private')}
                   />
                   <SchemaComparePanel
                     key={`compare-${uploadResult.database_id}`}

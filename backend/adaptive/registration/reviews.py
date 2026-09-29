@@ -657,7 +657,7 @@ def init_review(*, repository_root: str | Path, database_id: str, reviewer: str)
                 raise _fail(ReviewErrorCode.STORAGE_ERROR) from None
             allowed_prefix = ("mapping-v",)
             for name in names:
-                if name in (DRAFT_FILENAME, CURRENT_FILENAME, ACTIVATION_FILENAME):
+                if name in (DRAFT_FILENAME, CURRENT_FILENAME, ACTIVATION_FILENAME, SUCCESSION_FILENAME):
                     continue
                 if name.startswith(allowed_prefix) and name.endswith(".json"):
                     continue
@@ -1325,7 +1325,7 @@ def load_activation(*, repository_root: str | Path, database_id: str) -> LoadedA
     except (OSError, RuntimeError, ValueError):
         raise _fail(ReviewErrorCode.ARTIFACT_MISMATCH) from None
     for name in names:
-        if name in (DRAFT_FILENAME, CURRENT_FILENAME, ACTIVATION_FILENAME):
+        if name in (DRAFT_FILENAME, CURRENT_FILENAME, ACTIVATION_FILENAME, SUCCESSION_FILENAME):
             continue
         if name.startswith("mapping-v") and name.endswith(".json") and len(name) == len("mapping-v0000.json"):
             body = name[len("mapping-v") : -len(".json")]
@@ -1542,3 +1542,279 @@ def compare_registrations(
         ontology_version_match=ontology_match,
         carry_over_executable=executable,
     )
+
+
+SUCCESSION_FILENAME = "succession.json"
+SUCCESSION_SCHEMA_VERSION = "mapping-succession-v1"
+_STALE_STATUSES = ("TYPE_CHANGED", "COLUMN_MISSING", "TABLE_MISSING")
+
+
+class StaleField(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+    semantic_field: str = Field(min_length=1, max_length=MAX_NAME_LENGTH)
+    status: str = Field(pattern=r"^(TYPE_CHANGED|COLUMN_MISSING|TABLE_MISSING)$")
+
+
+class MappingSuccession(BaseModel):
+    """Record of a carry-over review start (Phase 8-03); grants no execution."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+    schema_version: str = Field(pattern=r"^mapping-succession-v1$")
+    database_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
+    base_database_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
+    base_mapping_version: int = Field(ge=1)
+    base_mapping_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    base_schema_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    schema_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    carried_fields: list[str] = Field(max_length=64)
+    stale_fields: list[StaleField] = Field(max_length=64)
+    initiated_by: str = Field(min_length=1, max_length=MAX_REVIEWER_LENGTH)
+    initiated_at: str = Field(pattern=r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")
+
+    @model_validator(mode="after")
+    def _consistent(self) -> "MappingSuccession":
+        stale = [item.semantic_field for item in self.stale_fields]
+        if self.carried_fields != sorted(set(self.carried_fields)) or stale != sorted(set(stale)):
+            raise ValueError("succession fields must be sorted and unique")
+        if set(self.carried_fields) & set(stale):
+            raise ValueError("a field cannot be both carried and stale")
+        if self.database_id == self.base_database_id:
+            raise ValueError("succession needs two registrations")
+        return self
+
+
+def _carried_reason(base_database_id: str, version: int) -> str:
+    return f"carried over from {base_database_id} mapping-v{version}; schema unchanged"
+
+
+def _same_review_state(left: MappingDraft, right: MappingDraft) -> bool:
+    """Compare review decisions while ignoring reviewer and timestamps."""
+    if (
+        left.database_id != right.database_id
+        or left.schema_fingerprint != right.schema_fingerprint
+        or left.ontology_version != right.ontology_version
+        or set(left.fields) != set(right.fields)
+    ):
+        return False
+    return all(
+        (a.decision, a.table, a.column, a.reason) == (b.decision, b.table, b.column, b.reason)
+        for a, b in ((left.fields[name], right.fields[name]) for name in left.fields)
+    )
+
+
+def _link_new_file(path: Path, content: bytes) -> None:
+    """Publish a complete file at ``path`` or nothing; never overwrite."""
+    try:
+        descriptor, temp_name = tempfile.mkstemp(
+            prefix=path.name + ".", suffix=".tmp", dir=path.parent
+        )
+    except (OSError, RuntimeError):
+        raise _fail(ReviewErrorCode.STORAGE_ERROR) from None
+    temp_path = Path(temp_name)
+    try:
+        try:
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(content)
+                stream.flush()
+                os.fsync(stream.fileno())
+        except (OSError, RuntimeError):
+            raise _fail(ReviewErrorCode.STORAGE_ERROR) from None
+        try:
+            os.link(temp_path, path)
+        except FileExistsError:
+            raise _fail(ReviewErrorCode.REVIEW_CONFLICT) from None
+        except (OSError, RuntimeError):
+            raise _fail(ReviewErrorCode.STORAGE_ERROR) from None
+        _fsync_directory(path.parent)
+    finally:
+        try:
+            temp_path.unlink(missing_ok=True)
+        except (OSError, RuntimeError):
+            pass
+
+
+def _load_succession_strict(review_dir: Path) -> MappingSuccession:
+    raw = _read_review_file(
+        review_dir / SUCCESSION_FILENAME, review_dir, max_bytes=MAX_MANIFEST_BYTES
+    )
+    return _strict_model(raw, MappingSuccession)
+
+
+def carry_over_review(
+    *,
+    repository_root: str | Path,
+    database_id: str,
+    base_database_id: str,
+    reviewer: str,
+) -> MappingDraft:
+    """Start the first review of a registration from a base's active mapping.
+
+    Fields whose mapped column is unchanged are remapped to the base column
+    with a recorded reason; affected fields stay PENDING and are recorded as
+    stale. Publishing still requires every field reviewed and executable.
+    """
+    from ..catalog.compare import FieldImpactStatus
+
+    database_id = _validate_database_id(database_id)
+    base_database_id = _validate_database_id(base_database_id)
+    reviewer = validate_reviewer(reviewer)
+    if database_id == base_database_id:
+        raise _fail(ReviewErrorCode.INVALID_INPUT)
+    comparison = compare_registrations(
+        repository_root=repository_root,
+        base_database_id=base_database_id,
+        candidate_database_id=database_id,
+    )
+    if not comparison.ontology_version_match:
+        raise _fail(ReviewErrorCode.PUBLISH_BLOCKED)
+    root, review_root = _review_root(repository_root)
+    base = load_activation(repository_root=root, database_id=base_database_id)
+    base_manifest = _load_manifest_strict(_validate_review_target(root, review_root, base_database_id))
+    # The comparison and the copied mapping must describe the same active version.
+    if (
+        base_manifest.mapping_version != base.mapping_version
+        or comparison.base_mapping_version != base.mapping_version
+    ):
+        raise _fail(ReviewErrorCode.REVIEW_CONFLICT)
+    try:
+        loaded = registration_storage.load_registration(
+            repository_root=root, database_id=database_id
+        )
+    except Exception:
+        raise _fail(ReviewErrorCode.ARTIFACT_MISMATCH) from None
+    if comparison.diff.candidate_fingerprint != loaded.manifest.schema_fingerprint:
+        raise _fail(ReviewErrorCode.REVIEW_CONFLICT)
+
+    carried = sorted(
+        item.semantic_field for item in comparison.field_impacts
+        if item.status is FieldImpactStatus.UNCHANGED
+    )
+    physical = {(t.name, c.name) for t in loaded.catalog.tables for c in t.columns}
+    for name in carried:
+        entry = base.profile.fields.get(name)
+        if entry is None or (entry.table, entry.column) not in physical:
+            raise _fail(ReviewErrorCode.REVIEW_CONFLICT)
+    stale = [
+        StaleField(semantic_field=item.semantic_field, status=item.status.value)
+        for item in comparison.field_impacts
+        if item.status is not FieldImpactStatus.UNCHANGED
+    ]
+    service = MappingReviewService()
+    try:
+        planned = service.create_draft(loaded.proposal)
+        reason = _carried_reason(base_database_id, base.mapping_version)
+        for name in carried:
+            entry = base.profile.fields[name]
+            planned = service.remap(
+                planned, name, table=entry.table, column=entry.column,
+                reviewer=reviewer, reason=reason,
+            )
+    except Exception:
+        raise _fail(ReviewErrorCode.REVIEW_CONFLICT) from None
+    if (
+        planned.database_id != database_id
+        or planned.schema_fingerprint != loaded.manifest.schema_fingerprint
+        or planned.ontology_version != loaded.manifest.ontology_version
+    ):
+        raise _fail(ReviewErrorCode.STORAGE_ERROR)
+    record = MappingSuccession(
+        schema_version=SUCCESSION_SCHEMA_VERSION,
+        database_id=database_id,
+        base_database_id=base_database_id,
+        base_mapping_version=base.mapping_version,
+        base_mapping_sha256=base_manifest.mapping_sha256,
+        base_schema_fingerprint=base.schema_fingerprint,
+        schema_fingerprint=loaded.manifest.schema_fingerprint,
+        carried_fields=carried,
+        stale_fields=stale,
+        initiated_by=reviewer,
+        initiated_at=_utc_now_text(),
+    )
+
+    try:
+        _ensure_review_root(review_root)
+    except ReviewError:
+        raise
+    except (OSError, RuntimeError, ValueError):
+        raise _fail(ReviewErrorCode.PRIVATE_STORAGE_INVALID) from None
+    review_dir = _validate_review_target(root, review_root, database_id)
+    lock_path = _acquire_lock(review_root, database_id)
+    try:
+        if review_dir.exists() or review_dir.is_symlink():
+            if _is_redirect(review_dir) or not review_dir.is_dir():
+                raise _fail(ReviewErrorCode.ARTIFACT_MISMATCH)
+        else:
+            try:
+                review_dir.mkdir(parents=False, exist_ok=False)
+            except FileExistsError:
+                raise _fail(ReviewErrorCode.REVIEW_CONFLICT) from None
+            except (OSError, RuntimeError):
+                raise _fail(ReviewErrorCode.STORAGE_ERROR) from None
+            _fsync_directory(review_root)
+        try:
+            names = sorted(item.name for item in review_dir.iterdir())
+        except (OSError, RuntimeError):
+            raise _fail(ReviewErrorCode.STORAGE_ERROR) from None
+        if any(name not in (DRAFT_FILENAME, SUCCESSION_FILENAME) for name in names):
+            # Already published (or unknown files): carry-over is for the first review only.
+            raise _fail(ReviewErrorCode.REVIEW_CONFLICT)
+        existing = _load_draft_strict(review_dir) if DRAFT_FILENAME in names else None
+        if SUCCESSION_FILENAME in names:
+            previous = _load_succession_strict(review_dir)
+            same_plan = (
+                previous.database_id == record.database_id
+                and previous.base_database_id == record.base_database_id
+                and previous.base_mapping_version == record.base_mapping_version
+                and previous.base_mapping_sha256 == record.base_mapping_sha256
+                and previous.schema_fingerprint == record.schema_fingerprint
+                and previous.carried_fields == record.carried_fields
+                and previous.stale_fields == record.stale_fields
+            )
+            if not same_plan or existing is None:
+                raise _fail(ReviewErrorCode.REVIEW_CONFLICT)
+            # Same request again: return the current draft, including later edits.
+            return existing
+        if existing is not None and not _same_review_state(existing, planned):
+            fresh = service.create_draft(loaded.proposal)
+            if not _same_review_state(existing, fresh):
+                raise _fail(ReviewErrorCode.REVIEW_CONFLICT)
+            existing = None
+        if existing is None:
+            try:
+                content = _json_bytes(planned.model_dump(mode="json"))
+            except Exception:
+                raise _fail(ReviewErrorCode.STORAGE_ERROR) from None
+            _atomic_replace(review_dir / DRAFT_FILENAME, content)
+        try:
+            record_bytes = _json_bytes(record.model_dump(mode="json"))
+        except Exception:
+            raise _fail(ReviewErrorCode.STORAGE_ERROR) from None
+        _link_new_file(review_dir / SUCCESSION_FILENAME, record_bytes)
+        return _load_draft_strict(review_dir)
+    finally:
+        _release_lock(lock_path)
+
+
+def load_succession(*, repository_root: str | Path, database_id: str) -> MappingSuccession | None:
+    """Display-only record; a missing, damaged, or mismatched file yields None."""
+    try:
+        database_id = _validate_database_id(database_id)
+        root, review_root = _review_root(repository_root)
+        review_dir = _validate_review_target(root, review_root, database_id)
+        if not (review_dir / SUCCESSION_FILENAME).exists():
+            return None
+        record = _load_succession_strict(review_dir)
+        loaded = registration_storage.load_registration(repository_root=root, database_id=database_id)
+        draft = _load_draft_strict(review_dir)
+    except Exception:
+        return None
+    classified = set(record.carried_fields) | {item.semantic_field for item in record.stale_fields}
+    if (
+        record.database_id != database_id
+        or record.schema_fingerprint != loaded.manifest.schema_fingerprint
+        or classified != set(draft.fields)
+    ):
+        return None
+    return record

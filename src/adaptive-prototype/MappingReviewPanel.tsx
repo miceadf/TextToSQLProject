@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   activateMappingVersion,
   approveReviewField,
+  carryOverReview,
   fetchReviewDetail,
   initReview,
   publishReview,
@@ -28,7 +29,15 @@ interface MappingReviewPanelProps {
   databaseId: string;
   fetchFn?: ReviewFetchLike;
   onPublished?: (databaseId: string) => void;
+  /** Published private databases that may seed this review (Phase 8-03). */
+  baseOptions?: { database_id: string; label: string }[];
 }
+
+const STALE_LABELS: Record<string, string> = {
+  TYPE_CHANGED: '타입 변경',
+  COLUMN_MISSING: '컬럼 없음',
+  TABLE_MISSING: '테이블 없음',
+};
 
 function isBusy(status: MappingReviewStatus): boolean {
   return status === 'loading' || status === 'acting' || status === 'publishing';
@@ -39,10 +48,14 @@ function FieldRow({
   allowedTables,
   reviewer,
   disabled,
+  staleStatus,
+  carried,
   onApprove,
   onRemap,
 }: {
   field: ReviewField;
+  staleStatus: string | null;
+  carried: boolean;
   allowedTables: ReviewDetail['allowed_tables'];
   reviewer: string;
   disabled: boolean;
@@ -65,6 +78,14 @@ function FieldRow({
       <div className="font-semibold">
         {field.semantic_field} · {field.decision}
         {field.table !== null && field.column !== null ? ` · ${field.table}.${field.column}` : null}
+        {staleStatus !== null ? (
+          <span className="ml-2 text-amber-700">
+            {field.decision === 'PENDING'
+              ? `STALE · 재검토 필요 (${STALE_LABELS[staleStatus] ?? staleStatus})`
+              : `STALE 재검토 완료 (${STALE_LABELS[staleStatus] ?? staleStatus})`}
+          </span>
+        ) : null}
+        {carried ? <span className="ml-2 text-slate-500">기준 mapping 승계됨</span> : null}
       </div>
       <div className="mt-1 space-y-1">
         {field.candidates.map((candidate) => (
@@ -206,7 +227,9 @@ function VersionHistory({
   );
 }
 
-export default function MappingReviewPanel({ databaseId, fetchFn, onPublished }: MappingReviewPanelProps) {
+export default function MappingReviewPanel({ databaseId, fetchFn, onPublished, baseOptions }: MappingReviewPanelProps) {
+  const carryBases = (baseOptions ?? []).filter((entry) => entry.database_id !== databaseId);
+  const [carryBase, setCarryBase] = useState('');
   const [status, setStatus] = useState<MappingReviewStatus>('idle');
   const [detail, setDetail] = useState<ReviewDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -280,6 +303,39 @@ export default function MappingReviewPanel({ databaseId, fetchFn, onPublished }:
       if (controller.signal.aborted) return;
       setDetail(next);
       setError(null);
+      setStatus('ready');
+    } catch (unknown) {
+      if (!mountedRef.current || isStaleResponse(operationRef.current, operation)) return;
+      if (controller.signal.aborted) return;
+      setDetail(null);
+      setError(toReviewMessage(unknown));
+      setStatus('error');
+    }
+  }
+
+  async function handleCarryOver(): Promise<void> {
+    if (isBusy(status)) return;
+    const baseId = carryBases.some((entry) => entry.database_id === carryBase)
+      ? carryBase
+      : (carryBases[0]?.database_id ?? '');
+    if (baseId === '') return;
+    if (reviewer.trim() === '') {
+      setError('요청 형식이 올바르지 않습니다. 검토자를 입력해 주세요.');
+      setStatus('error');
+      return;
+    }
+    const operation = nextOperation(operationRef.current);
+    operationRef.current = operation;
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setStatus('loading');
+    setError(null);
+    try {
+      const next = await carryOverReview(caller, databaseId, baseId, reviewer, { signal: controller.signal });
+      if (!mountedRef.current || isStaleResponse(operationRef.current, operation)) return;
+      if (controller.signal.aborted) return;
+      setDetail(next);
       setStatus('ready');
     } catch (unknown) {
       if (!mountedRef.current || isStaleResponse(operationRef.current, operation)) return;
@@ -392,6 +448,27 @@ export default function MappingReviewPanel({ databaseId, fetchFn, onPublished }:
         >
           mapping 검토 시작
         </button>
+        {carryBases.length > 0 ? (
+          <div className="flex flex-wrap items-center gap-2 text-xs text-slate-700">
+            <label className="flex items-center gap-1">
+              기준 DB
+              <select
+                value={carryBases.some((entry) => entry.database_id === carryBase) ? carryBase : carryBases[0].database_id}
+                onChange={(event) => setCarryBase(event.target.value)}
+              >
+                {carryBases.map((entry) => (
+                  <option key={entry.database_id} value={entry.database_id}>
+                    {entry.label} ({entry.database_id})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button type="button" onClick={() => void handleCarryOver()} className="underline">
+              기준 DB mapping 승계로 시작
+            </button>
+            <span>영향 없는 field만 승계하고, 바뀐 field는 STALE로 다시 검토합니다.</span>
+          </div>
+        ) : null}
         {error !== null ? (
           <div className="mt-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-900" role="alert">
             {error}
@@ -425,9 +502,20 @@ export default function MappingReviewPanel({ databaseId, fetchFn, onPublished }:
             {detail.database_id} · {detail.status}
             {detail.mapping_version !== null ? ` · mapping-v${detail.mapping_version}` : null}
           </div>
+          {detail.succession !== null ? (
+            <div className="text-xs text-slate-700">
+              {detail.succession.base_database_id} mapping-v{detail.succession.base_mapping_version}에서{' '}
+              {detail.succession.carried_fields.length}개 field 승계 · STALE {detail.succession.stale_fields.length}개
+            </div>
+          ) : null}
           {detail.fields.map((field) => (
             <FieldRow
               key={field.semantic_field}
+              staleStatus={
+                detail.succession?.stale_fields.find((entry) => entry.semantic_field === field.semantic_field)?.status ??
+                null
+              }
+              carried={detail.succession?.carried_fields.includes(field.semantic_field) ?? false}
               field={field}
               allowedTables={detail.allowed_tables}
               reviewer={reviewer}

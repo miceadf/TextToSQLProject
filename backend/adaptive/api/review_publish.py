@@ -5,7 +5,8 @@ Minimal surface on the loopback synthetic prototype:
 - ``GET /api/adaptive/v1/registrations/review?database_id=...``
 - ``POST /api/adaptive/v1/registrations/review`` with a strict JSON body
   carrying one of ``INIT`` / ``APPROVE`` / ``REMAP`` / ``PUBLISH`` /
-  ``ACTIVATE`` (Phase 8-01: re-activate an earlier immutable published version).
+  ``ACTIVATE`` (Phase 8-01: re-activate an earlier immutable published version) /
+  ``CARRY_OVER`` (Phase 8-03: start the first review from a base's active mapping).
 - ``GET /api/adaptive/v1/registrations/compare?base_database_id=...&candidate_database_id=...``
   (Phase 8-02: read-only schema comparison against the base's active mapping).
 
@@ -126,6 +127,15 @@ class _PublishBody(BaseModel):
     action: Literal["PUBLISH"] = "PUBLISH"
     database_id: str = Field(min_length=1, max_length=64)
     published_by: str = Field(min_length=1, max_length=64)
+
+
+class _CarryOverBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+    action: Literal["CARRY_OVER"] = "CARRY_OVER"
+    database_id: str = Field(min_length=1, max_length=64)
+    base_database_id: str = Field(min_length=1, max_length=64)
+    reviewer: str = Field(min_length=1, max_length=64)
 
 
 class _ActivateBody(BaseModel):
@@ -273,6 +283,25 @@ def _version_history(root: Path, database_id: str) -> list[dict[str, Any]]:
     ]
 
 
+def _succession_summary(root: Path, database_id: str) -> dict[str, Any] | None:
+    """Display-only carry-over record (Phase 8-03); absent when missing or damaged."""
+    try:
+        record = review_storage.load_succession(repository_root=root, database_id=database_id)
+    except Exception:
+        return None
+    if record is None:
+        return None
+    return {
+        "base_database_id": str(record.base_database_id),
+        "base_mapping_version": int(record.base_mapping_version),
+        "carried_fields": [str(name) for name in record.carried_fields],
+        "stale_fields": [
+            {"semantic_field": str(item.semantic_field), "status": str(item.status)}
+            for item in record.stale_fields
+        ],
+    }
+
+
 def _detail_payload(
     *,
     database_id: str,
@@ -281,6 +310,7 @@ def _detail_payload(
     published: Any,
     mapping_version: Any,
     history: list[dict[str, Any]] | None = None,
+    succession: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     try:
         manifest = loaded_registration.manifest
@@ -307,6 +337,8 @@ def _detail_payload(
                 return None
             payload["active_mapping_version"] = active[0] if active else None
             payload["mapping_versions"] = entries
+        if succession is not None:
+            payload["succession"] = succession
         text = json.dumps(payload, ensure_ascii=False, sort_keys=True, allow_nan=False)
         return json.loads(text)
     except Exception:
@@ -455,6 +487,7 @@ def register_mapping_review_routes(
                 published=review.published,
                 mapping_version=review.mapping_version,
                 history=_version_history(root, database_id),
+                succession=_succession_summary(root, database_id),
             )
             if payload is None:
                 return _error_response(MappingReviewErrorCode.INTERNAL_ERROR.value)
@@ -513,7 +546,7 @@ def register_mapping_review_routes(
             if payload is None:
                 return _error_response(MappingReviewErrorCode.INVALID_REQUEST.value)
             action = payload.get("action")
-            if action not in ("INIT", "APPROVE", "REMAP", "PUBLISH", "ACTIVATE"):
+            if action not in ("INIT", "APPROVE", "REMAP", "PUBLISH", "ACTIVATE", "CARRY_OVER"):
                 return _error_response(MappingReviewErrorCode.INVALID_REQUEST.value)
             try:
                 root = Path(str(http_request.app.state.mapping_review_repository_root))
@@ -555,6 +588,21 @@ def register_mapping_review_routes(
                         reviewer=body.reviewer,
                         reason=body.reason,
                     )
+                    database_id = body.database_id
+                elif action == "CARRY_OVER":
+                    body = _CarryOverBody.model_validate(payload)
+                    if payload != body.model_dump(mode="json"):
+                        return _error_response(MappingReviewErrorCode.INVALID_REQUEST.value)
+                    try:
+                        review_storage.carry_over_review(
+                            repository_root=root,
+                            database_id=body.database_id,
+                            base_database_id=body.base_database_id,
+                            reviewer=body.reviewer,
+                        )
+                    except ReviewError as exc:
+                        # Ontology mismatch has no draft field list to report.
+                        return _error_response(_review_to_public_code(exc))
                     database_id = body.database_id
                 elif action == "ACTIVATE":
                     body = _ActivateBody.model_validate(payload)
@@ -621,6 +669,7 @@ def register_mapping_review_routes(
                 published=review.published,
                 mapping_version=review.mapping_version,
                 history=_version_history(root, database_id),
+                succession=_succession_summary(root, database_id),
             )
             if detail is None:
                 return _error_response(MappingReviewErrorCode.INTERNAL_ERROR.value)
