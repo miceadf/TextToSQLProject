@@ -12,10 +12,10 @@ from backend.adaptive.harness.contracts import (
 )
 from backend.adaptive.harness.errors import HarnessFailure
 from backend.adaptive.mapping.transforms import (
-    normalize_filter_value,
     render_postgres_transform,
     transform_operators,
 )
+from backend.adaptive.mapping.values import bind_filter_value
 from backend.adaptive.ontology.contracts import Operator
 from backend.adaptive.relations.contracts import JoinPlan, JoinPlanStatus
 
@@ -486,16 +486,18 @@ class AstReadOnlyPolicy:
             )
         expected_parameters: list[str | int | float | bool] = []
         for filter_ir in context.query_ir.filters:
-            value = filter_ir.value
-            transform = context.field_transforms.get(filter_ir.field)
-            if transform is not None:
-                try:
-                    value = normalize_filter_value(transform, value)
-                except ValueError:
-                    self._fail(
-                        HarnessErrorCode.INVALID_PLACEHOLDER,
-                        f"value for transformed field '{filter_ir.field}' is not representable",
-                    )
+            try:
+                value = bind_filter_value(
+                    filter_ir.field,
+                    filter_ir.value,
+                    field_transforms=context.field_transforms,
+                    value_dictionaries=context.value_dictionaries,
+                )
+            except ValueError:
+                self._fail(
+                    HarnessErrorCode.INVALID_PLACEHOLDER,
+                    f"value for field '{filter_ir.field}' is not representable",
+                )
             if filter_ir.operator is Operator.CONTAINS:
                 if context.dialect == "postgres":
                     from backend.adaptive.compiler.postgres import postgres_contains_pattern

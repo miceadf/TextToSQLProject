@@ -11,6 +11,7 @@ from backend.adaptive.harness.contracts import (
 from backend.adaptive.harness.errors import HarnessFailure
 from backend.adaptive.mapping.contracts import PublishedMappingProfile
 from backend.adaptive.mapping.transforms import FieldTransform
+from backend.adaptive.mapping.values import ValueDictionary
 from backend.adaptive.relations.contracts import PhysicalRelationGraph
 from backend.adaptive.relations.errors import RelationGraphError
 from backend.adaptive.relations.planner import plan_join_path
@@ -38,10 +39,12 @@ class SchemaAdaptivePostgresPolicy:
         policy: AstReadOnlyPolicy | None = None,
         field_transforms: dict[str, FieldTransform] | None = None,
         anchor_table: str | None = None,
+        value_dictionaries: dict[str, ValueDictionary] | None = None,
     ) -> None:
         self._graph = graph.model_copy(deep=True)
         self._mapping = mapping.model_copy(deep=True)
         self._policy = policy or AstReadOnlyPolicy()
+        self._value_dictionaries = dict(value_dictionaries or {})
         self._field_transforms = {
             field: FieldTransform(transform)
             for field, transform in (field_transforms or {}).items()
@@ -53,6 +56,10 @@ class SchemaAdaptivePostgresPolicy:
         }:
             raise ValueError("anchor table must be a published mapping table")
         self._anchor_table = anchor_table
+        if not set(self._value_dictionaries).issubset(self._mapping.fields) or (
+            set(self._value_dictionaries) & set(self._field_transforms)
+        ):
+            raise ValueError("value dictionaries must target untransformed mapping fields")
 
     def validate(
         self,
@@ -89,6 +96,7 @@ class SchemaAdaptivePostgresPolicy:
                 dialect=self.DIALECT,
                 field_transforms=dict(self._field_transforms),
                 anchor_table=self._anchor_table,
+                value_dictionaries=dict(self._value_dictionaries),
             )
         )
 

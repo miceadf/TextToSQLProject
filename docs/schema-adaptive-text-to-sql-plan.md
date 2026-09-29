@@ -691,6 +691,7 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 - [x] mapping publish·rollback 화면(Phase 8-01: 버전 이력·이전 immutable 버전 재활성화, 합성 SQLite만 검증)
 - [x] schema fingerprint 비교(Phase 8-02: 등록 간 읽기 전용 비교·활성 mapping 영향, 합성 SQLite만 검증; PostgreSQL 연결은 순수 함수만 공유)
 - [x] 영향받은 mapping을 `STALE` 처리(Phase 8-03: 새 등록 검토를 기준 활성 mapping 승계로 시작, 영향 field만 `STALE`·재검토; 합성 SQLite만 검증)
+- [x] Phase 8-06 코드값·값 사전(`ValueDictionary`, profile v4 `value_dictionaries`, compiler·policy 공통 `bind_filter_value`, 결과 표시 이름, 챗봇 인식 값 완화 제외, 등록 시 저장 값 존재 확인; legacy 이수구분 사전으로 ONTOLOGY QueryIR 14→15)
 - [ ] 합성 변형 benchmark(형식·코드값·의미·구조)와 규칙 기반 mapping 기준선
 - [ ] AI mapping 제안(닫힌 목록 안의 column·변환·값 사전 제안, 관리자 검토 유지)과 규칙 기반 비교
 - [x] verified query 자동 회귀 테스트(Phase 8-05: 서버 계산 결과 hash를 verified 기준선으로 기록, publish·재활성화 직후와 재활성화 전 비활성 버전에서 고정 query 회귀 비교; 경고만, 자동 차단 없음; 합성 SQLite만 검증)
@@ -705,7 +706,7 @@ Phase 8 분할 계획(상세는 [`docs/prompts/phase8-01-mapping-version-rollbac
 2026-09-29 개발 순서(사용자 승인, 상세는 변경 이력):
 
 1. 7-17 기준 table 보존 LEFT JOIN과 기본 table 매핑.
-2. 8-06 코드값·값 사전 설계와 구현.
+2. 8-06 코드값·값 사전 설계와 구현(완료, ADR-074).
 3. 합성 변형 benchmark(형식·코드값·의미·구조)와 규칙 기반 기준선 측정.
 4. AI mapping 제안과 규칙 기반 비교(닫힌 목록 제안, 관리자 검토 유지).
 5. 8-07 관리자 화면 통합과 browser smoke.
@@ -1849,6 +1850,34 @@ SQLite DB 입력
   - ORDER BY가 없어 행 상한에 걸리면 부분집합이 달라질 수 있다.
   - SQLite 경로는 INNER 그대로다.
 
+### ADR-074: DB마다 다른 값 목록은 사람이 검토한 field별 값 사전으로 흡수하고, 값 전체 일치만 저장 값으로 바꾼다
+
+- 날짜: 2026-09-30
+- 상태: 채택(개발 순서 2번)
+- 결정:
+  - `ValueDictionary`는 저장 값·표시 이름·다른 표기의 닫힌 대응표다.
+    - 조회 key는 NFKC·casefold·공백 제거로 만들고, 한 key는 한 저장 값으로만 이어진다.
+    - 사전에 없는 값은 `pass`(그대로) 또는 `reject`(거부)로 처리한다.
+  - filter 값은 compiler와 AST policy가 같은 `bind_filter_value`로 정한다. 값 전체가 key일 때만 바꾸며 부분 치환은 없다.
+  - 결과 행의 저장 값은 표시 이름으로 바꿔 보여준다.
+  - 챗봇 동작:
+    - 이해 조건은 표시 이름으로 보여준다.
+    - 사전이 인식한 값에는 부분 일치 완화를 하지 않는다.
+    - `reject` 사전에 없는 값은 `NOT_UNDERSTOOD`다.
+  - 선언은 private profile `postgres-runtime-profile-v4`(v2 + 비울 수 있는 `anchor_table` + `value_dictionaries`)에 둔다.
+    - 시작 검증: 매핑된 문자열 field, 값 변환과 겹치지 않음, 문자열 계열 column.
+    - 시작 검증은 DB 값을 읽지 않는다. 대신 등록 CLI가 저장 값이 실제 column에 있는지 읽기 전용으로 확인한다.
+- 이유:
+  - 규칙형 변환(ADR-068·072)은 형식이 규칙적인 값만 다룬다. 이수구분처럼 값 목록 자체가 DB마다 다른 경우(`전공(핵심)`, `01`)는 사람이 검토한 대응표가 필요하다.
+  - 값 전체 일치만 바꾸면 policy가 기대 값을 결정적으로 다시 계산할 수 있다. 부분 치환은 의도하지 않은 검색어 변형을 만든다.
+  - 인식된 값은 정확히 한 저장 값을 뜻한다. 이를 부분 일치로 완화하면 짧은 코드가 긴 코드와 겹친다.
+  - 이 형식은 이후 AI mapping 제안의 출력 형식이기도 하다. AI 제안도 사람 검토 뒤 이 사전으로만 반영된다.
+- 한계:
+  - 1:N 표기(`전공` → 세 값)는 다루지 않는다.
+  - 관리자 화면 편집과 SQLite·게시 mapping 계약 반영은 8-07이다.
+  - FK 없는 관계 선언은 별도 단계다.
+  - legacy 사전은 개발자 선언이며 L2 검토가 아니다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -2094,3 +2123,4 @@ SQLite DB 입력
 - Phase 7-16 챗봇 서버 정책 3종 적용과 재비교 완료(사용자 결정). `chat_query.py`에 `CHAT_ROW_LIMIT = 200`과 이름형 문자열 `contains` 완화(`CONTAINS_FIELDS`)를 넣었다. understood 표시는 실제 실행 조건과 같다. `mapping/transforms.py`에 `KOREAN_WEEKDAY`(identity SQL, 요일 값 정규화, 모르는 값 거부)와 변환별 허용 연산자 `transform_operators()`를 추가했다. legacy-view profile에 `Schedule.day`로 선언했고, private profile은 `--write --live --replace`로 갱신했다(fingerprint 불변, smoke 5/5). `gpt-6-luna` high review-only 지적 1건(PostgreSQL `contains`의 LIKE 와일드카드 미escape)을 재현해 고쳤다. compiler와 policy가 같은 `postgres_contains_pattern`을 쓰며, 실제 PostgreSQL에서 escape 동작을 확인했다. 재비교(`p716-run1`, 모델 출력과 legacy SQL은 7-15와 문항별로 동일) 결과, ONTOLOGY 수용 가능 문항은 QueryIR 11→14, legacy 17이다. 개선 문항은 q05·q19·q21·q22이고, limit 200으로 q02·q11·q14·q18이 `EXACT`가 되었다. q20·q24는 50행 상한이 가리던 오류가 드러났다. 둘 다 맞힌 문항 11, QueryIR만 3(학점 형식 2, legacy key 없는 조회 1), legacy만 6(없는 field 이름, 이수구분 값 형식, 조건 해석, 과도한 값 지정)이다. 결과는 `docs/phase7-16-chat-policies-recompare-results-2026-09-29.md`에 두었다. 관련 테스트 224개(77 subtests), frontend 13개 파일 전체, 전체 pytest 1302개·6 skip·610 subtests, compileall, diff check 통과. legacy·frontend 변경 없음. ADR-072 추가
 - 2026-09-29 개발 순서 결정(사용자 승인). 순서는 다음과 같다: 7-17 기준 table 보존 LEFT JOIN, 8-06 코드값·값 사전, 합성 변형 benchmark와 규칙 기반 기준선, AI mapping 제안 비교, 8-07 관리자 화면 통합, L1 뒤 prompt·별칭 개선, L1/L3 뒤 Phase 9. 이유는 두 가지다. JOIN 한계와 mapping 오류가 섞이면 AI 비교의 원인을 가를 수 없다. 또 benchmark를 AI보다 먼저 고정해야 공정하다. Phase 8 로드맵에 benchmark·AI 제안 항목을 추가했다.
 - Phase 7-17 기준 table 보존 LEFT JOIN 완료(ADR-073). `plan_join_path(anchor_table=)`, compiler `LEFT JOIN`, AST policy anchor 모드(수식어 없는 `LEFT JOIN`만), profile v3 `anchor_table`, 시작 시 매핑 table 전체 부분집합 경로 유일성 검사를 추가했다. `legacy_view_profile.py`를 spec 구조(`--target view|base`)로 일반화하고 legacy 기본 table 4개에 `legacy-base` private profile을 등록했다(smoke 5/5). view와 같은 12 field·변환 4·미지원 3이며, 학과 코드는 JOIN 차이만 보려고 미지원으로 유지했다. anchor 없이는 과목+학과 경로가 모호하다(개설강좌 경유 대 필수과목 table 경유). 실제 DB 동등성 검증 결과다. 카드 전체 관계는 view와 multiset이 같다(6,846행, 시간표 없는 632행 포함). 7-16 답변 22문항을 상한 없이 재실행해도 22/22 같다. INNER JOIN 반례에서는 6,214행으로 줄고 6문항의 답이 달라진다. 같은 30문항 live 비교(`p717-base-run1`)에서는 모델 출력·legacy SQL·판정·key 집합이 모두 30/30 같았다. ONTOLOGY 수용 가능 QueryIR 14, legacy 17이다. `dev:all` launcher는 legacy profile별로 degrade한다. 비교 도구에는 `--queryir-database`를 추가했다. `gpt-6-luna` high review-only 지적 3건을 확인했다. 비교 도구의 기준 SQL이 선택 대상과 다른 DSN 변수를 읽던 문제와, 등록 시 시간 변환 column에 `timestamp`가 통과하던 문제는 재현해 고쳤고 회귀 테스트를 추가했다. 계획 문서의 7-12 전제 갱신 누락은 ADR-068에 해결 표시를 달아 반영했다. 결과는 `docs/phase7-17-anchor-left-join-results-2026-09-29.md`에 두었다. 관련 테스트 208개, 전체 pytest 1339개·6 skip·610 subtests, compileall, diff check 통과. legacy·frontend 변경 없음. ADR-073 추가
+- 2026-09-30 Phase 8-06 코드값·값 사전 완료(ADR-074). `mapping/values.py`에 `ValueDictionary`·`bind_filter_value`를 추가했다. compiler와 AST policy가 같은 bind 값을 쓰고, runtime은 결과 저장 값을 표시 이름으로 바꾼다. 챗봇은 표시 이름으로 이해 조건을 보여주고, 인식된 값에는 `contains` 완화를 하지 않으며, `reject` 사전 밖 값은 `NOT_UNDERSTOOD`로 답한다. private profile v4(nullable `anchor_table` + `value_dictionaries`)와 시작 검증을 추가했다. 등록 CLI는 저장 값 존재를 읽기 전용으로 확인한다(`VALUE_MISSING`). legacy 두 profile을 v4로 다시 등록했다(이수구분 9개 값 확인, fingerprint 불변, smoke 5/5). 같은 30문항 live 비교(`p806-base-run1`)에서 모델 응답 상태와 legacy SQL은 7-17과 같았다. q06만 `EMPTY`→`CORRECT_SUBSET`으로 바뀌어 ONTOLOGY 수용 가능이 QueryIR 14→15, legacy 17이 되었다. 남은 격차 5문항은 field 이름·조건 해석·과도한 값 지정으로, prompt·별칭 단계(L1 뒤)의 대상이다. `gpt-6-luna` high review-only 지적 3건을 모두 재현해 고쳤고 회귀 테스트를 추가했다. 문자열 column 타입을 접두사로 판정하던 것은 내장 타입 이름 정확 일치로 바꿨다. 식별 field(과목 코드·분반·학과 코드)의 사전은 결과 key를 바꾸므로 금지했다. 양방향 서식 문자는 거부한다. 결과는 `docs/phase8-06-value-dictionary-results-2026-09-30.md`에 두었다. 관련 테스트 261개, 전체 pytest 1392개·6 skip·610 subtests, compileall, diff check 통과. legacy·frontend 변경 없음. ADR-074 추가

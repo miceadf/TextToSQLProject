@@ -378,6 +378,13 @@ def repository(tmp_path: Path) -> Path:
     return tmp_path
 
 
+def _v3(profile_bytes: bytes) -> dict[str, Any]:
+    """The base profile in the Phase 7-17 v3 shape (no value dictionaries)."""
+    profile = json.loads(profile_bytes)
+    del profile["value_dictionaries"]
+    return {**profile, "version": "postgres-runtime-profile-v3"}
+
+
 def _write_pair(repository: Path, profile: dict[str, Any], mapping_bytes: bytes) -> None:
     directory = repository / lvp.BASE_PROFILE_DIR
     directory.mkdir(parents=True, exist_ok=True)
@@ -389,8 +396,7 @@ def test_v3_profile_round_trips_the_anchor(repository: Path, monkeypatch: pytest
     profile_bytes, mapping_bytes = lvp.build_documents(
         FINGERPRINT, datetime(2026, 1, 1, tzinfo=timezone.utc), lvp.BASE_SPEC
     )
-    profile = json.loads(profile_bytes)
-    assert profile["version"] == "postgres-runtime-profile-v3"
+    profile = _v3(profile_bytes)
     assert profile["anchor_table"] == ANCHOR and profile["include_views"] is False
     _write_pair(repository, profile, mapping_bytes)
     monkeypatch.setenv(lvp.BASE_DSN_ENV, SECRET_DSN)
@@ -414,7 +420,7 @@ def test_v3_profile_is_strict(repository: Path, monkeypatch: pytest.MonkeyPatch,
     profile_bytes, mapping_bytes = lvp.build_documents(
         FINGERPRINT, datetime(2026, 1, 1, tzinfo=timezone.utc), lvp.BASE_SPEC
     )
-    _write_pair(repository, {**json.loads(profile_bytes), **change}, mapping_bytes)
+    _write_pair(repository, {**_v3(profile_bytes), **change}, mapping_bytes)
     monkeypatch.setenv(lvp.BASE_DSN_ENV, SECRET_DSN)
     with pytest.raises(PostgresStartupProfileError) as caught:
         load_postgres_startup_profiles(repository_root=repository, database_ids=[DATABASE_ID])
@@ -425,7 +431,7 @@ def test_v3_profile_requires_the_anchor_key(repository: Path, monkeypatch: pytes
     profile_bytes, mapping_bytes = lvp.build_documents(
         FINGERPRINT, datetime(2026, 1, 1, tzinfo=timezone.utc), lvp.BASE_SPEC
     )
-    profile = json.loads(profile_bytes)
+    profile = _v3(profile_bytes)
     del profile["anchor_table"]
     profile["mapping_sha256"] = hashlib.sha256(mapping_bytes).hexdigest()
     _write_pair(repository, profile, mapping_bytes)
@@ -438,7 +444,8 @@ def test_view_documents_are_unchanged_by_the_spec_refactor() -> None:
     at = datetime(2026, 1, 1, tzinfo=timezone.utc)
     assert lvp.build_documents(FINGERPRINT, at) == lvp.build_documents(FINGERPRINT, at, lvp.VIEW_SPEC)
     profile = json.loads(lvp.build_documents(FINGERPRINT, at)[0])
-    assert profile["version"] == "postgres-runtime-profile-v2" and "anchor_table" not in profile
+    # Phase 8-06: the view profile is v4 with no anchor.
+    assert profile["version"] == "postgres-runtime-profile-v4" and profile["anchor_table"] is None
 
 
 # --- base registration CLI pieces ---------------------------------------------

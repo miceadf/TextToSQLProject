@@ -34,7 +34,7 @@ from ..harness.contracts import (
 )
 from ..harness.engine import ExecutionHarness
 from ..harness.recorded import RecordedFailureCode
-from ..mapping.transforms import normalize_filter_value
+from ..mapping.values import ValueDictionary, bind_filter_value
 from ..ontology.contracts import Operator
 from ..ontology.loader import load_default_ontology
 from .postgres_runtime import DatabaseRoutingExecutor, is_postgres_context_current
@@ -171,10 +171,19 @@ def _json_value(value: Any) -> Any:
     raise ChatQueryError(ChatQueryErrorCode.EXECUTION_FAILED, "RESULT_SHAPE_MISMATCH")
 
 
-def _display_value(transforms: dict[str, Any], field: str, value: Any) -> Any:
-    """Show the filter value the compiler actually binds."""
-    transform = transforms.get(field)
-    return value if transform is None else normalize_filter_value(transform, value)
+def _display_value(
+    transforms: dict[str, Any], dictionaries: dict[str, ValueDictionary], field: str, value: Any
+) -> Any:
+    """Show the filter value the compiler actually binds.
+
+    A dictionary value is shown by its label, so a stored code never
+    reaches the user.
+    """
+    bound = bind_filter_value(
+        field, value, field_transforms=transforms, value_dictionaries=dictionaries
+    )
+    dictionary = dictionaries.get(field)
+    return bound if dictionary is None else dictionary.label_for(bound)
 
 
 def _not_understood(database_id: str, failure_code: str) -> dict[str, Any]:
@@ -265,18 +274,28 @@ def answer_chat_query(
         return _not_understood(database_id, "REFLECTED_INPUT")
 
     transforms = context.field_transforms()
+    dictionaries = context.value_dictionaries()
     for item in query_ir.filters:
-        if item.field in transforms:
-            try:
-                normalize_filter_value(transforms[item.field], item.value)
-            except ValueError:
-                return _not_understood(database_id, "INVALID_VALUE_TYPE")
+        try:
+            bind_filter_value(
+                item.field,
+                item.value,
+                field_transforms=transforms,
+                value_dictionaries=dictionaries,
+            )
+        except ValueError:
+            return _not_understood(database_id, "INVALID_VALUE_TYPE")
 
     card_fields = [field for field in CANONICAL_SELECT if field in mapping.fields]
     rewritten = query_ir.model_dump(mode="json")
     rewritten["select"] = card_fields
     rewritten["limit"] = CHAT_ROW_LIMIT
     for item in rewritten["filters"]:
+        dictionary = dictionaries.get(item["field"])
+        if dictionary is not None and dictionary.knows(item["value"]):
+            # A recognised value names one stored value exactly; containment
+            # would also match longer codes ("01" in "101").
+            continue
         if item["field"] in CONTAINS_FIELDS and item["operator"] == Operator.EQUALS.value:
             item["operator"] = Operator.CONTAINS.value
     executed = QueryIR.model_validate(rewritten)
@@ -321,7 +340,7 @@ def answer_chat_query(
                     "field": item.field,
                     "label": labels.get(item.field, item.field),
                     "operator": item.operator.value,
-                    "value": _display_value(transforms, item.field, item.value),
+                    "value": _display_value(transforms, dictionaries, item.field, item.value),
                 }
                 for item in executed.filters
             ]

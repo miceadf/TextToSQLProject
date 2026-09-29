@@ -28,6 +28,7 @@ from ..mapping.transforms import (
     normalize_transformed_value,
     transform_supports_data_type,
 )
+from ..mapping.values import ValueDictionary
 
 POSTGRES_SCHEMA_VALUE = "postgres"
 
@@ -102,6 +103,8 @@ class PostgresRuntimeProfile:
 
     Phase 7-17: a profile may declare a row ``anchor_table``; every JOIN is
     then a LEFT JOIN from that table.
+
+    Phase 8-06: a profile may declare reviewed per-field value dictionaries.
     """
 
     __slots__ = (
@@ -112,6 +115,7 @@ class PostgresRuntimeProfile:
         "_field_transforms",
         "_unsupported_fields",
         "_anchor_table",
+        "_value_dictionaries",
     )
 
     def __init__(
@@ -124,12 +128,14 @@ class PostgresRuntimeProfile:
         field_transforms: dict[str, FieldTransform] | None = None,
         unsupported_fields: tuple[str, ...] | list[str] = (),
         anchor_table: str | None = None,
+        value_dictionaries: dict[str, ValueDictionary] | None = None,
     ) -> None:
         if not _valid_database_id(database_id):
             raise PostgresRuntimeError()
         transforms = _copy_transforms(field_transforms)
         unsupported = _copy_unsupported(unsupported_fields)
         anchor = _copy_anchor(anchor_table)
+        dictionaries = _copy_dictionaries(value_dictionaries)
         if not _valid_label(label):
             raise PostgresRuntimeError()
         if not isinstance(connection_config, PostgresConnectionConfig):
@@ -153,6 +159,7 @@ class PostgresRuntimeProfile:
         object.__setattr__(self, "_field_transforms", transforms)
         object.__setattr__(self, "_unsupported_fields", unsupported)
         object.__setattr__(self, "_anchor_table", anchor)
+        object.__setattr__(self, "_value_dictionaries", dictionaries)
 
     def __setattr__(self, name: str, value: Any) -> None:
         raise PostgresRuntimeError()
@@ -179,6 +186,10 @@ class PostgresRuntimeProfile:
     @property
     def anchor_table(self) -> str | None:
         return self._anchor_table
+
+    @property
+    def value_dictionaries(self) -> dict[str, ValueDictionary]:
+        return dict(self._value_dictionaries)
 
     @property
     def connection_config(self) -> PostgresConnectionConfig:
@@ -240,6 +251,38 @@ def _copy_anchor(value: Any) -> str | None:
     return value
 
 
+def _copy_dictionaries(value: Any) -> dict[str, ValueDictionary]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise PostgresRuntimeError()
+    copied: dict[str, ValueDictionary] = {}
+    try:
+        for field, dictionary in value.items():
+            if not isinstance(field, str) or not field:
+                raise PostgresRuntimeError()
+            copied[field] = ValueDictionary.model_validate(
+                dictionary.model_dump(mode="json")
+                if isinstance(dictionary, ValueDictionary)
+                else dictionary
+            )
+    except PostgresRuntimeError:
+        raise
+    except Exception:
+        raise PostgresRuntimeError() from None
+    return copied
+
+
+# Exact built-in text types (optionally length-bounded); a prefix test would
+# also admit user-defined types such as ``textual_state``.
+_TEXT_TYPE_PATTERN = re.compile(
+    r"^(?:character varying|varchar|character|char|bpchar|text)(?:\(\d{1,5}\))?$"
+)
+# Values that identify a row in results (the chat's course key and codes)
+# must reach the user unchanged, so they cannot carry a value dictionary.
+_IDENTITY_FIELDS = frozenset({"Course.code", "CourseOffering.section", "Department.code"})
+
+
 # Upper bound on mapped tables for the startup check that every table subset
 # has exactly one anchored JOIN plan (2**8 - 1 plans at most).
 _MAX_ANCHORED_TABLES = 8
@@ -287,6 +330,7 @@ class ValidatedPostgresContext:
         "_field_transforms",
         "_unsupported_fields",
         "_anchor_table",
+        "_value_dictionaries",
     )
 
     def __init__(
@@ -305,9 +349,11 @@ class ValidatedPostgresContext:
         field_transforms: dict[str, FieldTransform] | None = None,
         unsupported_fields: tuple[str, ...] = (),
         anchor_table: str | None = None,
+        value_dictionaries: dict[str, ValueDictionary] | None = None,
     ) -> None:
         object.__setattr__(self, "_database_id", database_id)
         object.__setattr__(self, "_anchor_table", _copy_anchor(anchor_table))
+        object.__setattr__(self, "_value_dictionaries", _copy_dictionaries(value_dictionaries))
         object.__setattr__(self, "_field_transforms", _copy_transforms(field_transforms))
         object.__setattr__(self, "_unsupported_fields", _copy_unsupported(unsupported_fields))
         object.__setattr__(self, "_label", label)
@@ -371,25 +417,29 @@ class ValidatedPostgresContext:
         """Declared row anchor (physical name; server-side only)."""
         return self._anchor_table
 
+    def value_dictionaries(self) -> dict[str, ValueDictionary]:
+        return dict(self._value_dictionaries)
+
     def normalize_rows(self, columns: Any, rows: Any) -> Any:
-        """JSON-safe values for transformed fields; other values unchanged."""
-        if not self._field_transforms or not isinstance(rows, list):
+        """JSON-safe values for transformed fields and display labels for
+        dictionary fields; other values unchanged."""
+        if (not self._field_transforms and not self._value_dictionaries) or not isinstance(
+            rows, list
+        ):
             return rows
         normalized = []
         for row in rows:
             if not isinstance(row, dict):
                 return rows
-            normalized.append(
-                {
-                    key: (
-                        normalize_transformed_value(self._field_transforms[key], value)
-                        if key in self._field_transforms
-                        else value
-                    )
-                    for key, value in row.items()
-                }
-            )
+            normalized.append({key: self._normalize_value(key, value) for key, value in row.items()})
         return normalized
+
+    def _normalize_value(self, key: Any, value: Any) -> Any:
+        if key in self._field_transforms:
+            return normalize_transformed_value(self._field_transforms[key], value)
+        if key in self._value_dictionaries:
+            return self._value_dictionaries[key].label_for(value)
+        return value
 
     def harness_mapping(self) -> Any:
         return to_harness_mapping(self._published_mapping.model_copy(deep=True))
@@ -463,6 +513,9 @@ def _validate_one(
             raise PostgresRuntimeError()
         if not set(transforms).issubset(mapped):
             raise PostgresRuntimeError()
+        dictionaries = profile.value_dictionaries
+        if not set(dictionaries).issubset(mapped) or set(dictionaries) & set(transforms):
+            raise PostgresRuntimeError()
         tables = getattr(catalog, "tables", None)
         if not isinstance(tables, list) or not tables:
             raise PostgresRuntimeError()
@@ -512,6 +565,25 @@ def _validate_one(
                     transform, declared_types.get((target.table, target.column), "")
                 ):
                     raise PostgresRuntimeError()
+        if dictionaries:
+            from ..ontology.contracts import DataType
+            from ..ontology.loader import load_default_ontology
+
+            ontology_types = {
+                field.name: field.data_type
+                for entity in load_default_ontology().entities
+                for field in entity.fields
+            }
+            for semantic in dictionaries:
+                # Stored values are compared as text, so both sides must be text.
+                target = published.fields[semantic]
+                declared = declared_types.get((target.table, target.column), "").lower()
+                if (
+                    ontology_types.get(semantic) != DataType.STRING
+                    or _TEXT_TYPE_PATTERN.fullmatch(declared) is None
+                    or semantic in _IDENTITY_FIELDS
+                ):
+                    raise PostgresRuntimeError()
         from ..relations.physical import build_physical_relation_graph
 
         graph = build_physical_relation_graph(catalog)
@@ -533,10 +605,18 @@ def _validate_one(
         from ..policy.postgres import SchemaAdaptivePostgresPolicy
 
         compiler = SchemaAdaptivePostgresCompiler(
-            graph, published, field_transforms=transforms, anchor_table=anchor
+            graph,
+            published,
+            field_transforms=transforms,
+            anchor_table=anchor,
+            value_dictionaries=dictionaries,
         )
         policy = SchemaAdaptivePostgresPolicy(
-            graph, published, field_transforms=transforms, anchor_table=anchor
+            graph,
+            published,
+            field_transforms=transforms,
+            anchor_table=anchor,
+            value_dictionaries=dictionaries,
         )
     except Exception:
         raise PostgresRuntimeError() from None
@@ -554,6 +634,7 @@ def _validate_one(
         field_transforms=transforms,
         unsupported_fields=tuple(sorted(unsupported)),
         anchor_table=anchor,
+        value_dictionaries=dictionaries,
     )
 
 

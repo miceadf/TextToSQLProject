@@ -32,6 +32,8 @@ _PROFILE_VERSION = "postgres-runtime-profile-v1"
 _PROFILE_VERSION_V2 = "postgres-runtime-profile-v2"
 # Phase 7-17: v3 is v2 plus a declared row anchor table (LEFT JOIN from it).
 _PROFILE_VERSION_V3 = "postgres-runtime-profile-v3"
+# Phase 8-06: v4 is v2 plus a nullable anchor and reviewed value dictionaries.
+_PROFILE_VERSION_V4 = "postgres-runtime-profile-v4"
 _MAX_PROFILE_FIELDS = 64
 _TABLE_NAME_PATTERN = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
 _SEMANTIC_FIELD_PATTERN = re.compile(r"^[A-Z][A-Za-z]{0,63}\.[a-z][a-z_]{0,63}$")
@@ -142,6 +144,31 @@ def _parse_v2_extras(payload: dict[str, Any]) -> None:
         raise _fail()
 
 
+def _parse_value_dictionaries(payload: dict[str, Any]) -> None:
+    from ..mapping.values import ValueDictionary
+
+    dictionaries = payload["value_dictionaries"]
+    if not isinstance(dictionaries, dict) or len(dictionaries) > _MAX_PROFILE_FIELDS:
+        raise _fail()
+    parsed: dict[str, Any] = {}
+    for semantic, raw in dictionaries.items():
+        if not isinstance(semantic, str) or _SEMANTIC_FIELD_PATTERN.fullmatch(semantic) is None:
+            raise _fail()
+        try:
+            dictionary = ValueDictionary.model_validate(raw)
+        except Exception:
+            raise _fail() from None
+        # One canonical spelling: the document must equal its own dump.
+        if dictionary.model_dump(mode="json") != raw:
+            raise _fail()
+        parsed[semantic] = dictionary
+    if set(parsed) & set(payload["field_transforms"]) or set(parsed) & set(
+        payload["unsupported_fields"]
+    ):
+        raise _fail()
+    payload["value_dictionaries"] = parsed
+
+
 def _parse_profile_payload(raw: bytes, *, expected_id: str) -> dict[str, Any]:
     content = _check_sized(raw)
     payload = _parse_strict_json(content)
@@ -155,6 +182,10 @@ def _parse_profile_payload(raw: bytes, *, expected_id: str) -> dict[str, Any]:
             expected_keys = set(_PROFILE_KEYS | _PROFILE_V2_EXTRA_KEYS)
         elif version == _PROFILE_VERSION_V3:
             expected_keys = set(_PROFILE_KEYS | _PROFILE_V2_EXTRA_KEYS | {"anchor_table"})
+        elif version == _PROFILE_VERSION_V4:
+            expected_keys = set(
+                _PROFILE_KEYS | _PROFILE_V2_EXTRA_KEYS | {"anchor_table", "value_dictionaries"}
+            )
         else:
             raise _fail()
         if set(payload.keys()) != expected_keys:
@@ -162,12 +193,17 @@ def _parse_profile_payload(raw: bytes, *, expected_id: str) -> dict[str, Any]:
         for key in _PROFILE_KEYS:
             if not isinstance(payload[key], str):
                 raise _fail()
-        if version in (_PROFILE_VERSION_V2, _PROFILE_VERSION_V3):
+        if version != _PROFILE_VERSION:
             _parse_v2_extras(payload)
-        if version == _PROFILE_VERSION_V3:
+        if version in (_PROFILE_VERSION_V3, _PROFILE_VERSION_V4):
             anchor = payload["anchor_table"]
-            if not isinstance(anchor, str) or _TABLE_NAME_PATTERN.fullmatch(anchor) is None:
+            nullable = version == _PROFILE_VERSION_V4
+            if not (anchor is None and nullable) and (
+                not isinstance(anchor, str) or _TABLE_NAME_PATTERN.fullmatch(anchor) is None
+            ):
                 raise _fail()
+        if version == _PROFILE_VERSION_V4:
+            _parse_value_dictionaries(payload)
         if payload["database_id"] != expected_id:
             raise _fail()
         if not _valid_database_id(payload["database_id"]):
@@ -394,7 +430,8 @@ def load_postgres_startup_profiles(
                 raise _fail() from None
             if not isinstance(dsn, str) or not dsn or not dsn.strip():
                 raise _fail()
-            is_v3 = profile_doc["version"] == _PROFILE_VERSION_V3
+            is_v4 = profile_doc["version"] == _PROFILE_VERSION_V4
+            is_v3 = profile_doc["version"] == _PROFILE_VERSION_V3 or is_v4
             is_v2 = profile_doc["version"] == _PROFILE_VERSION_V2 or is_v3
             try:
                 connection = PostgresConnectionConfig(
@@ -412,7 +449,12 @@ def load_postgres_startup_profiles(
                     published_mapping=mapping,
                     field_transforms=dict(profile_doc["field_transforms"]) if is_v2 else None,
                     unsupported_fields=list(profile_doc["unsupported_fields"]) if is_v2 else (),
-                    anchor_table=str(profile_doc["anchor_table"]) if is_v3 else None,
+                    anchor_table=(
+                        str(profile_doc["anchor_table"])
+                        if is_v3 and profile_doc["anchor_table"] is not None
+                        else None
+                    ),
+                    value_dictionaries=dict(profile_doc["value_dictionaries"]) if is_v4 else None,
                 )
             except Exception:
                 raise _fail() from None

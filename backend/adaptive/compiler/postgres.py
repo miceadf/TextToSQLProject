@@ -15,10 +15,10 @@ from backend.adaptive.harness.errors import HarnessFailure
 from backend.adaptive.mapping.contracts import PublishedMappingProfile
 from backend.adaptive.mapping.transforms import (
     FieldTransform,
-    normalize_filter_value,
     render_postgres_transform,
     transform_operators,
 )
+from backend.adaptive.mapping.values import ValueDictionary, bind_filter_value
 from backend.adaptive.ontology.contracts import Operator
 from backend.adaptive.relations.contracts import JoinPlan, JoinPlanStatus, PhysicalRelationGraph
 from backend.adaptive.relations.errors import RelationGraphError
@@ -141,15 +141,18 @@ class JoinCapablePostgresCompiler:
                 f"{value_sql(item.field)} "
                 f"{SQL_OPERATORS[item.operator]} {POSTGRES_PLACEHOLDER}"
             )
-            value = item.value
-            if item.field in transforms:
-                try:
-                    value = normalize_filter_value(transforms[item.field], value)
-                except ValueError:
-                    self._fail(
-                        HarnessErrorCode.INVALID_VALUE_TYPE,
-                        f"value for transformed field '{item.field}' is not representable",
-                    )
+            try:
+                value = bind_filter_value(
+                    item.field,
+                    item.value,
+                    field_transforms=transforms,
+                    value_dictionaries=request.value_dictionaries,
+                )
+            except ValueError:
+                self._fail(
+                    HarnessErrorCode.INVALID_VALUE_TYPE,
+                    f"value for field '{item.field}' is not representable",
+                )
             if item.operator is Operator.CONTAINS:
                 value = postgres_contains_pattern(value)
             parameters.append(value)
@@ -257,10 +260,12 @@ class SchemaAdaptivePostgresCompiler:
         compiler: JoinCapablePostgresCompiler | None = None,
         field_transforms: dict[str, FieldTransform] | None = None,
         anchor_table: str | None = None,
+        value_dictionaries: dict[str, ValueDictionary] | None = None,
     ) -> None:
         self._graph = graph.model_copy(deep=True)
         self._mapping = mapping.model_copy(deep=True)
         self._compiler = compiler or JoinCapablePostgresCompiler()
+        self._value_dictionaries = dict(value_dictionaries or {})
         self._field_transforms = {
             field: FieldTransform(transform)
             for field, transform in (field_transforms or {}).items()
@@ -272,6 +277,10 @@ class SchemaAdaptivePostgresCompiler:
         }:
             raise ValueError("anchor table must be a published mapping table")
         self._anchor_table = anchor_table
+        if not set(self._value_dictionaries).issubset(self._mapping.fields) or (
+            set(self._value_dictionaries) & set(self._field_transforms)
+        ):
+            raise ValueError("value dictionaries must target untransformed mapping fields")
 
     def compile(
         self,
@@ -304,6 +313,7 @@ class SchemaAdaptivePostgresCompiler:
                 join_result=join_result,
                 field_transforms=dict(self._field_transforms),
                 anchor_table=self._anchor_table,
+                value_dictionaries=dict(self._value_dictionaries),
             )
         )
 

@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field, model_validator
 from backend.adaptive.harness.contracts import QueryIR
 from backend.adaptive.mapping.contracts import PublishedMappingProfile
 from backend.adaptive.mapping.transforms import FieldTransform
+from backend.adaptive.mapping.values import ValueDictionary
 from backend.adaptive.relations.contracts import JoinPlanningResult
 
 
@@ -24,11 +25,17 @@ class JoinCompilationRequest(BaseModel):
     # Declared row anchor (PostgreSQL runtime only): every JOIN is a LEFT
     # JOIN from this table so anchor rows are never dropped.
     anchor_table: str | None = Field(default=None, min_length=1)
+    # Reviewed per-field value dictionaries (PostgreSQL runtime only).
+    value_dictionaries: dict[str, ValueDictionary] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_semantic_fields(self) -> "JoinCompilationRequest":
         if not set(self.field_transforms).issubset(self.mapping.fields):
             raise ValueError("field transforms must target published mapping fields")
+        if not set(self.value_dictionaries).issubset(self.mapping.fields):
+            raise ValueError("value dictionaries must target published mapping fields")
+        if set(self.value_dictionaries) & set(self.field_transforms):
+            raise ValueError("a field cannot have both a transform and a value dictionary")
         referenced = sorted(
             {
                 *self.query_ir.select,

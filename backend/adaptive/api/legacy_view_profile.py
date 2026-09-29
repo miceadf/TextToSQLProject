@@ -6,6 +6,10 @@ can answer the same questions for comparison. The mapping is developer
 authored for the team-built legacy DB (user statement 2026-09-29) and is
 not an L2 review of a real school database.
 
+Phase 8-06 declares a reviewed value dictionary for the course category on
+both targets (profile v4); registration checks that every stored value
+exists in the column.
+
 Phase 7-17 adds a second target: the same canonical fields mapped onto the
 view's base tables, with the offering table as the declared row anchor so
 every JOIN is a LEFT JOIN from it (profile v3). ``--target`` selects the
@@ -36,9 +40,10 @@ import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from ..mapping.transforms import FieldTransform
+from ..mapping.values import ValueDictionary, ValueEntry
 
 DATABASE_ID = "legacy-view"
 LABEL = "Legacy DB (QueryIR)"
@@ -46,7 +51,7 @@ DSN_ENV = "SCHEMA_ADAPTIVE_POSTGRES_DSN_LEGACY_VIEW"
 SCHEMA = "public"
 VIEW = "v_course_info"
 PROFILE_DIR = Path(".schema-adaptive/postgres-profiles") / DATABASE_ID
-PROFILE_VERSION = "postgres-runtime-profile-v2"
+PROFILE_VERSION = "postgres-runtime-profile-v4"
 REVIEWER = "developer"
 REASON = "Phase 7-12 developer mapping of the team-built legacy view (not an L2 review)"
 
@@ -54,7 +59,7 @@ BASE_DATABASE_ID = "legacy-base"
 BASE_LABEL = "Legacy DB tables (QueryIR)"
 BASE_DSN_ENV = "SCHEMA_ADAPTIVE_POSTGRES_DSN_LEGACY_BASE"
 BASE_PROFILE_DIR = Path(".schema-adaptive/postgres-profiles") / BASE_DATABASE_ID
-BASE_PROFILE_VERSION = "postgres-runtime-profile-v3"
+BASE_PROFILE_VERSION = "postgres-runtime-profile-v4"
 BASE_REASON = (
     "Phase 7-17 developer mapping of the team-built legacy base tables (not an L2 review)"
 )
@@ -86,6 +91,32 @@ FIELD_TRANSFORMS: dict[str, FieldTransform] = {
 # The view has no department code, and its ``course_year`` is the target
 # grade (1-5), not the offering year; there is no semester column.
 UNSUPPORTED_FIELDS = ("CourseOffering.semester", "CourseOffering.year", "Department.code")
+
+# Phase 8-06: the category values of the team-built legacy DB, with the
+# spellings users and the model write without parentheses. Labels are the
+# stored values themselves; values outside the list are still searched.
+_CATEGORY_ALIASES: dict[str, tuple[str, ...]] = {
+    "전공(핵심)": ("전공핵심", "핵심전공"),
+    "전공(기초)": ("전공기초", "기초전공"),
+    "전공(심화)": ("전공심화", "심화전공"),
+    "교양(소양)": ("교양소양", "소양교양"),
+    "교양(균형)": ("교양균형", "균형교양"),
+    "교양(소양필수)": ("교양소양필수", "소양필수교양", "소양필수"),
+    "교양(기초)": ("교양기초", "기초교양"),
+    "일반선택": (),
+    "교직": (),
+}
+VALUE_DICTIONARIES: dict[str, ValueDictionary] = {
+    "Course.category": ValueDictionary(
+        entries=tuple(
+            ValueEntry(stored=stored, label=stored, aliases=aliases)
+            for stored, aliases in _CATEGORY_ALIASES.items()
+        ),
+        unknown="pass",
+        reviewer=REVIEWER,
+        reason="Phase 8-06 developer dictionary of the team-built legacy category values (not an L2 review)",
+    ),
+}
 
 # canonical field -> (base table, column, expected declared type prefix).
 # Same fields, transforms and unsupported list as the view so the two
@@ -257,9 +288,12 @@ def build_documents(
         "include_views": spec.include_views,
         "field_transforms": {field: transform.value for field, transform in FIELD_TRANSFORMS.items()},
         "unsupported_fields": sorted(UNSUPPORTED_FIELDS),
+        "anchor_table": spec.anchor_table,
+        "value_dictionaries": {
+            field: dictionary.model_dump(mode="json")
+            for field, dictionary in VALUE_DICTIONARIES.items()
+        },
     }
-    if spec.anchor_table is not None:
-        profile["anchor_table"] = spec.anchor_table
     profile_bytes = (
         json.dumps(profile, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     ).encode("utf-8")
@@ -287,6 +321,21 @@ def verify_catalog(catalog: Any, spec: LegacyProfileSpec = VIEW_SPEC) -> None:
         transform = FIELD_TRANSFORMS.get(semantic)
         if transform is not None and not column_type_supports(transform, actual):
             raise LegacyViewProfileError(spec.mismatch_code)
+
+
+DistinctValues = Callable[[str, str], set[str]]
+
+
+def verify_stored_values(distinct_values: DistinctValues, spec: LegacyProfileSpec = VIEW_SPEC) -> None:
+    """Every dictionary stored value must exist in its mapped column."""
+    for semantic, dictionary in VALUE_DICTIONARIES.items():
+        table, column, _ = spec.fields[semantic]
+        try:
+            present = distinct_values(table, column)
+        except Exception:
+            raise LegacyViewProfileError("INSPECTION_FAILED") from None
+        if any(entry.stored not in present for entry in dictionary.entries):
+            raise LegacyViewProfileError("VALUE_MISSING")
 
 
 def verify_view_catalog(catalog: Any) -> None:
@@ -335,9 +384,12 @@ def write_profile(
     replace: bool,
     now: datetime | None = None,
     spec: LegacyProfileSpec = VIEW_SPEC,
+    distinct_values: DistinctValues | None = None,
 ) -> str:
     """Write the private profile for ``catalog``; return a fixed status."""
     verify_catalog(catalog, spec)
+    if distinct_values is not None:
+        verify_stored_values(distinct_values, spec)
     if getattr(catalog, "database_id", None) != spec.database_id:
         raise LegacyViewProfileError("INSPECTION_FAILED")
     fingerprint = str(getattr(catalog, "schema_fingerprint", ""))
@@ -455,6 +507,41 @@ def run_smoke(context: Any, spec: LegacyProfileSpec = VIEW_SPEC) -> list[dict[st
     return results
 
 
+_IDENTIFIER = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
+_MAX_DISTINCT = 1000
+
+
+def _live_distinct_values(dsn: str) -> DistinctValues:
+    """Read-only distinct text values of one mapped column (bounded)."""
+
+    def fetch(table: str, column: str) -> set[str]:
+        import psycopg2  # type: ignore[import-not-found]
+
+        if _IDENTIFIER.fullmatch(table) is None or _IDENTIFIER.fullmatch(column) is None:
+            raise LegacyViewProfileError("INSPECTION_FAILED")
+        connection = psycopg2.connect(
+            dsn,
+            connect_timeout=5,
+            options="-c statement_timeout=5000 -c default_transaction_read_only=on",
+        )
+        try:
+            connection.set_client_encoding("UTF8")
+            with connection.cursor() as cursor:
+                # Identifiers come from the fixed spec and match _IDENTIFIER.
+                cursor.execute(
+                    f'SELECT DISTINCT "{column}" FROM "{SCHEMA}"."{table}" LIMIT %s',
+                    (_MAX_DISTINCT + 1,),
+                )
+                rows = cursor.fetchall()
+        finally:
+            connection.close()
+        if len(rows) > _MAX_DISTINCT:
+            raise LegacyViewProfileError("INSPECTION_FAILED")
+        return {row[0] for row in rows if isinstance(row[0], str)}
+
+    return fetch
+
+
 class _StrictArgumentParser(argparse.ArgumentParser):
     """Report parse failures with one fixed code; never echo arguments."""
 
@@ -529,7 +616,11 @@ def main(argv: list[str] | None = None, *, environ: dict[str, str] | None = None
             except Exception:
                 raise LegacyViewProfileError("INSPECTION_FAILED") from None
             status = write_profile(
-                Path(args.repository_root), catalog, replace=args.replace, spec=spec
+                Path(args.repository_root),
+                catalog,
+                replace=args.replace,
+                spec=spec,
+                distinct_values=_live_distinct_values(dsn),
             )
             _emit({"mode": "write", "status": status})
             return 0

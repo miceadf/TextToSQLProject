@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field, computed_field
 from backend.adaptive.harness.contracts import CompiledQuery, QueryIR
 from backend.adaptive.mapping.contracts import PublishedMappingProfile
 from backend.adaptive.mapping.transforms import FieldTransform
+from backend.adaptive.mapping.values import ValueDictionary
 from backend.adaptive.relations.contracts import JoinPlanningResult
 
 
@@ -23,6 +24,9 @@ class AstPolicyContext(BaseModel):
     # Declared row anchor (postgres runtime only): every JOIN must then be a
     # plain LEFT JOIN from this table; without it only INNER JOIN is allowed.
     anchor_table: str | None = Field(default=None, min_length=1)
+    # Reviewed per-field value dictionaries (postgres runtime only); the
+    # expected bound value is computed exactly as the compiler does.
+    value_dictionaries: dict[str, ValueDictionary] = Field(default_factory=dict)
 
     @computed_field
     @property
