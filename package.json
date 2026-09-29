@@ -10,6 +10,8 @@
     "dev:frontend": "vite",
     "dev:backend": "python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload",
     "dev:full": "concurrently -k -n BACKEND,FRONTEND -c blue,green \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:backend:venv": ".venv\\Scripts\\python.exe -m uvicorn backend.main:app --host 127.0.0.1 --port 8000",
+    "dev:all": "concurrently -k -n LEGACY,ADAPTIVE,FRONTEND -c blue,magenta,green \"npm run dev:backend:venv\" \"npm run dev:adaptive-prototype\" \"npm run dev:frontend\"",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",

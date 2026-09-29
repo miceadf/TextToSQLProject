@@ -62,6 +62,10 @@
 - 현재 로컬에는 fine-tuned tag만 확인되어 base instruct 평가는 정확한 tag가 별도로 준비될 때 진행한다. E3·L5 팀 결정 대기와 합성 개발은 병행한다.
 - `docs/desktop-test-handoff.md`는 초기 데스크톱 이전 시점의 기록이다.
 
+## 실행
+
+팀 논의용 전체 실행은 `npm run dev:all`(legacy `:8000` + 합성 prototype `:8123` + Vite `:5173`). legacy 강좌 DB는 팀이 구성한 유사 데이터라는 사용자 확인이 있다(`docs/synthetic-clarification-team-handoff.md`).
+
 ## 다음 작은 작업
 
 0. Phase 8 남은 항목: 8-06 코드값·관계 교정(ontology value mapping 설계 ADR 선행), 8-07 관리자 화면 통합, 8-01~8-05 관리자 흐름의 browser smoke(private storage 격리 방법 필요).

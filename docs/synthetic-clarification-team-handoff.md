@@ -9,6 +9,20 @@ Phase 6-14 `/adaptive-prototype` 화면과 Phase 6-13 loopback ASGI backend를 �
 - `8123`과 `5173` loopback port가 비어 있어야 한다.
 - 실제 CNU 데이터, `.env`, PostgreSQL, Ollama, private recording이 필요하지 않으며 사용하지 않는다.
 
+## legacy와 함께 전체 실행 (2026-09-29 추가)
+
+팀 논의에서 기존 legacy 화면과 스키마 적응 기능을 한 화면에서 함께 보여줄 때 쓴다.
+
+```powershell
+npm run dev:all
+```
+
+- legacy backend(`:8000`, venv Python), 합성 prototype backend(`:8123`), Vite frontend(`:5173`)를 함께 실행하고 `Ctrl+C`로 함께 종료한다.
+- legacy 쪽은 기존처럼 `backend/.env`의 PostgreSQL·Ollama 설정이 필요하다(Redis는 없으면 cache 없이 동작).
+- 접속: `http://localhost:5173/` (legacy 목록·AI Course Assistant, `DB 변경`의 합성 DB 선택·SQLite 업로드), `합성 질의 열기` → `/adaptive-prototype`.
+- 2026-09-29 기계적 browser 확인: legacy 목록 200건, legacy assistant 질의 응답("SQL 실행 완료: 50건"), `DB 변경` → 합성 flat 6건 목록 전환, `강의 목록 보여줘` → 두 의미 선택 → 강의명 6행. SQLite 업로드 이후 관리자 흐름은 browser로 확인하지 않았다.
+- 사용자 확인(2026-09-29): legacy DB는 충남대 수강신청 테이블을 그대로 가져온 것이 아니라 팀이 유사한 스키마·데이터로 직접 구성한 것이다. 따라서 이 전체 실행은 실제 개인정보 노출을 전제로 하지 않는다.
+
 ## 실행
 
 단일 명령:
