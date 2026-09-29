@@ -12,7 +12,7 @@ from ..catalog import SQLiteAdapter
 from ..catalog.contracts import DatabaseCatalog
 from ..compiler import SchemaAdaptiveSQLiteCompiler
 from ..compiler.harness import SchemaAdaptiveSQLiteCompiler as _PreflightCompiler
-from ..fixtures.contracts import FixtureBundle, FixtureSeed, FixtureVariant
+from ..fixtures.contracts import FIXTURE_SUITES, FixtureBundle, FixtureSeed, FixtureVariant
 from ..fixtures.seed import DEFAULT_SEED
 from ..harness.contracts import (
     HarnessRequest,
@@ -132,7 +132,10 @@ def _prepare_fixture_contexts(
         all_fields,
         ontology,
     )
-    for variant in FixtureVariant:
+    # Re-check here: a bundle mutated after validation must not pick its own variants.
+    if set(bundle.artifacts) not in [set(item) for item in FIXTURE_SUITES.values()]:
+        raise ValueError("fixture bundle variant drift")
+    for variant in (item for item in FixtureVariant if item in bundle.artifacts):
         artifact = bundle.artifacts.get(variant)
         if artifact is None or artifact.variant is not variant:
             raise ValueError("fixture bundle variant drift")
@@ -212,6 +215,8 @@ def run_evaluation(
     contexts, fixture_metadata = _prepare_fixture_contexts(
         bundle, seed, domain_ontology, published_mappings
     )
+    if any(FixtureVariant(name) not in contexts for name in config.variants):
+        raise ValueError("configured variant missing from fixture bundle")
     normalized = contexts[FixtureVariant.NORMALIZED]
     coverage = build_coverage_report(
         gold, domain_ontology, normalized[1], normalized[2]

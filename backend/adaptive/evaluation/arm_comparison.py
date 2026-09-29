@@ -15,6 +15,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..fixtures.contracts import FIXTURE_SUITES
 from .direct_sql import DirectSqlRunReport
 from .run_contracts import EvaluationRunReport
 from .run_report import deterministic_request_id
@@ -162,4 +163,68 @@ def compare_arms(ir: EvaluationRunReport, sql: DirectSqlRunReport) -> ArmCompari
             )
             for variant in ir_variants
         },
+    )
+
+
+SCHEMA_CONSISTENCY_VERSION = "schema-consistency-v1"
+
+
+class ArmConsistency(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    case_denominator: int = Field(ge=0)
+    by_variant_correct: dict[str, int]
+    spread: int = Field(ge=0)
+    all_variants_correct: int = Field(ge=0)
+
+
+class SchemaConsistencyReport(BaseModel):
+    """Per-arm accuracy stability across fixture variants; counts only."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["schema-consistency-v1"] = SCHEMA_CONSISTENCY_VERSION
+    variants: list[str]
+    oracle_smoke: bool
+    gold_human_review_pending: bool
+    ir: ArmConsistency
+    sql: ArmConsistency
+
+
+def _arm_consistency(correct: dict[tuple[str, str], bool], variants: list[str]) -> ArmConsistency:
+    case_ids = sorted({case_id for case_id, _ in correct})
+    by_variant = {
+        variant: sum(correct[(case_id, variant)] for case_id in case_ids) for variant in variants
+    }
+    return ArmConsistency(
+        case_denominator=len(case_ids),
+        by_variant_correct=by_variant,
+        spread=max(by_variant.values()) - min(by_variant.values()),
+        all_variants_correct=sum(
+            all(correct[(case_id, variant)] for variant in variants) for case_id in case_ids
+        ),
+    )
+
+
+def schema_consistency(ir: EvaluationRunReport, sql: DirectSqlRunReport) -> SchemaConsistencyReport:
+    """Summarize each arm's stability across variants after the same pairing checks."""
+    comparison = compare_arms(ir, sql)
+    variants = comparison.variants
+    # Consistency is only meaningful over a whole fixed suite, never a subset.
+    if variants not in [[item.value for item in suite] for suite in FIXTURE_SUITES.values()]:
+        raise ArmComparisonError()
+    ir_correct = {
+        (a.case_id, str(getattr(a.variant, "value", a.variant))): a.semantic_correct is True
+        for a in ir.attempts
+    }
+    sql_correct = {
+        (a.case_id, str(getattr(a.variant, "value", a.variant))): a.correct is True
+        for a in sql.attempts
+    }
+    return SchemaConsistencyReport(
+        variants=variants,
+        oracle_smoke=comparison.oracle_smoke,
+        gold_human_review_pending=comparison.gold_human_review_pending,
+        ir=_arm_consistency(ir_correct, variants),
+        sql=_arm_consistency(sql_correct, variants),
     )

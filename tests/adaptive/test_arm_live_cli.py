@@ -20,7 +20,7 @@ from backend.adaptive.evaluation.ollama_request_format import (
     apply_request_format,
 )
 from backend.adaptive.evaluation.runner import _prepare_fixture_contexts
-from backend.adaptive.fixtures import build_fixture_bundle
+from backend.adaptive.fixtures import EXTENDED_VARIANTS, build_fixture_bundle
 from backend.adaptive.fixtures.contracts import FixtureVariant
 from backend.adaptive.fixtures.seed import DEFAULT_SEED
 from backend.adaptive.ontology.loader import load_default_ontology
@@ -34,11 +34,14 @@ SECRET = "p519secret"
 def oracle_transport(tmp_path_factory: Any) -> Any:
     ontology = load_default_ontology()
     gold = load_evaluation_set(cli.DEVELOPMENT_SET_PATH, ontology=ontology)
-    bundle = build_fixture_bundle(tmp_path_factory.mktemp("p519") / "databases", ontology=ontology)
+    # Extended catalogs include the core ones, so one transport serves both suites.
+    bundle = build_fixture_bundle(
+        tmp_path_factory.mktemp("p519") / "databases", ontology=ontology, variants=EXTENDED_VARIANTS
+    )
     contexts, _ = _prepare_fixture_contexts(bundle, DEFAULT_SEED, ontology, None)
     by_db_question = _oracle_sql(gold, contexts)
     sql_by_prompt: dict[str, str] = {}
-    for variant in FixtureVariant:
+    for variant in contexts:
         artifact = contexts[variant][0]
         catalog = DatabaseCatalog.model_validate_json(artifact.catalog_path.read_text(encoding="utf-8"))
         for case in gold.cases:
@@ -110,7 +113,7 @@ def test_live_run_with_oracle_transport_writes_three_reports(
     assert payload["sql_arm"]["execution_correct"] == {"count": 120, "denominator": 120}
     assert "GOLD_NEEDS_HUMAN_REVIEW" in payload["warnings"]
     out_dir = tmp_path / ".schema-adaptive" / "reports" / "run-b"
-    assert sorted(p.name for p in out_dir.iterdir()) == ["comparison.json", "ir-report.json", "sql-report.json"]
+    assert sorted(p.name for p in out_dir.iterdir()) == ["comparison.json", "consistency.json", "ir-report.json", "sql-report.json"]
     blob = text + "".join(p.read_text(encoding="utf-8") for p in out_dir.iterdir())
     for marker in ("127.0.0.1", "11434", "SELECT ", "개설된 모든 강좌"):
         assert marker not in blob

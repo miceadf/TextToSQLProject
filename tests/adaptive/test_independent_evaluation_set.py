@@ -12,7 +12,12 @@ from backend.adaptive.evaluation.contracts import ReviewStatus
 from backend.adaptive.evaluation.fixture_mapping import fixture_published_mapping
 from backend.adaptive.evaluation.isolation import check_set_isolation
 from backend.adaptive.evaluation.loader import load_evaluation_set
-from backend.adaptive.fixtures import DEFAULT_SEED, FixtureVariant, build_fixture_bundle
+from backend.adaptive.fixtures import (
+    DEFAULT_SEED,
+    EXTENDED_VARIANTS,
+    FixtureVariant,
+    build_fixture_bundle,
+)
 from backend.adaptive.harness.executor import SQLiteReadOnlyExecutor
 from backend.adaptive.ontology import load_default_ontology
 from backend.adaptive.policy import AstPolicyContext, AstReadOnlyPolicy
@@ -34,7 +39,9 @@ class IndependentSetDraftTests(unittest.TestCase):
         # Full 30-to-50 case contract applies; no require_full bypass.
         cls.draft = load_evaluation_set(DRAFT_PATH, seed=DEFAULT_SEED, ontology=cls.ontology)
         cls.temp = tempfile.TemporaryDirectory()
-        cls.bundle = build_fixture_bundle(Path(cls.temp.name) / "fixture")
+        cls.bundle = build_fixture_bundle(
+            Path(cls.temp.name) / "fixture", variants=EXTENDED_VARIANTS
+        )
         cls.executor = SQLiteReadOnlyExecutor({
             artifact.database_id: artifact.database_path
             for artifact in cls.bundle.artifacts.values()

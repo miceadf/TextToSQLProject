@@ -93,7 +93,7 @@ def _inline(sql: str, parameters: list[Any]) -> str:
 
 def _oracle_sql(gold: Any, contexts: Any) -> dict[tuple[str, str], str]:
     responses: dict[tuple[str, str], str] = {}
-    for variant in FixtureVariant:
+    for variant in contexts:
         artifact, graph, mapping = contexts[variant]
         compiler = SchemaAdaptiveSQLiteCompiler(graph, mapping)
         for case in gold.cases:

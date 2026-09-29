@@ -476,6 +476,8 @@ def run_direct_sql_evaluation(
     domain_ontology = ontology or load_default_ontology()
     validate_evaluation_set(gold, seed, domain_ontology)
     contexts, all_metadata = _prepare_fixture_contexts(bundle, seed, domain_ontology, None)
+    if any(FixtureVariant(name) not in contexts for name in config.variants):
+        raise ValueError("configured variant missing from fixture bundle")
     catalogs: dict[FixtureVariant, DatabaseCatalog] = {}
     for variant, (artifact, _graph, _mapping) in contexts.items():
         catalog = DatabaseCatalog.model_validate_json(

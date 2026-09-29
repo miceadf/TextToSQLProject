@@ -10,6 +10,17 @@ class FixtureVariant(str, Enum):
     FLAT = "flat"
     NORMALIZED = "normalized"
     LEGACY = "legacy"
+    CODED = "coded"
+    HYBRID = "hybrid"
+
+
+CORE_VARIANTS = (FixtureVariant.FLAT, FixtureVariant.NORMALIZED, FixtureVariant.LEGACY)
+EXTENDED_VARIANTS = (*CORE_VARIANTS, FixtureVariant.CODED, FixtureVariant.HYBRID)
+# The only variant sets a bundle may contain; core keeps pre-5-23 bundles unchanged.
+FIXTURE_SUITES = {
+    "core-v1": CORE_VARIANTS,
+    "extended-v1": EXTENDED_VARIANTS,
+}
 
 
 class LogicalOffering(BaseModel):
@@ -94,3 +105,9 @@ class FixtureBundle(BaseModel):
     seed_version: int = Field(ge=1)
     manifest_path: Path
     artifacts: dict[FixtureVariant, FixtureArtifact]
+
+    @model_validator(mode="after")
+    def validate_suite(self) -> "FixtureBundle":
+        if set(self.artifacts) not in [set(item) for item in FIXTURE_SUITES.values()]:
+            raise ValueError("fixture bundle variants must match one fixture suite")
+        return self

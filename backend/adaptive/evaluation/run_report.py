@@ -54,7 +54,8 @@ def _attempt_metrics(attempts: Sequence[CaseAttempt]) -> AttemptMetrics:
 
 
 def _case_consistency(case_id: str, attempts: Sequence[CaseAttempt]) -> CaseConsistency:
-    if len(attempts) != 3:
+    # The schedule check guarantees one attempt per configured variant.
+    if len(attempts) < 3:
         return CaseConsistency(
             case_id=case_id, ir_consistent=None, result_consistent=None,
             cross_schema_consistent=None, reason_code="INSUFFICIENT_VARIANTS",
@@ -150,7 +151,7 @@ def build_run_report(
         warnings.append("ORACLE_SMOKE_NOT_MODEL_ACCURACY")
     if pending:
         warnings.append("GOLD_NEEDS_HUMAN_REVIEW")
-    consistency_denominator = len(consistency) if len(config.variants) == 3 else 0
+    consistency_denominator = len(consistency) if len(config.variants) >= 3 else 0
     return EvaluationRunReport(
         config=config,
         benchmark_id=gold.benchmark_id,

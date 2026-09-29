@@ -1,6 +1,6 @@
 """Opt-in live paired run of the QueryIR arm and the direct-SQL arm (Phase 5-19).
 
-Runs the fixed development set (40 cases × 3 synthetic fixtures) once per
+Runs the fixed development set (40 cases × 3 or 5 synthetic fixtures) once per
 arm against one loopback Ollama model, then writes the IR report, the SQL
 report, and their paired comparison under a new directory in the Git-ignored
 ``.schema-adaptive/reports`` tree. Reports carry codes and fingerprints only.
@@ -20,9 +20,9 @@ from pathlib import Path
 from typing import Any
 
 from ..api.ollama_startup import build_startup_ollama_model, parse_ollama_startup_config
-from ..fixtures import build_fixture_bundle
+from ..fixtures import FIXTURE_SUITES, build_fixture_bundle
 from ..ontology.loader import load_default_ontology
-from .arm_comparison import compare_arms
+from .arm_comparison import compare_arms, schema_consistency
 from .direct_sql import run_direct_sql_evaluation
 from .direct_sql_ollama import OllamaDirectSqlModel
 from .ir_extract import IR_EXTRACT_NONE, IR_EXTRACT_RULES, IR_EXTRACT_SINGLE_FENCE, SingleFenceIrModel
@@ -36,7 +36,8 @@ from .runner import run_evaluation
 
 
 DEVELOPMENT_SET_PATH = Path(__file__).resolve().parent / "data" / "fixture_v1_cases.yaml"
-VARIANTS = ["flat", "normalized", "legacy"]
+FIXTURE_SUITE_CORE = "core-v1"
+FIXTURE_SUITE_EXTENDED = "extended-v1"
 _OUTPUT_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
 _RUN_ID = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}")
 _FIXED_ERROR = "arm comparison invalid configuration"
@@ -77,7 +78,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--live-synthetic", action=_FlagOnce, dest="live_synthetic")
     for name in (
         "--ollama-model-tag", "--ollama-base-url", "--ollama-timeout", "--ollama-request-format", "--ir-extract",
-        "--repository-root", "--output-name",
+        "--repository-root", "--output-name", "--fixture-suite",
     ):
         parser.add_argument(name, action=_StoreOnce, default=None)
     return parser
@@ -91,12 +92,16 @@ def _metric(value: Any) -> dict[str, int]:
     return {"count": value.count, "denominator": value.denominator}
 
 
-def _summary(ir: Any, sql: Any, comparison: Any, request_format: str, ir_extract: str) -> dict[str, Any]:
+def _summary(
+    ir: Any, sql: Any, comparison: Any, consistency: Any,
+    request_format: str, ir_extract: str, fixture_suite: str,
+) -> dict[str, Any]:
     return {
         "status": "COMPLETED",
         "model_label": comparison.ir_model_label,
         "request_format": request_format,
         "ir_extract": ir_extract,
+        "fixture_suite": fixture_suite,
         "gold_human_review_pending": comparison.gold_human_review_pending,
         "warnings": comparison.warnings,
         "ir_arm": {
@@ -113,6 +118,10 @@ def _summary(ir: Any, sql: Any, comparison: Any, request_format: str, ir_extract
         "paired": comparison.totals.model_dump(mode="json"),
         "paired_by_variant": {
             name: counts.model_dump(mode="json") for name, counts in comparison.by_variant.items()
+        },
+        "consistency": {
+            "ir": consistency.ir.model_dump(mode="json"),
+            "sql": consistency.sql.model_dump(mode="json"),
         },
     }
 
@@ -182,6 +191,22 @@ def main(argv: list[str] | None = None) -> int:
                 if request_format != REQUEST_FORMAT_MODEL_TEMPLATE
                 else "fence"
             )
+        # None only means "not given"; an empty or unknown suite fails closed.
+        fixture_suite = FIXTURE_SUITE_CORE if args.fixture_suite is None else args.fixture_suite
+        if fixture_suite not in FIXTURE_SUITES:
+            raise ValueError(_FIXED_ERROR)
+        suite_variants = FIXTURE_SUITES[fixture_suite]
+        if fixture_suite == FIXTURE_SUITE_EXTENDED:
+            # Core runs keep their 5-19~5-22 IDs; extended runs never share them.
+            label = f"{label}.ext"
+            run_prefix = "p523-ext" + "".join(
+                (
+                    f"-{request_format_label(request_format)}"
+                    if request_format != REQUEST_FORMAT_MODEL_TEMPLATE else "",
+                    "-fence" if ir_extract == IR_EXTRACT_SINGLE_FENCE else "",
+                )
+            )
+        variants = [variant.value for variant in suite_variants]
         ir_run_id, sql_run_id = f"{run_prefix}-ir-{label}", f"{run_prefix}-sql-{label}"
         if any(_RUN_ID.fullmatch(value) is None for value in (label, ir_run_id, sql_run_id)):
             raise ValueError(_FIXED_ERROR)
@@ -204,15 +229,17 @@ def main(argv: list[str] | None = None) -> int:
         ontology = load_default_ontology()
         gold = load_evaluation_set(DEVELOPMENT_SET_PATH, ontology=ontology)
         ir_config = EvaluationRunConfig(
-            model_run_id=ir_run_id, model_label=label, variants=VARIANTS, oracle_smoke=False
+            model_run_id=ir_run_id, model_label=label, variants=variants, oracle_smoke=False
         )
         sql_config = EvaluationRunConfig(
-            model_run_id=sql_run_id, model_label=label, variants=VARIANTS, oracle_smoke=False
+            model_run_id=sql_run_id, model_label=label, variants=variants, oracle_smoke=False
         )
         with tempfile.TemporaryDirectory(prefix="p519-fixtures-") as directory:
-            bundle = build_fixture_bundle(Path(directory) / "databases", ontology=ontology)
+            bundle = build_fixture_bundle(
+                Path(directory) / "databases", ontology=ontology, variants=suite_variants
+            )
             if args.check:
-                _emit({"status": "CHECKED", "cases": len(gold.cases), "variants": VARIANTS, "model_calls": 0})
+                _emit({"status": "CHECKED", "cases": len(gold.cases), "variants": variants, "model_calls": 0})
                 return 0
             ir_report = run_evaluation(
                 gold,
@@ -229,12 +256,16 @@ def main(argv: list[str] | None = None) -> int:
                 ontology=ontology,
             )
         comparison = compare_arms(ir_report, sql_report)
+        consistency = schema_consistency(ir_report, sql_report)
         _publish(reports_root, output_dir, root, (
             ("ir-report.json", ir_report),
             ("sql-report.json", sql_report),
             ("comparison.json", comparison),
+            ("consistency.json", consistency),
         ))
-        _emit(_summary(ir_report, sql_report, comparison, request_format, ir_extract))
+        _emit(_summary(
+            ir_report, sql_report, comparison, consistency, request_format, ir_extract, fixture_suite
+        ))
         return 0
     except Exception:
         _emit(_RUN_ERROR)

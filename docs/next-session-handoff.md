@@ -1,6 +1,6 @@
 # 새 Codex 대화용 짧은 인수인계
 
-현재 기준: 2026-09-29, Phase 5-22 대칭 추출 규칙으로 두 모델 paired 재실행(잠정)까지 완료. 최신 상태는 항상 Git과 코드로 다시 확인한다. 설계와 로드맵의 원본은 [`schema-adaptive-text-to-sql-plan.md`](schema-adaptive-text-to-sql-plan.md), 독립 평가 세트 설계 기준은 [`independent-evaluation-set-design.md`](independent-evaluation-set-design.md), 안전한 잠정 비교는 [`phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md`](phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md)다.
+현재 기준: 2026-09-29, Phase 5-23 주장 범위 한정과 schema 변형 5종(`extended-v1`) 두 모델 재실행(잠정)까지 완료. 최신 상태는 항상 Git과 코드로 다시 확인한다. 설계와 로드맵의 원본은 [`schema-adaptive-text-to-sql-plan.md`](schema-adaptive-text-to-sql-plan.md), 독립 평가 세트 설계 기준은 [`independent-evaluation-set-design.md`](independent-evaluation-set-design.md), 안전한 잠정 비교는 [`phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md`](phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md)다.
 
 ## 프로젝트와 현재 경계
 
@@ -53,12 +53,13 @@
 - Phase 7-11: `OllamaQueryModel(request_format=...)`이 형식을 생성자에서 한 번 적용하고 provenance에 선언한다(`model-template` hash 유지). non-callable transport는 모든 형식에서 생성 시점에 거부된다. 5-12~5-14 recording·결과는 내장 SYSTEM 주입 조건이었다. ADR-060.
 - Phase 5-21: `qwen2.5-coder:7b-instruct`(`model-template`) 실행에서 SQL 정답 90/120, IR 0/120. base 모델이 IR 출력을 모두 code fence로 감쌌고(안쪽 유효 QueryIR 28/40) IR arm에는 fence 제거 규칙이 없어 방식 비교로 쓸 수 없다. 결과 문서 `docs/phase5-21-base-instruct-arm-comparison-results-2026-09-29.md`.
 - Phase 5-22: `arm_live_cli --ir-extract single-fence-v1`로 두 arm에 같은 fence 규칙을 적용했다. fine-tune IR 93·SQL 72, base IR 78(26/26/26)·SQL 90(34/24/32). IR은 schema 구조와 무관하게 일정하고 직접 SQL은 정규화 schema에서 떨어진다. 결과 문서 `docs/phase5-22-symmetric-extraction-results-2026-09-29.md`.
+- Phase 5-23: 주장을 'schema 변화에 대한 정확도 일관성'으로 한정(ADR-061)하고 `coded`·`hybrid` 변형을 더한 `extended-v1` suite(ADR-062, `arm_live_cli --fixture-suite extended-v1`)로 재실행했다. IR은 두 모델 모두 5종 spread 0(31×5, 26×5), 직접 SQL은 fine-tune 30·11·31·8·10, base 34·24·32·20·23. 기본 `core-v1`은 이전과 같다. 결과 문서 `docs/phase5-23-schema-variation-results-2026-09-29.md`.
 - 현재 로컬에는 fine-tuned tag만 확인되어 base instruct 평가는 정확한 tag가 별도로 준비될 때 진행한다. E3·L5 팀 결정 대기와 합성 개발은 병행한다.
 - `docs/desktop-test-handoff.md`는 초기 데스크톱 이전 시점의 기록이다.
 
 ## 다음 작은 작업
 
-1. 주장 범위를 'schema 구조 변화에 대한 정확도 일관성'으로 좁히는 평가 설계 정리와 base 모델에 대한 QueryIR prompt 적합성(출력 shape 실패 24건) 검토. 확정 수치는 L1·L3 뒤다.
+1. base 모델에 대한 QueryIR prompt 적합성(출력 구조 실패 variant당 8건) 비노출 진단. 주장 범위는 ADR-061로 한정됐고 확정 수치는 L1·L3 뒤다.
 2. 목록 전체 질문에 불필요한 filter를 붙이는 모델 출력 경향(Course는 질문 전체 `equals`로 guard 거부, Instructor는 부분 문자열 `contains`로 0행)과 `CONSTRAINT_INVALID_QUERY_IR`의 reflection 거부 미구분은 prompt·진단 후보다. 내장 SYSTEM 제거 후에도 남았다. guard 완화는 하지 않는다.
 3. Phase 6-20의 합성 SQLite browser end-to-end smoke는 별도 잔여 작업이며 L4 승인이 아니다.
 4. 실 PostgreSQL 학교 DB publish·질의 전 L2, 실제 CNU 자료 사용·공유 전 E3, 외부 시연 전 L5를 적용한다.
@@ -66,8 +67,8 @@
 
 ## 새 대화의 최소 시작 순서
 
-1. 저장소 루트에서 `AGENTS.md`와 이 문서, 계획 문서의 **Phase 7 현재 체크포인트·ADR-048/049/050/051/052/053/054/055/056/057/058/059/060·다음 시작점**, `docs/human-validation-checkpoints.md`의 E3/L1/L2/L3/L4/L5를 읽는다.
-2. `git status --short`, 최근 commit, 관련 코드·테스트를 확인한다. 문서는 방향을 알려주지만 구현 상태와 테스트 통과를 대신하지 않는다. Phase 5-18·5-19·5-20·7-08·7-09 범위는 `docs/prompts/phase5-18-direct-sql-baseline-arm.md`, `docs/prompts/phase5-19-live-arm-comparison.md`, `docs/prompts/phase5-20-ollama-system-decontamination.md`, `docs/prompts/phase7-10-runtime-ollama-request-format.md`, `docs/prompts/phase7-11-request-format-in-model.md`, `docs/prompts/phase5-21-base-instruct-arm-comparison.md`, `docs/prompts/phase5-22-symmetric-fence-extraction.md`, `docs/prompts/phase7-08-server-owned-ollama-startup.md`, `docs/prompts/phase7-09-ollama-prototype-live-smoke.md`에 둔다. 이 sandbox에서는 pytest 기본 임시 경로 쓰기가 막힐 수 있어 `--basetemp`와 `-p no:cacheprovider`를 쓴다.
+1. 저장소 루트에서 `AGENTS.md`와 이 문서, 계획 문서의 **Phase 7 현재 체크포인트·ADR-048/049/050/051/052/053/054/055/056/057/058/059/060/061/062·다음 시작점**, `docs/human-validation-checkpoints.md`의 E3/L1/L2/L3/L4/L5를 읽는다.
+2. `git status --short`, 최근 commit, 관련 코드·테스트를 확인한다. 문서는 방향을 알려주지만 구현 상태와 테스트 통과를 대신하지 않는다. Phase 5-18·5-19·5-20·7-08·7-09 범위는 `docs/prompts/phase5-18-direct-sql-baseline-arm.md`, `docs/prompts/phase5-19-live-arm-comparison.md`, `docs/prompts/phase5-20-ollama-system-decontamination.md`, `docs/prompts/phase7-10-runtime-ollama-request-format.md`, `docs/prompts/phase7-11-request-format-in-model.md`, `docs/prompts/phase5-21-base-instruct-arm-comparison.md`, `docs/prompts/phase5-22-symmetric-fence-extraction.md`, `docs/prompts/phase5-23-schema-variation-claim-scope.md`, `docs/prompts/phase7-08-server-owned-ollama-startup.md`, `docs/prompts/phase7-09-ollama-prototype-live-smoke.md`에 둔다. 이 sandbox에서는 pytest 기본 임시 경로 쓰기가 막힐 수 있어 `--basetemp`와 `-p no:cacheprovider`를 쓴다.
 3. 현재 작업에 필요한 파일만 더 읽고 해당 범위의 테스트부터 실행한다. 이전 대화 전체나 저장소 전체를 다시 요약할 필요는 없다.
 
 실제 질문·응답, DB 행·dump, 모델 weight, 비밀값, private recording은 Git이나 공개 문서에 복사하지 않는다.

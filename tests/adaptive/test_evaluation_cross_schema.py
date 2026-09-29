@@ -19,7 +19,12 @@ from backend.adaptive.evaluation.coverage import (
 from backend.adaptive.evaluation.fixture_mapping import fixture_published_mapping
 from backend.adaptive.evaluation.loader import load_evaluation_set
 from backend.adaptive.evaluation.__main__ import main as evaluation_cli_main
-from backend.adaptive.fixtures import DEFAULT_SEED, FixtureVariant, build_fixture_bundle
+from backend.adaptive.fixtures import (
+    DEFAULT_SEED,
+    EXTENDED_VARIANTS,
+    FixtureVariant,
+    build_fixture_bundle,
+)
 from backend.adaptive.harness.executor import SQLiteReadOnlyExecutor
 from backend.adaptive.ontology import load_default_ontology
 from backend.adaptive.policy import AstPolicyContext, AstReadOnlyPolicy
@@ -38,7 +43,9 @@ class EvaluationCrossSchemaTests(unittest.TestCase):
         cls.ontology = load_default_ontology()
         cls.gold = load_evaluation_set(GOLD_PATH, seed=DEFAULT_SEED, ontology=cls.ontology)
         cls.temp = tempfile.TemporaryDirectory()
-        cls.bundle = build_fixture_bundle(Path(cls.temp.name) / "fixture")
+        cls.bundle = build_fixture_bundle(
+            Path(cls.temp.name) / "fixture", variants=EXTENDED_VARIANTS
+        )
         cls.executor = SQLiteReadOnlyExecutor({
             artifact.database_id: artifact.database_path
             for artifact in cls.bundle.artifacts.values()
@@ -92,8 +99,15 @@ class EvaluationCrossSchemaTests(unittest.TestCase):
                     self.assertEqual(len(actual_rows), case.expected.cardinality)
                     join_count = compiled.sql.upper().count(" JOIN ")
                     self.assertEqual(join_count, len(join_result.plan.steps))
-                    if variant is not FixtureVariant.NORMALIZED:
+                    if variant in (FixtureVariant.FLAT, FixtureVariant.LEGACY):
                         self.assertEqual(join_count, 0)
+                    elif variant is FixtureVariant.NORMALIZED:
+                        normalized_joins = join_count
+                    elif variant is FixtureVariant.CODED:
+                        # Same structure as normalized under abbreviated names.
+                        self.assertEqual(join_count, normalized_joins)
+                    else:
+                        self.assertLessEqual(join_count, 1)
 
     def test_coverage_report_and_review_table_are_deterministic(self) -> None:
         _, graph, mapping = self.contexts[FixtureVariant.NORMALIZED]

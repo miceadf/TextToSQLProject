@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 from backend.adaptive.catalog import DatabaseCatalog
-from backend.adaptive.fixtures import DEFAULT_SEED, FixtureVariant, build_fixture_bundle
+from backend.adaptive.fixtures import CORE_VARIANTS, DEFAULT_SEED, FixtureVariant, build_fixture_bundle
 from backend.adaptive.mapping import MappingProposal
 
 
@@ -179,7 +179,7 @@ class MultiSchemaFixtureTest(unittest.TestCase):
             FixtureVariant.LEGACY: LEGACY_QUERY,
         }
 
-        self.assertEqual(set(self.bundle.artifacts), set(FixtureVariant))
+        self.assertEqual(set(self.bundle.artifacts), set(CORE_VARIANTS))
         for variant, query in queries.items():
             with self.subTest(variant=variant):
                 artifact = self.bundle.artifacts[variant]

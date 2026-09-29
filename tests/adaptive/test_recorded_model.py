@@ -11,7 +11,7 @@ from backend.adaptive.evaluation.loader import load_evaluation_set
 from backend.adaptive.evaluation.run_contracts import EvaluationRunConfig
 from backend.adaptive.evaluation.run_report import deterministic_request_id
 from backend.adaptive.evaluation.runner import run_evaluation
-from backend.adaptive.fixtures import FixtureVariant, build_fixture_bundle
+from backend.adaptive.fixtures import CORE_VARIANTS, FixtureVariant, build_fixture_bundle
 from backend.adaptive.harness import (
     DataType,
     ExecutionHarness,
@@ -211,7 +211,7 @@ class RecordedModelRunnerTests(unittest.TestCase):
             bundle = build_fixture_bundle(Path(folder) / "fixtures")
             entries = []
             contexts = []
-            for variant in FixtureVariant:
+            for variant in CORE_VARIANTS:
                 artifact = bundle.artifacts[variant]
                 catalog = DatabaseCatalog.model_validate_json(
                     artifact.catalog_path.read_text(encoding="utf-8")

@@ -7,8 +7,17 @@ from ..catalog import SQLiteAdapter
 from ..mapping import RuleBasedSchemaAligner
 from ..ontology import DomainOntology, load_default_ontology
 from .common import write_atomic_json
-from .contracts import FixtureArtifact, FixtureBundle, FixtureSeed, FixtureVariant
+from .coded import build_coded_database
+from .contracts import (
+    CORE_VARIANTS,
+    FIXTURE_SUITES,
+    FixtureArtifact,
+    FixtureBundle,
+    FixtureSeed,
+    FixtureVariant,
+)
 from .flat import build_flat_database
+from .hybrid import build_hybrid_database
 from .legacy import build_legacy_database
 from .normalized import build_normalized_database
 from .seed import DEFAULT_SEED
@@ -18,6 +27,8 @@ BUILDERS = {
     FixtureVariant.FLAT: build_flat_database,
     FixtureVariant.NORMALIZED: build_normalized_database,
     FixtureVariant.LEGACY: build_legacy_database,
+    FixtureVariant.CODED: build_coded_database,
+    FixtureVariant.HYBRID: build_hybrid_database,
 }
 
 
@@ -26,7 +37,10 @@ def build_fixture_bundle(
     *,
     seed: FixtureSeed = DEFAULT_SEED,
     ontology: DomainOntology | None = None,
+    variants: tuple[FixtureVariant, ...] = CORE_VARIANTS,
 ) -> FixtureBundle:
+    if tuple(variants) not in FIXTURE_SUITES.values():
+        raise ValueError("fixture variants must be exactly one fixture suite")
     output = Path(output_directory).resolve()
     output.mkdir(parents=True, exist_ok=True)
     generation_id = uuid4().hex
@@ -36,7 +50,8 @@ def build_fixture_bundle(
     aligner = RuleBasedSchemaAligner()
     artifacts: dict[FixtureVariant, FixtureArtifact] = {}
 
-    for variant, build_database in BUILDERS.items():
+    for variant in variants:
+        build_database = BUILDERS[variant]
         database_id = f"fixture-{variant.value}-v{seed.version}"
         database_path = build_database(
             generation / f"{variant.value}.sqlite3",

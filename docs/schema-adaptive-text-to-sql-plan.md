@@ -614,6 +614,7 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 - [x] Phase 5-20 Ollama 내장 SYSTEM 오염 제거(`alpaca-raw-no-system-v1`) 후 paired 재실행(IR 정답 93·SQL 정답 72, normalized에서 IR 31 대 SQL 11; L1/L3 전 확정 아님)
 - [x] Phase 5-21 base instruct(`qwen2.5-coder:7b-instruct`, `model-template`) paired 실행 기록(SQL 정답 90, IR 0은 단일 code fence 출력과 arm 간 추출 규칙 비대칭 때문; 방식 비교 불가, 대칭 추출 재실행 결정 대기)
 - [x] Phase 5-22 arm 간 대칭 code fence 추출(`single-fence-v1`)로 두 모델 재실행(fine-tune IR 93·SQL 72, base IR 78·SQL 90; IR은 schema 구조와 무관하게 일정, 직접 SQL은 정규화 schema에서 하락; 잠정)
+- [x] Phase 5-23 주장 범위를 schema 변화에 대한 정확도 일관성으로 한정(ADR-061)하고 같은 seed 변형 `coded`·`hybrid`를 더한 `extended-v1` suite(ADR-062)로 두 모델 재실행(fine-tune IR 31·31·31·31·31(155/200)·SQL 30·11·31·8·10(90), base IR 26×5(130)·SQL 34·24·32·20·23(133); IR spread 0, 직접 SQL은 JOIN이 필요한 schema에서 하락; 잠정)
 - [x] 모델 응답 JSON schema 검증
 - [x] 경량 evaluation runner 구현(FakeModel·SQLite fixture, 실제 모델 평가 아님)
 - [ ] 기존 fine-tuned 모델 평가
@@ -1027,7 +1028,7 @@ Phase 7-08에서 loopback prototype CLI에 `--ollama-model-tag`·`--ollama-base-
 
 Phase 7-09에서 opt-in CLI `backend.adaptive.api.ollama_prototype_smoke`(`--check`|`--live-synthetic`)를 추가하고 로컬 `text2sql_qwen:latest`로 합성 case 6건을 in-process 실행했다. 경계는 `COMPLETED`(호출 4/4, start·cancel·no-match 0회, strict shape·redaction 유지)였으나 submit 4건 모두 `CONSTRAINT_INVALID_QUERY_IR`였다. 비노출 진단 결과 모델이 확인된 field 하나의 축소 context에서 질문 문자열 전체를 `equals` filter 값으로 복사했고, Phase 6-09 reflection guard가 설계대로 거부했다. guard는 완화하지 않았고 성공 실행 경로의 live 통과는 미확인으로 남긴다. 결과는 [`docs/phase7-09-ollama-prototype-live-smoke-results-2026-09-28.md`](phase7-09-ollama-prototype-live-smoke-results-2026-09-28.md), 지침은 [`docs/prompts/phase7-09-ollama-prototype-live-smoke.md`](prompts/phase7-09-ollama-prototype-live-smoke.md)에 둔다.
 
-Phase 5-18에서 평가 전용 직접 SQL arm과 QueryIR arm의 paired 비교 계약을 추가했다(상세는 변경 이력·ADR-057, 지침은 [`docs/prompts/phase5-18-direct-sql-baseline-arm.md`](prompts/phase5-18-direct-sql-baseline-arm.md)). Phase 5-19의 첫 live 비교는 `text2sql_qwen:latest` Modelfile에 내장된 CNU `courses` schema SYSTEM이 모든 호출에 주입된 조건이었다. Phase 5-20에서 등록 TEMPLATE을 SYSTEM 없이 byte 재현하는 `alpaca-raw-no-system-v1` 요청 형식을 두 arm에 같게 적용해 재실행했고, 잠정 paired count는 IR 정답 93/120, SQL 정답 72/120(둘 다 68, IR만 25, SQL만 4, 둘 다 오답 23)이었다. flat·legacy에서는 두 arm이 거의 같고(31·30, 31·31) normalized에서 IR 31 대 SQL 11로 차이가 JOIN이 필요한 schema에 집중되었다. 결과와 한계는 [`docs/phase5-20-decontaminated-arm-comparison-results-2026-09-29.md`](phase5-20-decontaminated-arm-comparison-results-2026-09-29.md), 정정 전 기록은 [`docs/phase5-19-live-arm-comparison-results-2026-09-28.md`](phase5-19-live-arm-comparison-results-2026-09-28.md)에 둔다. Phase 7-10에서 runtime도 요청 형식을 명시하게 했다. prototype·smoke CLI는 Ollama를 켤 때 `--ollama-request-format`이 필수이고, `OllamaStartupConfig` v2가 형식을 담아 runtime model과 평가 SQL provider가 한 번만 적용한다. no-system 형식으로 7-09 smoke를 재실행해 성공 실행 경로가 처음 live로 통과했으나 `Course.name` 2건은 질문 전체를 `equals` filter로 복사해 여전히 guard에서 거부되었다(지침 [`docs/prompts/phase7-10-runtime-ollama-request-format.md`](prompts/phase7-10-runtime-ollama-request-format.md), 7-09 결과 문서 추가 기록). Phase 7-11에서 Codex 독립 검증이 찾은 두 결함(no-system 형식의 non-callable transport 지연 실패, 형식이 달라도 같은 provenance)을 요청 형식 적용을 `OllamaQueryModel` 생성자로 옮겨 닫았다(지침 [`docs/prompts/phase7-11-request-format-in-model.md`](prompts/phase7-11-request-format-in-model.md)). Phase 5-21에서 사용자 승인으로 `qwen2.5-coder:7b-instruct`를 Ollama 기본 저장소(`C:/Users/micea/.ollama/models`)에 받고 `model-template` 형식으로 두 arm을 실행했다. SQL arm은 정답 90/120(normalized 24/40)이었으나 IR arm은 0/120이었다. 비노출 진단에서 base 모델이 IR 출력 40건 모두를 단일 Markdown code fence로 감쌌고 안쪽 28건은 유효 QueryIR이었다. SQL arm 추출은 단일 fence를 벗기지만 IR arm은 벗기지 않는 비대칭 때문이므로 이 실행은 방식 비교로 쓸 수 없다([`docs/phase5-21-base-instruct-arm-comparison-results-2026-09-29.md`](phase5-21-base-instruct-arm-comparison-results-2026-09-29.md)). Phase 5-22에서 사용자 결정대로 평가 계층의 IR arm에도 SQL arm과 같은 단일 code fence 규칙(`single-fence-v1`)을 적용해 두 모델을 재실행했다. fine-tune은 IR 93·SQL 72(5-20과 동일), base는 IR 78(26/26/26)·SQL 90(34/24/32)이었다. IR arm은 두 모델 모두 schema 구조와 무관하게 정답 수가 같았고 직접 SQL은 정규화 schema에서 떨어졌으며, base에서는 단일 table schema에서 직접 SQL이 더 높았다. fine-tune의 큰 IR 우위에는 CNU fine-tune이 동적 schema SQL을 약화시킨 효과가 섞인 것으로 보인다([`docs/phase5-22-symmetric-extraction-results-2026-09-29.md`](phase5-22-symmetric-extraction-results-2026-09-29.md)). 다음 시작점은 방어 가능한 주장 범위를 'schema 구조 변화에 대한 정확도 일관성'으로 좁히는 평가 설계 정리와, base 모델에 대한 QueryIR prompt 적합성(출력 shape 실패 24건) 검토이며, 확정 수치는 L1 gold 검토·L3 결과 검토 뒤다. 확정 수치는 L1 gold 검토·L3 결과 검토 뒤다.
+Phase 5-18에서 평가 전용 직접 SQL arm과 QueryIR arm의 paired 비교 계약을 추가했다(상세는 변경 이력·ADR-057, 지침은 [`docs/prompts/phase5-18-direct-sql-baseline-arm.md`](prompts/phase5-18-direct-sql-baseline-arm.md)). Phase 5-19의 첫 live 비교는 `text2sql_qwen:latest` Modelfile에 내장된 CNU `courses` schema SYSTEM이 모든 호출에 주입된 조건이었다. Phase 5-20에서 등록 TEMPLATE을 SYSTEM 없이 byte 재현하는 `alpaca-raw-no-system-v1` 요청 형식을 두 arm에 같게 적용해 재실행했고, 잠정 paired count는 IR 정답 93/120, SQL 정답 72/120(둘 다 68, IR만 25, SQL만 4, 둘 다 오답 23)이었다. flat·legacy에서는 두 arm이 거의 같고(31·30, 31·31) normalized에서 IR 31 대 SQL 11로 차이가 JOIN이 필요한 schema에 집중되었다. 결과와 한계는 [`docs/phase5-20-decontaminated-arm-comparison-results-2026-09-29.md`](phase5-20-decontaminated-arm-comparison-results-2026-09-29.md), 정정 전 기록은 [`docs/phase5-19-live-arm-comparison-results-2026-09-28.md`](phase5-19-live-arm-comparison-results-2026-09-28.md)에 둔다. Phase 7-10에서 runtime도 요청 형식을 명시하게 했다. prototype·smoke CLI는 Ollama를 켤 때 `--ollama-request-format`이 필수이고, `OllamaStartupConfig` v2가 형식을 담아 runtime model과 평가 SQL provider가 한 번만 적용한다. no-system 형식으로 7-09 smoke를 재실행해 성공 실행 경로가 처음 live로 통과했으나 `Course.name` 2건은 질문 전체를 `equals` filter로 복사해 여전히 guard에서 거부되었다(지침 [`docs/prompts/phase7-10-runtime-ollama-request-format.md`](prompts/phase7-10-runtime-ollama-request-format.md), 7-09 결과 문서 추가 기록). Phase 7-11에서 Codex 독립 검증이 찾은 두 결함(no-system 형식의 non-callable transport 지연 실패, 형식이 달라도 같은 provenance)을 요청 형식 적용을 `OllamaQueryModel` 생성자로 옮겨 닫았다(지침 [`docs/prompts/phase7-11-request-format-in-model.md`](prompts/phase7-11-request-format-in-model.md)). Phase 5-21에서 사용자 승인으로 `qwen2.5-coder:7b-instruct`를 Ollama 기본 저장소(`C:/Users/micea/.ollama/models`)에 받고 `model-template` 형식으로 두 arm을 실행했다. SQL arm은 정답 90/120(normalized 24/40)이었으나 IR arm은 0/120이었다. 비노출 진단에서 base 모델이 IR 출력 40건 모두를 단일 Markdown code fence로 감쌌고 안쪽 28건은 유효 QueryIR이었다. SQL arm 추출은 단일 fence를 벗기지만 IR arm은 벗기지 않는 비대칭 때문이므로 이 실행은 방식 비교로 쓸 수 없다([`docs/phase5-21-base-instruct-arm-comparison-results-2026-09-29.md`](phase5-21-base-instruct-arm-comparison-results-2026-09-29.md)). Phase 5-22에서 사용자 결정대로 평가 계층의 IR arm에도 SQL arm과 같은 단일 code fence 규칙(`single-fence-v1`)을 적용해 두 모델을 재실행했다. fine-tune은 IR 93·SQL 72(5-20과 동일), base는 IR 78(26/26/26)·SQL 90(34/24/32)이었다. Phase 5-23에서 모델 비교 주장을 'schema 구조·이름 변화에 대한 정확도 일관성'으로 한정하고(ADR-061, §16.4), 이름 축과 구조 축을 분리하는 합성 변형 `coded`(normalized 구조·약어 이름)와 `hybrid`(2-table 부분 비정규화)를 `extended-v1` suite로 추가했다(ADR-062, §15.3). 기본 `core-v1`은 이전과 같다. 두 모델 재실행에서 IR arm은 5개 schema 모두 같은 정답 수(spread 0)였고, 직접 SQL arm은 JOIN이 필요한 normalized·coded·hybrid에서 떨어졌다(fine-tune spread 23, base 14). 결과는 [`docs/phase5-23-schema-variation-results-2026-09-29.md`](phase5-23-schema-variation-results-2026-09-29.md)에 둔다. 다음 시작점은 base 모델의 QueryIR 출력 구조 실패(variant당 8) 진단 또는 L1 gold 검토 준비이며, 확정 수치는 L1·L3 뒤다. IR arm은 두 모델 모두 schema 구조와 무관하게 정답 수가 같았고 직접 SQL은 정규화 schema에서 떨어졌으며, base에서는 단일 table schema에서 직접 SQL이 더 높았다. fine-tune의 큰 IR 우위에는 CNU fine-tune이 동적 schema SQL을 약화시킨 효과가 섞인 것으로 보인다([`docs/phase5-22-symmetric-extraction-results-2026-09-29.md`](phase5-22-symmetric-extraction-results-2026-09-29.md)). 다음 시작점은 방어 가능한 주장 범위를 'schema 구조 변화에 대한 정확도 일관성'으로 좁히는 평가 설계 정리와, base 모델에 대한 QueryIR prompt 적합성(출력 shape 실패 24건) 검토이며, 확정 수치는 L1 gold 검토·L3 결과 검토 뒤다. 확정 수치는 L1 gold 검토·L3 결과 검토 뒤다.
 
 완료된 adapter 계약은 [`docs/prompts/phase5-07-ollama-querymodel-adapter.md`](prompts/phase5-07-ollama-querymodel-adapter.md)에, 합성 live smoke의 수행 지침은 [`docs/prompts/phase5-08-ollama-adapter-live-smoke.md`](prompts/phase5-08-ollama-adapter-live-smoke.md)에 둔다. 모델이 반환한 SQL 등 비 JSON 텍스트는 원문 문자열로 보존해 후속 Query IR 검증 실패로 드러내며, provider 호출 실패와 혼합하지 않는다.
 
@@ -1098,6 +1099,18 @@ SQLite DB 입력
 
 변경 전후 같은 질문의 결과 일치율과 자동 복구에 필요한 관리자 작업량을 측정한다.
 
+2026-09-29(Phase 5-23) 구현 상태: 같은 seed의 합성 SQLite fixture 5종을 `extended-v1` suite로 둔다(ADR-062). 이름 축(영문 snake·약어·영문 동의어)과 구조 축(단일 table·2-table 부분 비정규화·5-table 정규화)을 분리해 배치했다.
+
+| variant | 구조 | 이름 | §15.3 대응 |
+| --- | --- | --- | --- |
+| flat | 단일 table | 영문 snake | 기준 |
+| normalized | 5-table 정규화, FK | 영문 snake | 테이블 분리 |
+| legacy | 단일 table | 약어(`sbjt_nm` 등) | 컬럼 이름 변경 |
+| coded | normalized와 같은 5-table·FK | 약어(`tb_sbjt` 등) | 이름 변경 + 테이블 분리 |
+| hybrid | 2-table(과목 + 분반 행에 학과·교수·시간) | 영문 동의어(`subject_title` 등) | 컬럼의 다른 테이블 이동, 테이블 병합 |
+
+코드값 변경, FK 없는 관계, view, 컬럼 타입 변경은 ontology value mapping·FK 추론·L2 검토가 필요해 이번 fixture 범위에서 제외했다. 일관성 지표는 arm별 variant 정답 수의 최대−최소(`spread`)와 모든 variant에서 정답인 case 수(`all_variants_correct`)이며 평가 전용 `schema-consistency-v1`로 기록한다. 기본 `core-v1`(flat·normalized·legacy)의 bundle·run ID·report는 이전과 같다.
+
 ## 16. 논문 방향
 
 ### 16.1 추천 제목
@@ -1115,6 +1128,7 @@ SQLite DB 입력
 3. 신뢰도 기반 관리자 교정이 최소 작업으로 mapping 정확도를 개선하는가?
 4. schema evolution 감지와 선택적 재검토가 전체 재설정보다 효율적인가?
 5. 로컬 모델과 제한된 메타데이터만으로 실용적인 정확도를 달성할 수 있는가?
+6. QueryIR 방식은 같은 질문의 정확도를 물리 schema 구조·이름 변화에 대해 직접 SQL 생성보다 일정하게 유지하는가? (Phase 5-23 추가, ADR-061)
 
 ### 16.3 예상 연구 기여
 
@@ -1135,6 +1149,12 @@ SQLite DB 입력
 권장 표현:
 
 > 관계형 데이터베이스로 구성된 대학 수강정보 시스템을 대상으로, 스키마 메타데이터와 제한된 샘플값을 분석하고 불확실한 의미만 관리자가 확인하도록 하여 최소 설정으로 Text-to-SQL 서비스를 구성한다.
+
+모델 비교 주장 범위(2026-09-29, ADR-061):
+
+- 하지 않을 주장: "QueryIR 방식이 직접 SQL 생성보다 정확하다"는 일반 우열. Phase 5-22에서 base instruct 모델은 전체 정답이 직접 SQL 90 대 IR 78이었고, fine-tune 모델의 IR 우위에는 CNU 단일 schema fine-tune이 동적 schema SQL을 약화시킨 효과가 섞여 있다.
+- 방어할 주장: QueryIR 방식은 모델이 물리 schema를 보지 않으므로 **같은 질문의 정확도가 물리 schema 구조·이름 변화에 대해 일정**하고, 직접 SQL 생성은 JOIN이 필요한 schema에서 정확도가 떨어진다. 근거 지표는 variant별 정답, `spread`, `all_variants_correct`, paired count다.
+- 모든 수치는 합성 fixture(개발자 작성, 같은 seed)와 L1/L3 전 gold 기준 잠정치이며, 독립 unseen schema(E4·L6) 없이 학교 간 일반화를 주장하지 않는다.
 
 ## 17. 보안·개인정보 원칙
 
@@ -1622,6 +1642,20 @@ SQLite DB 입력
 - 결정: `OllamaQueryModel`이 `request_format`을 받아 원본 transport callable 검사 뒤 생성자에서 한 번만 적용한다. `apply_request_format`은 형식과 무관하게 원본 transport를 먼저 검사한다. `declared_provenance`의 generation config는 `model-template`일 때 기존 값을 그대로 유지하고, 그 외 형식은 형식 ID·`raw`·재현 template SHA-256을 추가해 서로 다른 hash를 갖게 한다. URL·질문·prompt·SYSTEM 원문은 넣지 않는다. startup builder는 transport를 감싸지 않고 형식을 모델에 넘긴다.
 - 이유: 형식을 transport wrapper에서만 적용하면 wrapper가 잘못된 원본 transport를 가리고, 모델이 형식을 몰라 오염 조건과 no-system 조건의 recording을 같은 provenance로 기록하게 된다(Codex 독립 검증). 적용 지점과 선언 지점을 모델 하나로 모으면 두 문제를 함께 닫고, `model-template` hash 유지로 5-15 paired 계약과 기존 bundle 호환을 지킨다.
 
+### ADR-061: 모델 비교 주장은 schema 변화에 대한 정확도 일관성으로 한정한다
+
+- 날짜: 2026-09-29
+- 상태: 채택
+- 결정: QueryIR 방식과 직접 SQL 생성의 비교에서 일반 정확도 우열을 주장하지 않는다. 주장은 같은 질문에 대한 정확도가 물리 schema 구조·이름 변화에 대해 얼마나 일정한가로 한정하고, arm별 variant 정답·`spread`·`all_variants_correct`와 paired count로 기록한다. 이 비교를 위해 fixture를 이름 축과 구조 축이 분리되도록 늘린다(ADR-062). 연구 질문 6과 §16.4에 반영한다.
+- 이유: Phase 5-22에서 IR arm은 두 모델 모두 세 fixture에서 정답 수가 같았지만(31·31·31, 26·26·26) base 모델 전체 정답은 직접 SQL이 높았다(90 대 78). 일반 우열 주장은 모델·prompt 탐색 이력에 따라 뒤집히지만, schema 변화에 대한 불변성은 QueryIR 설계(모델이 물리 schema를 보지 않고 compiler가 JOIN을 만든다)에서 직접 따라 나오며 연구 주제인 schema 적응성과 맞는다.
+
+### ADR-062: 확장 fixture는 두 고정 suite로만 선택하고 core 기본 동작을 바꾸지 않는다
+
+- 날짜: 2026-09-29
+- 상태: 채택
+- 결정: 같은 seed의 새 SQLite 변형 `coded`(normalized 구조 + 약어 이름)와 `hybrid`(2-table 부분 비정규화 + 영문 동의어 이름)를 추가한다. fixture bundle의 variant 집합은 `core-v1`(flat·normalized·legacy)과 `extended-v1`(core + coded·hybrid) 두 suite 중 하나와 정확히 같아야 하며, builder 기본값은 core다. runner는 bundle suite를 다시 확인하고 설정 variant가 bundle에 없으면 실패한다. 새 변형의 Published Mapping은 평가 전용 `fixture_mapping`에 명시적으로 두고 catalog와 대조한다. run report schema version은 유지하고(literal 값 확장만), case cross-schema consistency는 3개 이상 variant 설정에서만 계산한다. 평가 CLI는 `--fixture-suite`로 고르고, extended run은 label `.ext`·run ID prefix `p523-ext`로 core run과 섞이지 않는다. runtime registry·prototype·capture target은 core 그대로다.
+- 이유: 기존 3종은 이름 축과 구조 축이 섞여 있어 직접 SQL의 normalized 하락이 JOIN 때문인지 이름 때문인지 분리할 수 없다. 임의 variant 조합을 허용하면 run 간 분모·consistency가 달라져 비교가 흔들리므로 고정 suite만 허용하고, core 기본값을 유지해 5-19~5-22 결과와 recording 재현성을 지킨다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -1853,3 +1887,4 @@ SQLite DB 입력
 - Phase 7-11 요청 형식을 모델 안으로 이동 완료. Codex 독립 검증(226a633 기준 관련 252개·전체 1013개 통과, no-system live smoke `COMPLETED` 재현)이 보고한 두 결함을 재현했다: no-system 형식에서 non-callable transport가 startup에서 거부되지 않음, 형식이 달라도 `declared_provenance`가 같음. `apply_request_format` 진입 callable 검사, `OllamaQueryModel(request_format=...)` 생성자 단일 적용, no-system 전용 provenance 필드(형식 ID·raw·template SHA-256)로 닫았고 `model-template` provenance(`generation_config_sha256=48ba68c9…`)는 변경 전 값과 같음을 테스트로 고정했다. `gpt-6-luna` high review-only는 actionable 결함 없음. 관련 293개·1 skip·10 subtests 통과. 전체 pytest는 첫 실행(Luna 검토와 동시 실행)에서 1건 실패했으나 이름을 포착하지 못했고, 재실행에서 1018개·6 skip·470 subtests 전부 통과, 시간 민감 테스트 124개 3회 반복도 모두 통과해 부하 관련 flake 후보로 기록한다. compileall, diff check 통과. 5-12·5-13·5-14 결과 문서에 내장 SYSTEM 주입 조건이었다는 추가 기록을 넣었다. live 호출·다운로드·guard·prompt 변경 없음. ADR-060 추가
 - Phase 5-21 base instruct 모델 paired 실행 완료(잠정). 사용자 승인으로 `ollama pull qwen2.5-coder:7b-instruct`(4.7 GB, Q4_K_M, blob `60e05f21…`)를 기본 저장소에 받았고, ChatML TEMPLATE과 일반 기본 SYSTEM을 확인한 뒤 사용자 결정대로 `model-template` 형식으로 `arm_live_cli`를 `--check`·`--live-synthetic` 1회 실행했다(코드 변경 없음, 240 호출). SQL arm 정답 90·실행 102·정책 통과 108·기권 12(normalized 24/40), IR arm 0/120 전부 `MODEL_INVALID_OUTPUT`. 비노출 진단 40 호출에서 IR 출력 40건 모두 단일 code fence로만 감싸져 있었고 안쪽은 유효 QueryIR 28·구조 실패 8·semantic 실패 4였다. SQL arm 추출(`direct-sql-extract-v1`)은 fence를 벗기고 IR arm은 벗기지 않는 비대칭이 원인이라 IR 0은 방식 비교로 쓰지 않는다. 재실행 방식은 사용자 결정 대기. 수치는 L1/L3 전 잠정치
 - Phase 5-22 대칭 추출 재실행 완료(잠정). `direct_sql.find_code_fences`를 두 arm이 공유하고, 평가 전용 `evaluation/ir_extract.py`(`single-fence-v1`: 문자열에 fence가 정확히 1개일 때만 안쪽을 adapter와 같은 strict JSON 규칙으로 파싱, 그 외 원본 유지)와 `arm_live_cli --ir-extract`(기본 `none`, `single-fence-v1`은 label `.fence`·run ID prefix `p522-`)를 추가했다. `gpt-6-luna` high review-only 지적 2건(fence 안 깊은 중첩 JSON의 `RecursionError` 전파, runtime 격리 테스트의 `import` 분기 누락)을 재현·수정했다. 같은 `RecursionError` 미처리가 runtime `OllamaQueryModel` JSON 파싱에도 있으나 상위에서 고정 오류로 fail closed되므로 이번 범위에서 바꾸지 않고 잔여 위험으로 기록한다. 관련 96개·1 skip, 전체 pytest 1040개·6 skip·470 subtests, compileall, diff check 통과. live 480 호출 결과 fine-tune IR 93·SQL 72(5-20과 동일), base IR 78·실행 84·구조 exact 36·SQL 90, paired base 둘 다 70·IR만 8·SQL만 20·둘 다 오답 22. 수치는 L1/L3 전 잠정치
+- Phase 5-23 주장 범위 한정과 schema 변형 확장 완료(잠정). 계획 문서 §15.3·§16.2(연구 질문 6)·§16.4를 갱신하고 ADR-061·ADR-062를 추가했다. `fixtures/coded.py`·`hybrid.py`, `FIXTURE_SUITES`(`core-v1`·`extended-v1`)와 bundle suite 검증, `build_fixture_bundle(variants=...)`(기본 core), runner의 suite 재확인·설정 variant 존재 검사, run contract literal 확장(schema version 유지), 3개 이상 variant에서만 case consistency 계산, 평가 전용 `schema_consistency`(`schema-consistency-v1`: variant별 정답·spread·all-variant correct, 고정 suite 전체일 때만), `arm_live_cli --fixture-suite`(extended는 label `.ext`·run ID prefix `p523-ext`, report에 `consistency.json` 추가)를 구현했다. `gpt-6-luna` high review-only 지적 2건 중 '3개 미만 variant에서도 일관성 산출'은 재현 후 suite 전체 요구로 수정했고, 'runner 설정의 임의 variant 부분집합 허용'은 5-23 이전부터 있던 subset 실행 계약이라 유지하되 일관성 지표에서는 제외된다. 전체 pytest(tests) 1067개·6 skip·610 subtests, compileall·diff check 통과. live 800 호출: core 3종 수치는 5-22와 동일하게 재현, fine-tune IR 31·31·31·31·31(155/200)·SQL 30·11·31·8·10(90), base IR 26×5(130)·SQL 34·24·32·20·23(133), paired fine-tune 둘 다 85·IR만 70·SQL만 5·둘 다 오답 40, base 104·26·29·41. 수치는 L1/L3 전 잠정치

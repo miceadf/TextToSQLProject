@@ -16,7 +16,7 @@ from ..harness.contracts import HarnessStage
 
 RUN_REPORT_SCHEMA_VERSION = "fixture-evaluation-run-v1"
 RUNNER_VERSION = "fixture-runner-v1"
-FixtureVariant = Literal["flat", "normalized", "legacy"]
+FixtureVariant = Literal["flat", "normalized", "legacy", "coded", "hybrid"]
 Fingerprint = str
 
 
@@ -25,7 +25,7 @@ class EvaluationRunConfig(BaseModel):
 
     model_run_id: str = Field(pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$")
     model_label: str = Field(pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$")
-    variants: list[FixtureVariant] = Field(min_length=1, max_length=3)
+    variants: list[FixtureVariant] = Field(min_length=1, max_length=5)
     oracle_smoke: bool
 
     @model_validator(mode="after")
