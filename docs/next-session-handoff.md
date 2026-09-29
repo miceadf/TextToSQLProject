@@ -1,6 +1,6 @@
 # 새 Codex 대화용 짧은 인수인계
 
-현재 기준: 2026-09-29, Phase 7-12 legacy view 부분 mapping·선언형 값 변환까지 완료(8-05까지의 관리자 기능 포함). 최신 상태는 항상 Git과 코드로 다시 확인한다. 설계와 로드맵의 원본은 [`schema-adaptive-text-to-sql-plan.md`](schema-adaptive-text-to-sql-plan.md), 독립 평가 세트 설계 기준은 [`independent-evaluation-set-design.md`](independent-evaluation-set-design.md), 안전한 잠정 비교는 [`phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md`](phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md)다.
+현재 기준: 2026-09-29, Phase 7-13 legacy view 대상 QueryIR 챗봇 endpoint까지 완료(8-05까지의 관리자 기능 포함). 최신 상태는 항상 Git과 코드로 다시 확인한다. 설계와 로드맵의 원본은 [`schema-adaptive-text-to-sql-plan.md`](schema-adaptive-text-to-sql-plan.md), 독립 평가 세트 설계 기준은 [`independent-evaluation-set-design.md`](independent-evaluation-set-design.md), 안전한 잠정 비교는 [`phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md`](phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md)다.
 
 ## 프로젝트와 현재 경계
 
@@ -64,6 +64,8 @@
 
 - Phase 7-12: legacy 챗봇의 view `v_course_info`를 profile v2로 등록한다. mapping 12개, 미지원 3개(`CourseOffering.year`·`semester`·`Department.code`), 변환은 학점 `SLASH_FIRST_NUMERIC`와 시간 `TIME_TO_HHMM`이다. private profile은 `.schema-adaptive/postgres-profiles/legacy-view/`에 있다. DSN은 `SCHEMA_ADAPTIVE_POSTGRES_DSN_LEGACY_VIEW` 환경변수로 주고, CLI는 `python -m backend.adaptive.api.legacy_view_profile --check | --write --live | --smoke --live`다. 부분 profile의 catalog는 닫혀 있다(7-14에서 화면 연결). legacy prompt의 `credit_hours = '3'` 비교가 0행이라는 관찰은 7-15 비교 후보다.
 
+- Phase 7-13: `POST /api/adaptive/v1/chat/query` `{database_id, query}` → `adaptive-chat-query-v1`. 상태는 `SUCCEEDED`(카드 행과 understood filter), `UNSUPPORTED`(미지원 field label), `NOT_UNDERSTOOD`(고정 code)다. prototype을 `--postgres-profile-id legacy-view`와 Ollama 옵션으로 띄워야 동작하며, Ollama가 없으면 503이다. 시간 filter 값은 `HH:MM`으로 정규화하고 표현 불가 값은 거부한다. 문자열 `equals` 경향(`김 교수님` → 0행)은 7-15 비교 항목이다.
+
 ## 실행
 
 팀 논의용 전체 실행은 `npm run dev:all`(legacy `:8000` + 합성 prototype `:8123` + Vite `:5173`). legacy 강좌 DB는 팀이 구성한 유사 데이터라는 사용자 확인이 있다(`docs/synthetic-clarification-team-handoff.md`).
@@ -71,7 +73,7 @@
 ## 다음 작은 작업
 
 - 다음 순서는 legacy 챗봇 연결이다.
-  - 7-13: legacy view 대상 챗봇 질의 endpoint. Ollama QueryIR 1회 → 기존 실행 경로 → 강좌 카드 형식으로 응답하고, SQL은 노출하지 않으며, 미지원 field를 안내한다.
+  - 7-13: 완료.
   - 7-14: `ChatPopup`의 DB별 경로 선택과 `dev:all` DSN 주입.
   - 7-15: 같은 질문에 대한 legacy 대 QueryIR 비교.
 0. Phase 8 남은 항목: 8-06 코드값·관계 교정(ontology value mapping 설계 ADR 선행), 8-07 관리자 화면 통합, 8-01~8-05 관리자 흐름의 browser smoke(private storage 격리 방법 필요).

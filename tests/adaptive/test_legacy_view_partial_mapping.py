@@ -47,6 +47,7 @@ from backend.adaptive.mapping.contracts import PublishedFieldMapping, PublishedM
 from backend.adaptive.mapping.transforms import (
     FieldTransform,
     column_type_supports,
+    normalize_filter_value,
     normalize_transformed_value,
     render_postgres_transform,
     transform_supports_data_type,
@@ -235,6 +236,60 @@ def test_partial_profile_compiles_transforms_and_passes_policy() -> None:
         f"WHERE {CREDITS_SQL} = %s AND {START_SQL} >= %s LIMIT %s"
     )
     assert compiled.parameters == [3, "12:00", 50]
+
+
+@pytest.mark.parametrize(
+    ("raw", "bound"),
+    [("14:00:00", "14:00"), ("9:00", "09:00"), ("09:30", "09:30"), (" 13:05 ", "13:05")],
+)
+def test_time_filter_values_are_bound_in_hhmm(raw: str, bound: str) -> None:
+    assert normalize_filter_value(FieldTransform.TIME_TO_HHMM, raw) == bound
+    assert normalize_filter_value(FieldTransform.SLASH_FIRST_NUMERIC, raw) == raw
+    compiled = compile_and_validate(
+        make_context(),
+        query_ir(
+            ["Course.name"],
+            [{"field": "Schedule.start_time", "operator": "greater_than_or_equal", "value": raw}],
+        ),
+    )
+    assert compiled.parameters == [bound, 50]
+
+
+@pytest.mark.parametrize("raw", ["14:00:30", "오후", "25:00", "12:60", "1400", ""])
+def test_unrepresentable_time_values_are_rejected(raw: str) -> None:
+    with pytest.raises(ValueError):
+        normalize_filter_value(FieldTransform.TIME_TO_HHMM, raw)
+    context = make_context()
+    ir = query_ir(
+        ["Course.name"],
+        [{"field": "Schedule.start_time", "operator": "greater_than_or_equal", "value": raw}],
+    )
+    with pytest.raises(HarnessFailure) as caught:
+        context.compiler().compile(ir, context.harness_mapping())
+    assert caught.value.code is HarnessErrorCode.INVALID_VALUE_TYPE
+    # The policy refuses the raw value too, so a bypassed compiler cannot bind it.
+    sql = (
+        f'SELECT "t0"."subject_name" AS "Course.name" FROM "{VIEW}" AS "t0" '
+        f"WHERE {START_SQL} >= %s LIMIT %s"
+    )
+    with pytest.raises(HarnessFailure):
+        context.policy().validate(
+            CompiledQuery(sql=sql, parameters=[raw, 50], expected_columns=ir.select),
+            query_ir=ir,
+            mapping=context.harness_mapping(),
+        )
+
+
+def test_policy_rejects_unnormalized_time_parameter() -> None:
+    context = make_context()
+    ir = query_ir(
+        ["Course.name"],
+        [{"field": "Schedule.start_time", "operator": "greater_than_or_equal", "value": "14:00:00"}],
+    )
+    compiled = context.compiler().compile(ir, context.harness_mapping())
+    tampered = compiled.model_copy(update={"parameters": ["14:00:00", 50]})
+    with pytest.raises(HarnessFailure):
+        context.policy().validate(tampered, query_ir=ir, mapping=context.harness_mapping())
 
 
 def test_untransformed_query_sql_is_unchanged() -> None:

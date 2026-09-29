@@ -673,7 +673,7 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 - [x] Phase 7-10 runtime Ollama 요청 형식 명시(Ollama 활성화 시 `--ollama-request-format` 필수, config v2, 형식 단일 적용; no-system 재실행에서 성공 실행 경로 live 첫 통과)
 - [x] Phase 7-11 요청 형식을 `OllamaQueryModel` 안으로 이동(생성 시점 transport fail-fast, 형식별 provenance 구분; `model-template` hash 유지)
 - [x] Phase 7-12 legacy view 부분 mapping과 선언형 값 변환(profile v2, `unsupported_fields`, `SLASH_FIRST_NUMERIC`·`TIME_TO_HHMM`, view inspection opt-in, 등록·smoke CLI; legacy DB live smoke 통과)
-- [ ] Phase 7-13 legacy view 대상 챗봇 질의 endpoint(Ollama QueryIR 1회 → 기존 실행 경로 → 강좌 카드 형식, SQL 비노출, 미지원 field 안내)
+- [x] Phase 7-13 legacy view 대상 챗봇 질의 endpoint(`adaptive-chat-query-v1`; Ollama QueryIR 1회 → 기존 실행 경로 → 서버 고정 카드 field, SQL·물리 이름 비노출, `UNSUPPORTED`·`NOT_UNDERSTOOD`, 시간 filter 값 정규화; legacy DB·로컬 Ollama live 확인)
 - [ ] Phase 7-14 `ChatPopup`의 DB별 경로 선택(legacy 기준선은 기존 경로 유지)
 - [ ] Phase 7-15 같은 질문의 legacy 챗봇 대 QueryIR 경로 비교 보고
 - [ ] 실제 CNU DB regression test
@@ -1729,6 +1729,27 @@ SQLite DB 입력
   - 이 mapping은 팀이 구성한 legacy DB에 대한 개발자 작성 mapping이며, 실제 학교 DB의 L2 검토가 아니다.
   - AI가 변환을 제안하는 기능은 이후 단계다.
 
+### ADR-069: 챗봇 경로는 모델의 filter·limit만 쓰고 표시 column은 서버 고정 카드 field로 정한다
+
+- 날짜: 2026-09-29
+- 상태: 채택
+- 결정: `POST /api/adaptive/v1/chat/query`는 검증된 PostgreSQL context에서만 질문 하나를 처리하며, 모델 호출은 정확히 1회다. 처리 순서는 다음과 같다.
+  1. 모델 출력 QueryIR의 구조를 검증한다.
+  2. ontology에 없는 field를 참조하면 `NOT_UNDERSTOOD`다.
+  3. profile의 미지원 field를 참조하면 실행 없이 `UNSUPPORTED`와 field label을 돌려준다.
+  4. filter 값이 질문 원문을 포함하거나, 요청 경계 문자열과 같거나, 물리 identifier를 단어로 포함하면 `NOT_UNDERSTOOD`다.
+  5. 표현할 수 없는 변환 filter 값(초가 0이 아닌 시간, `오후` 같은 비시각 문자열)은 `NOT_UNDERSTOOD`다.
+  6. 통과한 QueryIR은 select만 매핑된 canonical 카드 field 전체로 바꾸고, entity·filter·limit은 그대로 기존 harness(검증·compiler·AST policy·read-only executor)로 실행한다.
+  - 응답: canonical 카드 key, 행, 그리고 이해한 filter의 label·연산자·값이다. SQL과 물리 이름은 보내지 않는다.
+  - 변환 계약 확장: `TIME_TO_HHMM` filter 값은 compiler와 policy가 같은 규칙으로 `HH:MM`으로 정규화하고, 표현할 수 없는 값은 양쪽 모두 거부한다.
+- 이유:
+  - legacy 챗봇은 view의 모든 column을 조회해 카드로 보여준다. 새 경로도 표시 column을 같게 두어야 결과 비교가 filter 해석 차이로 좁혀진다.
+  - 표시 column 선택은 화면 규칙이므로 모델에 맡길 이유가 없고, 서버 고정 목록은 filter를 추가하거나 바꾸지 않는다.
+  - understood filter는 SQL 대신 "어떻게 이해했는지"를 보여주는 설명이다. 모델 값을 그대로 되돌려주므로, 물리 이름·질문 반사를 실행 전에 막아야 한다.
+  - 시간 값을 분 단위 text로 비교하는 계약에서 초 단위·비시각 값을 문자열로 비교하면 결과가 조용히 틀린다.
+- 한계:
+  - 모델이 문자열 field에 `equals`로 구절 전체를 넣는 경향(예: `김 교수님`)이 남아 0행이 나온다. legacy prompt는 문자열 비교에 LIKE를 강제한다. 서버 완화 규칙이나 prompt 변경 여부는 7-15 비교 뒤 사용자 결정으로 둔다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -1968,3 +1989,4 @@ SQLite DB 입력
 - Phase 8-05 verified query 기준선·버전 회귀 비교 완료(합성). storage `load_published_version`·`verified-queries.json` 기록, `admin_test_queries`의 공통 실행 함수 분리와 VERIFY·회귀 route, 결과 기록 버튼·버전별 회귀 확인·publish·재활성화 직후 자동 회귀 UI를 추가했다(ADR-067, [`docs/prompts/phase8-05-verified-query-regression.md`](prompts/phase8-05-verified-query-regression.md)). review 디렉터리 허용 파일명을 `_REVIEW_FILENAMES` 하나로 모았다. `gpt-6-luna` high review-only 지적 3건을 재현·수정했다: (1) 원자적 교체 중 프로세스가 죽어 남은 mkstemp staging 파일(`*.json.<random>.tmp`) 때문에 activation 로드가 거부됨(draft·activation 쓰기에도 있던 기존 위험) → 허용 파일명의 staging 잔여물만 무시하고 그 외 모르는 파일은 계속 fail closed, (2) frontend가 고정 query 일부만 담긴 회귀 결과를 받아들임 → 고정 5개 전체·서버 순서 요구, (3) 행 수가 다른 `MATCH`를 받아들임 → `MATCH`는 행 수 일치 요구. 관련 backend 32개·frontend 5개, 전체 pytest(tests) 1131개·6 skip·610 subtests, tsc·eslint·compileall·diff check 통과. 실제 학교 DB·live 모델 호출 없음
 - 팀 논의용 전체 실행 명령 추가. `package.json`에 `dev:backend:venv`(legacy backend를 venv Python으로, reload 없이)와 `dev:all`(legacy `:8000`·합성 prototype `:8123`·Vite `:5173` 동시 실행)을 추가했다. 기존 `dev:backend`·`dev:full`·`dev:adaptive-full`은 그대로 둔다(`dev:backend`는 시스템 Python을 쓰며 이 환경의 시스템 Python에는 legacy 의존성이 없다). 사용자 확인: legacy 강좌 DB는 실제 충남대 테이블이 아니라 팀이 구성한 유사 스키마·데이터다(`docs/human-validation-checkpoints.md`에 기록, E3/L5 상태는 변경하지 않음). 앱 내 browser로 legacy 목록 200건·legacy assistant 질의·합성 DB 전환·clarification 결과를 확인했고, SQLite 업로드 이후 관리자 흐름은 확인하지 않았다. venv의 transformers는 고정 버전(4.46.3)이 아닌 5.8.1이지만 legacy backend 시작과 assistant 질의는 정상 동작했다
 - Phase 7-12 legacy view 부분 mapping과 선언형 값 변환 완료. 사용자 결정에 따라 legacy 챗봇의 대상 view `v_course_info`를 QueryIR 경로에 등록했다(A, 부분 mapping, 15개 field 비교). 주요 변경은 다음과 같다. (1) `mapping/transforms.py`의 닫힌 목록 `FieldTransform`(`SLASH_FIRST_NUMERIC`, `TIME_TO_HHMM`)과 결과 정규화. (2) PostgreSQL compiler의 변환식 렌더링과 변환 field의 `contains` 거부. (3) AST policy의 exact 변환 AST 비교와, 그 subtree로 한정한 allowlist 예외. (4) inspector의 `include_views` opt-in(기본 query·fingerprint 불변). (5) runtime profile의 `field_transforms`·`unsupported_fields` 검증: 합집합=canonical, 교집합 없음, ontology·column 타입 호환. `unsupported_fields()` 노출, 변환 결과값 정규화 포함. (6) startup profile v2 strict load(v1 불변). (7) `api/legacy_view_profile.py` CLI(`--check`, `--write --live`, `--smoke --live`; 출력은 고정 code와 수치뿐). 부분 profile의 catalog는 15개 전체를 요구하므로 닫힌다(화면 연결은 7-14). `gpt-6-luna` high review-only는 AST policy 우회 경로를 찾지 못했고 3건을 지적했다. CLI parse 오류가 인자를 그대로 출력하는 문제와 반쯤 교체된 profile 쌍을 `UNCHANGED`로 보고하는 문제는 재현한 뒤 고쳤다(고정 code parser, 재생성 byte 비교). 테스트 공백(projection·predicate 개수·순서 변화, v1 profile 로드)은 보강했다. 동시 `--write` 경쟁은 단일 운영자 개발 CLI라 고치지 않고 잔여 위험으로 둔다. 신규 53개와 기존 PostgreSQL·policy·compiler 103개 테스트, 전체 pytest 1184개·6 skip·610 subtests, compileall, diff check가 통과했다. legacy DB 확인은 다음과 같다(읽기 전용 연결, 구조·집계만 확인). view는 6,846행·개설강좌 4,003개이고, 시간표 없는 행은 632개다. `credit_hours`는 전부 `학점/이론/실습` 형식이며, `course_year`는 학년(1~5)이라 연도가 아니다. `--write --live`와 `--smoke --live`는 고정 query 5개 모두 기대대로 통과했다(목록·학점=3·오후 시작·이수구분 포함은 200행 상한이고 형식 검사 통과, 연도 질의는 `MAPPING_MISSING`). scratch 대조에서 한도 아래 조건 3개(학점 1.5, 금요일 18시 이후, 정원 150 초과)는 view 직접 SQL과 결과 multiset이 같았다(75·33·42행). 참고로 legacy prompt가 지시하는 `credit_hours = '3'` 비교는 0행이고, 변환 기준 학점 3은 4,253행이다. 7-15 비교의 관찰 후보이며 성능 주장이 아니다. mapping은 팀이 구성한 legacy DB에 대한 개발자 작성 mapping이며 L2 검토가 아니다. legacy backend·view·legacy DB 변경 없음. ADR-068 추가
+- Phase 7-13 legacy view 대상 QueryIR 챗봇 질의 endpoint 완료. `api/chat_query.py`의 `POST /api/adaptive/v1/chat/query`(`adaptive-chat-query-v1`)를 prototype에 등록했다. 검증된 PostgreSQL context 전용이며, Ollama가 없으면 503이다. 모델 호출은 1회이고 처리는 다음과 같다: 구조 검증, 미지원 field는 실행 없이 `UNSUPPORTED`와 label, 반사 guard, 서버 고정 카드 projection, 기존 harness 실행. 응답은 카드 행과 이해한 filter(label·연산자·값)다. live 확인 중 시간 filter 값 `"14:00:00"`이 `HH:MM` 문자열 비교에서 어긋나는 결함을 발견했다. 그래서 `normalize_filter_value`를 변환 계약에 넣고 compiler·policy에 같게 적용했다. `gpt-6-luna` high review-only 지적 2건을 재현해 고쳤다. (1) understood 값에 물리 identifier·SQL 문자열이 되돌아갈 수 있는 문제: 단어 단위 identifier·질문 포함 반사 거부. (2) 초가 0이 아닌 시간 값의 정밀도 불일치: 표현 불가 값은 compiler·policy·챗봇 모두 거부. live 확인(legacy DB 읽기 전용, `text2sql_qwen:latest`·`alpaca-raw-no-system-v1`, 8개 질문, 상태·행 수만 기록) 결과는 다음과 같다. `SUCCEEDED` 6건 중 4건은 50행(모델 limit)이고, 2건은 0행이다: `김 교수님`을 `equals`로 넣은 경우, `오후`를 14:00~15:00으로 해석한 경우. 연도·학기 질문 2건은 `UNSUPPORTED`다. 모델 성능 주장이 아니다. 7-12 smoke도 계속 통과한다. 관련 테스트 152개(66 subtests), 전체 pytest 1233개·6 skip·610 subtests, compileall, diff check 통과. 문자열 `equals` 경향의 처리 방식은 7-15 비교 뒤 결정한다. legacy·frontend 변경 없음. ADR-069 추가

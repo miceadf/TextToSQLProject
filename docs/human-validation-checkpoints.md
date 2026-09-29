@@ -12,6 +12,8 @@
 
 Phase 7-12(2026-09-29): legacy 챗봇의 대상 view를 QueryIR 경로에 부분 mapping으로 등록했다. mapping은 12개 field이고, 미지원 3개와 학점·시간 변환을 포함한다. legacy DB에는 읽기 전용으로 연결해 schema inspection, profile 작성, 고정 query smoke를 실행했고, 구조와 집계만 기록했다. 이 mapping은 개발자가 작성했다. legacy 강좌 DB가 팀 구성 데이터라는 사용자 확인에 근거한 개발용 등록이며, 실제 학교 DB의 L2 mapping 검토를 대신하지 않는다. 변환 목록(`SLASH_FIRST_NUMERIC`, `TIME_TO_HHMM`)이 실제 학교 DB의 값 형식에 맞는지는 L2에서 다시 확인한다.
 
+Phase 7-13(2026-09-29): legacy view 대상 QueryIR 챗봇 endpoint를 추가하고, 로컬 Ollama와 legacy DB로 8개 질문을 live 실행했다(상태·행 수만 기록). 이 실행은 동작 확인이며 L1/L3 전의 모델 성능 근거가 아니다. 모델이 문자열 field에 구절 전체를 `equals`로 넣는 경향을 server 규칙으로 완화할지는 7-15 비교 뒤 사용자가 결정한다.
+
 ## 바로 또는 최대한 빠르게 확인할 것
 
 정식 40건 승인을 지금 끝낼 필요는 없다. 아래는 **설계가 잘못되면 후속 개발을 크게 되돌릴 수 있는** 짧은 확인이다.

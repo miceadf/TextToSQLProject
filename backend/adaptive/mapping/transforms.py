@@ -9,6 +9,7 @@ Only the PostgreSQL runtime uses transforms today.
 
 from __future__ import annotations
 
+import re
 from decimal import Decimal
 from enum import Enum
 from typing import Any
@@ -19,6 +20,7 @@ __all__ = [
     "FieldTransform",
     "TRANSFORM_OPERATORS",
     "column_type_supports",
+    "normalize_filter_value",
     "normalize_transformed_value",
     "render_postgres_transform",
     "transform_supports_data_type",
@@ -73,6 +75,29 @@ def column_type_supports(transform: FieldTransform, declared_type: str) -> bool:
     if transform is FieldTransform.TIME_TO_HHMM:
         return normalized.startswith("time ") or normalized == "time"
     return False
+
+
+_TIME_TEXT = re.compile(r"^(\d{1,2}):(\d{2})(?::00)?$")
+
+
+def normalize_filter_value(transform: FieldTransform, value: Any) -> Any:
+    """Bring a filter literal into the transform's output format.
+
+    ``TIME_TO_HHMM`` compares zero-padded ``HH:MM`` text, so ``"9:00"`` and
+    ``"14:00:00"`` must become ``"09:00"`` and ``"14:00"``; otherwise the
+    string comparison silently misorders them. A value minute text cannot
+    represent (non-zero seconds, ``"오후"``, ``"25:00"``) raises ``ValueError``
+    instead of being compared as arbitrary text.
+    """
+    if FieldTransform(transform) is FieldTransform.TIME_TO_HHMM:
+        match = _TIME_TEXT.fullmatch(value.strip()) if isinstance(value, str) else None
+        if match is None:
+            raise ValueError("time filter value is not HH:MM")
+        hour, minute = int(match.group(1)), int(match.group(2))
+        if hour > 23 or minute > 59:
+            raise ValueError("time filter value is out of range")
+        return f"{hour:02d}:{minute:02d}"
+    return value
 
 
 def normalize_transformed_value(transform: FieldTransform, value: Any) -> Any:

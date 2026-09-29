@@ -13,6 +13,7 @@ from backend.adaptive.harness.contracts import (
 from backend.adaptive.harness.errors import HarnessFailure
 from backend.adaptive.mapping.transforms import (
     TRANSFORM_OPERATORS,
+    normalize_filter_value,
     render_postgres_transform,
 )
 from backend.adaptive.ontology.contracts import Operator
@@ -467,6 +468,15 @@ class AstReadOnlyPolicy:
         expected_parameters: list[str | int | float | bool] = []
         for filter_ir in context.query_ir.filters:
             value = filter_ir.value
+            transform = context.field_transforms.get(filter_ir.field)
+            if transform is not None:
+                try:
+                    value = normalize_filter_value(transform, value)
+                except ValueError:
+                    self._fail(
+                        HarnessErrorCode.INVALID_PLACEHOLDER,
+                        f"value for transformed field '{filter_ir.field}' is not representable",
+                    )
             if filter_ir.operator is Operator.CONTAINS:
                 value = f"%{value}%"
             expected_parameters.append(value)

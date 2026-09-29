@@ -46,6 +46,7 @@ from ..harness.errors import HarnessFailure
 from ..harness.executor import SQLiteReadOnlyExecutor
 from ..harness.policy import ConservativeSqlPolicy
 from .admin_test_queries import register_admin_test_query_routes
+from .chat_query import register_chat_query_routes
 from .clarification_http import create_clarification_http_app
 from .registration_upload import register_sqlite_upload_routes
 from .review_publish import register_mapping_review_routes
@@ -577,6 +578,12 @@ def create_synthetic_clarification_prototype(
         try:
             register_mapping_review_routes(app)
             register_admin_test_query_routes(app)
+        except Exception:
+            raise RuntimeError(_PROTOTYPE_CREATION_FAILURE) from None
+        try:
+            # Phase 7-13: one-shot QueryIR chat over PostgreSQL profiles only;
+            # without an Ollama model the route answers 503.
+            register_chat_query_routes(app, pg_contexts=pg_contexts, model=ollama_model)
         except Exception:
             raise RuntimeError(_PROTOTYPE_CREATION_FAILURE) from None
     except Exception:

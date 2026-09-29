@@ -16,6 +16,7 @@ from backend.adaptive.mapping.contracts import PublishedMappingProfile
 from backend.adaptive.mapping.transforms import (
     TRANSFORM_OPERATORS,
     FieldTransform,
+    normalize_filter_value,
     render_postgres_transform,
 )
 from backend.adaptive.ontology.contracts import Operator
@@ -118,6 +119,14 @@ class JoinCapablePostgresCompiler:
                 f"{SQL_OPERATORS[item.operator]} {POSTGRES_PLACEHOLDER}"
             )
             value = item.value
+            if item.field in transforms:
+                try:
+                    value = normalize_filter_value(transforms[item.field], value)
+                except ValueError:
+                    self._fail(
+                        HarnessErrorCode.INVALID_VALUE_TYPE,
+                        f"value for transformed field '{item.field}' is not representable",
+                    )
             if item.operator is Operator.CONTAINS:
                 value = f"%{value}%"
             parameters.append(value)
