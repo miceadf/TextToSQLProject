@@ -3,8 +3,10 @@ import {
   fetchTestQueryList,
   runTestQuery,
   toTestQueryMessage,
+  verifyTestQuery,
   type TestQueryDefinition,
   type TestQueryFetchLike,
+  type TestQueryPostLike,
   type TestQueryResult,
 } from './testQueries.ts';
 import { isStaleResponse, nextOperation } from './state.ts';
@@ -12,11 +14,17 @@ import { isStaleResponse, nextOperation } from './state.ts';
 const domFetch: TestQueryFetchLike = (url, init) =>
   fetch(url, { method: init.method, headers: init.headers, signal: init.signal });
 
+const domPost: TestQueryPostLike = (url, init) =>
+  fetch(url, { method: init.method, headers: init.headers, body: init.body, signal: init.signal });
+
 interface TestQueryPanelProps {
   databaseId: string;
   /** Parent remounts the panel (key) when the active version changes. */
   activeVersion: number;
+  /** Reviewer name from the review panel; required to record a baseline. */
+  reviewer: string;
   fetchFn?: TestQueryFetchLike;
+  postFn?: TestQueryPostLike;
 }
 
 function cellText(value: unknown): string {
@@ -24,8 +32,9 @@ function cellText(value: unknown): string {
   return String(value);
 }
 
-export default function TestQueryPanel({ databaseId, activeVersion, fetchFn }: TestQueryPanelProps) {
+export default function TestQueryPanel({ databaseId, activeVersion, reviewer, fetchFn, postFn }: TestQueryPanelProps) {
   const caller = fetchFn ?? domFetch;
+  const [verifiedNote, setVerifiedNote] = useState<string | null>(null);
   const [queries, setQueries] = useState<TestQueryDefinition[] | null>(null);
   const [queryId, setQueryId] = useState('');
   const [result, setResult] = useState<TestQueryResult | null>(null);
@@ -64,10 +73,35 @@ export default function TestQueryPanel({ databaseId, activeVersion, fetchFn }: T
     setLoading(true);
     setError(null);
     setResult(null);
+    setVerifiedNote(null);
     try {
       const next = await runTestQuery(caller, databaseId, selectedDefinition, { signal: controller.signal });
       if (isStaleResponse(operationRef.current, operation) || controller.signal.aborted) return;
       setResult(next);
+    } catch (unknown) {
+      if (isStaleResponse(operationRef.current, operation) || controller.signal.aborted) return;
+      setError(toTestQueryMessage(unknown));
+    } finally {
+      if (!isStaleResponse(operationRef.current, operation)) setLoading(false);
+    }
+  }
+
+  async function handleVerify(): Promise<void> {
+    if (loading || result === null || reviewer.trim() === '') return;
+    const operation = nextOperation(operationRef.current);
+    operationRef.current = operation;
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setLoading(true);
+    setError(null);
+    try {
+      // The server re-runs the query and records its own hash; nothing is sent but the ID.
+      const entries = await verifyTestQuery(postFn ?? domPost, databaseId, result.query_id, reviewer, {
+        signal: controller.signal,
+      });
+      if (isStaleResponse(operationRef.current, operation) || controller.signal.aborted) return;
+      const entry = entries.find((item) => item.query_id === result.query_id);
+      setVerifiedNote(entry !== undefined ? `verified 기준선으로 기록했습니다 (mapping-v${entry.mapping_version}).` : null);
     } catch (unknown) {
       if (isStaleResponse(operationRef.current, operation) || controller.signal.aborted) return;
       setError(toTestQueryMessage(unknown));
@@ -127,6 +161,11 @@ export default function TestQueryPanel({ databaseId, activeVersion, fetchFn }: T
               ))}
             </tbody>
           </table>
+          <button type="button" onClick={() => void handleVerify()} disabled={loading || reviewer.trim() === ''}>
+            이 결과를 verified 기준선으로 기록
+          </button>
+          {reviewer.trim() === '' ? <span className="ml-2">기록하려면 검토자를 입력해 주세요.</span> : null}
+          {verifiedNote !== null ? <div>{verifiedNote}</div> : null}
         </div>
       ) : null}
     </div>

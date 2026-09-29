@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -657,7 +658,7 @@ def init_review(*, repository_root: str | Path, database_id: str, reviewer: str)
                 raise _fail(ReviewErrorCode.STORAGE_ERROR) from None
             allowed_prefix = ("mapping-v",)
             for name in names:
-                if name in (DRAFT_FILENAME, CURRENT_FILENAME, ACTIVATION_FILENAME, SUCCESSION_FILENAME):
+                if name in _REVIEW_FILENAMES or _is_staging_leftover(name):
                     continue
                 if name.startswith(allowed_prefix) and name.endswith(".json"):
                     continue
@@ -1325,7 +1326,7 @@ def load_activation(*, repository_root: str | Path, database_id: str) -> LoadedA
     except (OSError, RuntimeError, ValueError):
         raise _fail(ReviewErrorCode.ARTIFACT_MISMATCH) from None
     for name in names:
-        if name in (DRAFT_FILENAME, CURRENT_FILENAME, ACTIVATION_FILENAME, SUCCESSION_FILENAME):
+        if name in _REVIEW_FILENAMES or _is_staging_leftover(name):
             continue
         if name.startswith("mapping-v") and name.endswith(".json") and len(name) == len("mapping-v0000.json"):
             body = name[len("mapping-v") : -len(".json")]
@@ -1757,7 +1758,10 @@ def carry_over_review(
             names = sorted(item.name for item in review_dir.iterdir())
         except (OSError, RuntimeError):
             raise _fail(ReviewErrorCode.STORAGE_ERROR) from None
-        if any(name not in (DRAFT_FILENAME, SUCCESSION_FILENAME) for name in names):
+        if any(
+            name not in (DRAFT_FILENAME, SUCCESSION_FILENAME) and not _is_staging_leftover(name)
+            for name in names
+        ):
             # Already published (or unknown files): carry-over is for the first review only.
             raise _fail(ReviewErrorCode.REVIEW_CONFLICT)
         existing = _load_draft_strict(review_dir) if DRAFT_FILENAME in names else None
@@ -1818,3 +1822,158 @@ def load_succession(*, repository_root: str | Path, database_id: str) -> Mapping
     ):
         return None
     return record
+
+
+VERIFIED_FILENAME = "verified-queries.json"
+VERIFIED_SCHEMA_VERSION = "verified-queries-v1"
+
+
+class VerifiedQueryEntry(BaseModel):
+    """Admin-confirmed result hash of one fixed test query (Phase 8-05)."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+    query_id: str = Field(pattern=r"^[a-z][a-z0-9-]{0,31}$")
+    mapping_version: int = Field(ge=1)
+    result_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    row_count: int = Field(ge=0, le=200)
+    verified_by: str = Field(min_length=1, max_length=MAX_REVIEWER_LENGTH)
+    verified_at: str = Field(pattern=r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")
+
+
+class VerifiedQueries(BaseModel):
+    """Baselines only: hashes and counts, never row values; grants nothing."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+    schema_version: str = Field(pattern=r"^verified-queries-v1$")
+    database_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
+    entries: list[VerifiedQueryEntry] = Field(max_length=64)
+
+    @model_validator(mode="after")
+    def _one_per_query(self) -> "VerifiedQueries":
+        ids = [item.query_id for item in self.entries]
+        if ids != sorted(set(ids)):
+            raise ValueError("verified entries must be sorted and unique by query")
+        return self
+
+
+def load_published_version(
+    *, repository_root: str | Path, database_id: str, mapping_version: int
+) -> LoadedActivation:
+    """Strictly load a recorded published version without activating it (Phase 8-05).
+
+    Only versions in the pointer's digest record whose bytes match, and which
+    pass the re-activation checks, are returned. Nothing is written.
+    """
+    database_id = _validate_database_id(database_id)
+    mapping_version = _validate_mapping_version(mapping_version)
+    root, review_root = _review_root(repository_root)
+    review_dir = _validate_review_target(root, review_root, database_id)
+    if not review_dir.is_dir() or _is_redirect(review_dir):
+        raise _fail(ReviewErrorCode.ARTIFACT_MISMATCH)
+    try:
+        loaded = registration_storage.load_registration(
+            repository_root=root, database_id=database_id
+        )
+    except registration_storage.RegistrationError as exc:
+        if exc.code in (
+            registration_storage.RegistrationErrorCode.STORAGE_ERROR,
+            registration_storage.RegistrationErrorCode.PRIVATE_STORAGE_INVALID,
+        ):
+            raise _fail(ReviewErrorCode.STORAGE_ERROR) from None
+        raise _fail(ReviewErrorCode.ARTIFACT_MISMATCH) from None
+    except Exception:
+        raise _fail(ReviewErrorCode.STORAGE_ERROR) from None
+    try:
+        ontology = load_default_ontology()
+    except Exception:
+        raise _fail(ReviewErrorCode.STORAGE_ERROR) from None
+    pointer = _load_published_context(review_dir, database_id, loaded)
+    record = pointer.published_records().get(mapping_version)
+    if record is None:
+        raise _fail(ReviewErrorCode.ARTIFACT_MISMATCH)
+    raw, profile = _read_version_profile(review_dir, mapping_version)
+    if len(raw) != record.mapping_bytes or hashlib.sha256(raw).hexdigest() != record.mapping_sha256:
+        raise _fail(ReviewErrorCode.ARTIFACT_MISMATCH)
+    _check_activatable(
+        profile, database_id=database_id, version=mapping_version, loaded=loaded, ontology=ontology
+    )
+    return LoadedActivation(
+        database_id=database_id,
+        label=loaded.manifest.label,
+        database_path=root / ".schema-adaptive" / "registered-databases" / database_id / "database.sqlite3",
+        catalog=loaded.catalog,
+        profile=profile,
+        schema_fingerprint=profile.schema_fingerprint,
+        ontology_version=profile.ontology_version,
+        mapping_version=profile.version,
+    )
+
+
+def load_verified_queries(*, repository_root: str | Path, database_id: str) -> VerifiedQueries | None:
+    """Baselines for display and regression; missing or damaged yields None."""
+    try:
+        database_id = _validate_database_id(database_id)
+        root, review_root = _review_root(repository_root)
+        review_dir = _validate_review_target(root, review_root, database_id)
+        if not (review_dir / VERIFIED_FILENAME).exists():
+            return None
+        raw = _read_review_file(review_dir / VERIFIED_FILENAME, review_dir, max_bytes=MAX_MANIFEST_BYTES)
+        record = _strict_model(raw, VerifiedQueries)
+    except Exception:
+        return None
+    return record if record.database_id == database_id else None
+
+
+def record_verified_query(
+    *, repository_root: str | Path, database_id: str, entry: VerifiedQueryEntry
+) -> VerifiedQueries:
+    """Replace this query's baseline; caller supplies a server-computed entry."""
+    database_id = _validate_database_id(database_id)
+    validate_reviewer(entry.verified_by)
+    root, review_root = _review_root(repository_root)
+    review_dir = _validate_review_target(root, review_root, database_id)
+    if not review_dir.is_dir() or _is_redirect(review_dir):
+        raise _fail(ReviewErrorCode.ARTIFACT_MISMATCH)
+    lock_path = _acquire_lock(review_root, database_id)
+    try:
+        if not (review_dir / ACTIVATION_FILENAME).exists():
+            raise _fail(ReviewErrorCode.ARTIFACT_MISMATCH)
+        existing = load_verified_queries(repository_root=root, database_id=database_id)
+        # A damaged baseline is admin metadata only; an explicit verify replaces it.
+        kept = [item for item in (existing.entries if existing else []) if item.query_id != entry.query_id]
+        record = VerifiedQueries(
+            schema_version=VERIFIED_SCHEMA_VERSION,
+            database_id=database_id,
+            entries=sorted([*kept, entry], key=lambda item: item.query_id),
+        )
+        try:
+            content = _json_bytes(record.model_dump(mode="json"))
+        except Exception:
+            raise _fail(ReviewErrorCode.STORAGE_ERROR) from None
+        _atomic_replace(review_dir / VERIFIED_FILENAME, content)
+        return record
+    finally:
+        _release_lock(lock_path)
+
+
+# Every fixed file name a review directory may hold besides mapping-vNNNN.json.
+_REVIEW_FILENAMES = (
+    DRAFT_FILENAME,
+    CURRENT_FILENAME,
+    ACTIVATION_FILENAME,
+    SUCCESSION_FILENAME,
+    VERIFIED_FILENAME,
+)
+
+# ``tempfile.mkstemp(prefix=<name>., suffix=.tmp)`` staging files that a killed
+# process can leave behind. They are never read, so they must not disable an
+# activation; any other unknown file still fails closed.
+_STAGING_LEFTOVER = re.compile(
+    r"^(?:draft|current|activation|succession|verified-queries)\.json\.[A-Za-z0-9_]{1,32}\.tmp$"
+)
+
+
+def _is_staging_leftover(name: str) -> bool:
+    return _STAGING_LEFTOVER.fullmatch(name) is not None

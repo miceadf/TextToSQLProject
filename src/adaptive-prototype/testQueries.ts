@@ -234,3 +234,222 @@ export function toTestQueryMessage(error: unknown): string {
   }
   return '처리 중 오류가 발생했습니다. 다시 시도해 주세요.';
 }
+
+// ---------------------------------------------------------------------------
+// Phase 8-05: verified baselines and version regression
+
+export const VERIFIED_QUERIES_PATH = '/api/adaptive/v1/registrations/verified-queries';
+export const REGRESSION_PATH = '/api/adaptive/v1/registrations/regression';
+export const VERIFIED_LIST_VERSION = 'verified-queries-v1';
+export const REGRESSION_VERSION = 'verified-query-regression-v1';
+
+const UTC_TIMESTAMP_PATTERN = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$/;
+const REGRESSION_STATUSES = ['MATCH', 'CHANGED', 'FAILED', 'UNVERIFIED'] as const;
+// The fixed `admin-test-queries-v1` set, in server order; a regression reports all of them.
+const FIXED_QUERY_IDS = ['offerings', 'courses', 'departments', 'schedules', 'seats'];
+
+export type RegressionStatus = (typeof REGRESSION_STATUSES)[number];
+
+export type TestQueryPostLike = (
+  url: string,
+  init: { method: string; headers: Record<string, string>; body: string; signal?: AbortSignal },
+) => Promise<TestQueryFetchResponse>;
+
+export interface VerifiedEntry {
+  query_id: string;
+  mapping_version: number;
+  result_sha256: string;
+  row_count: number;
+  verified_by: string;
+  verified_at: string;
+}
+
+export interface RegressionEntry {
+  query_id: string;
+  status: RegressionStatus;
+  baseline_mapping_version: number | null;
+  baseline_row_count: number | null;
+  row_count: number | null;
+  failure_code: string | null;
+}
+
+export interface RegressionResult {
+  database_id: string;
+  mapping_version: number;
+  active_mapping_version: number | null;
+  results: RegressionEntry[];
+  summary: { match: number; changed: number; failed: number; unverified: number };
+}
+
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1;
+}
+
+function isCount(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= MAX_RESULT_ROWS;
+}
+
+const VERIFIED_ENTRY_KEYS = ['query_id', 'mapping_version', 'result_sha256', 'row_count', 'verified_by', 'verified_at'];
+
+export function parseVerifiedList(value: unknown, databaseId: string): VerifiedEntry[] | null {
+  if (!isPlainObject(value) || !hasExactKeys(value, ['version', 'database_id', 'entries'])) return null;
+  if (value['version'] !== VERIFIED_LIST_VERSION || value['database_id'] !== databaseId) return null;
+  if (!Array.isArray(value['entries'])) return null;
+  const out: VerifiedEntry[] = [];
+  for (const entry of value['entries']) {
+    if (!isPlainObject(entry) || !hasExactKeys(entry, VERIFIED_ENTRY_KEYS)) return null;
+    const queryId = entry['query_id'];
+    const version = entry['mapping_version'];
+    const digest = entry['result_sha256'];
+    const count = entry['row_count'];
+    const by = entry['verified_by'];
+    const at = entry['verified_at'];
+    if (typeof queryId !== 'string' || !QUERY_ID_PATTERN.test(queryId)) return null;
+    if (!isPositiveInteger(version) || !isCount(count)) return null;
+    if (typeof digest !== 'string' || !FINGERPRINT_PATTERN.test(digest)) return null;
+    if (typeof by !== 'string' || by.length < 1 || by.length > 64) return null;
+    if (typeof at !== 'string' || !UTC_TIMESTAMP_PATTERN.test(at)) return null;
+    out.push({
+      query_id: queryId,
+      mapping_version: version,
+      result_sha256: digest,
+      row_count: count,
+      verified_by: by,
+      verified_at: at,
+    });
+  }
+  const ids = out.map((entry) => entry.query_id);
+  if (new Set(ids).size !== ids.length || ids.some((id, index) => index > 0 && ids[index - 1] > id)) return null;
+  return out;
+}
+
+const REGRESSION_KEYS = ['version', 'database_id', 'mapping_version', 'active_mapping_version', 'summary', 'results'];
+const REGRESSION_ENTRY_KEYS = [
+  'query_id',
+  'status',
+  'baseline_mapping_version',
+  'baseline_row_count',
+  'row_count',
+  'failure_code',
+];
+
+export function parseRegression(value: unknown): RegressionResult | null {
+  if (!isPlainObject(value) || !hasExactKeys(value, REGRESSION_KEYS)) return null;
+  if (value['version'] !== REGRESSION_VERSION || !isDatabaseId(value['database_id'])) return null;
+  if (!isPositiveInteger(value['mapping_version'])) return null;
+  const active = value['active_mapping_version'];
+  if (active !== null && !isPositiveInteger(active)) return null;
+  if (!Array.isArray(value['results']) || value['results'].length === 0) return null;
+  const results: RegressionEntry[] = [];
+  for (const entry of value['results']) {
+    if (!isPlainObject(entry) || !hasExactKeys(entry, REGRESSION_ENTRY_KEYS)) return null;
+    const status = entry['status'];
+    if (typeof status !== 'string' || !(REGRESSION_STATUSES as readonly string[]).includes(status)) return null;
+    const queryId = entry['query_id'];
+    if (typeof queryId !== 'string' || !QUERY_ID_PATTERN.test(queryId)) return null;
+    const baselineVersion = entry['baseline_mapping_version'];
+    const baselineCount = entry['baseline_row_count'];
+    const count = entry['row_count'];
+    const failure = entry['failure_code'];
+    if ((baselineVersion === null) !== (baselineCount === null)) return null;
+    if (baselineVersion !== null && (!isPositiveInteger(baselineVersion) || !isCount(baselineCount))) return null;
+    // A baseline exists exactly when the status compares against one.
+    const compared = status === 'MATCH' || status === 'CHANGED';
+    if (compared && baselineVersion === null) return null;
+    if (status === 'UNVERIFIED' && baselineVersion !== null) return null;
+    // Equal hashes mean identical results, so a MATCH cannot differ in row count.
+    if (status === 'MATCH' && count !== baselineCount) return null;
+    if (status === 'FAILED') {
+      if (count !== null || typeof failure !== 'string' || !ERROR_CODE_PATTERN.test(failure)) return null;
+    } else if (!isCount(count) || failure !== null) {
+      return null;
+    }
+    results.push({
+      query_id: queryId,
+      status: status as RegressionStatus,
+      baseline_mapping_version: baselineVersion as number | null,
+      baseline_row_count: baselineCount as number | null,
+      row_count: count as number | null,
+      failure_code: failure as string | null,
+    });
+  }
+  const ids = results.map((entry) => entry.query_id);
+  if (ids.length !== FIXED_QUERY_IDS.length || ids.some((id, index) => id !== FIXED_QUERY_IDS[index])) return null;
+  const summary = value['summary'];
+  if (!isPlainObject(summary) || !hasExactKeys(summary, ['match', 'changed', 'failed', 'unverified'])) return null;
+  const counted = {
+    match: results.filter((entry) => entry.status === 'MATCH').length,
+    changed: results.filter((entry) => entry.status === 'CHANGED').length,
+    failed: results.filter((entry) => entry.status === 'FAILED').length,
+    unverified: results.filter((entry) => entry.status === 'UNVERIFIED').length,
+  };
+  if (
+    summary['match'] !== counted.match ||
+    summary['changed'] !== counted.changed ||
+    summary['failed'] !== counted.failed ||
+    summary['unverified'] !== counted.unverified
+  ) {
+    return null;
+  }
+  return {
+    database_id: value['database_id'] as string,
+    mapping_version: value['mapping_version'] as number,
+    active_mapping_version: active as number | null,
+    results,
+    summary: counted,
+  };
+}
+
+export async function verifyTestQuery(
+  fetchFn: TestQueryPostLike,
+  databaseId: string,
+  queryId: string,
+  verifiedBy: string,
+  options?: { signal?: AbortSignal },
+): Promise<VerifiedEntry[]> {
+  if (!isDatabaseId(databaseId) || !QUERY_ID_PATTERN.test(queryId)) throw new TestQueryClientError('contract');
+  if (verifiedBy.length < 1 || verifiedBy.length > 64 || verifiedBy !== verifiedBy.trim()) {
+    throw new TestQueryClientError('contract');
+  }
+  let response: TestQueryFetchResponse;
+  try {
+    response = await fetchFn(VERIFIED_QUERIES_PATH, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ action: 'VERIFY', database_id: databaseId, query_id: queryId, verified_by: verifiedBy }),
+      signal: options?.signal,
+    });
+  } catch {
+    throw new TestQueryClientError('transport');
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new TestQueryClientError('contract');
+  }
+  if (!response.ok) {
+    const parsed = parseError(payload);
+    throw new TestQueryClientError('server', parsed.code, parsed.failure);
+  }
+  const parsed = parseVerifiedList(payload, databaseId);
+  if (parsed === null || !parsed.some((entry) => entry.query_id === queryId)) throw new TestQueryClientError('contract');
+  return parsed;
+}
+
+export async function fetchRegression(
+  fetchFn: TestQueryFetchLike,
+  databaseId: string,
+  mappingVersion: number,
+  options?: { signal?: AbortSignal },
+): Promise<RegressionResult> {
+  if (!isDatabaseId(databaseId) || !isPositiveInteger(mappingVersion) || mappingVersion > 9999) {
+    throw new TestQueryClientError('contract');
+  }
+  const query = new URLSearchParams({ database_id: databaseId, mapping_version: String(mappingVersion) });
+  const parsed = parseRegression(await getJson(fetchFn, `${REGRESSION_PATH}?${query.toString()}`, options?.signal));
+  if (parsed === null || parsed.database_id !== databaseId || parsed.mapping_version !== mappingVersion) {
+    throw new TestQueryClientError('contract');
+  }
+  return parsed;
+}

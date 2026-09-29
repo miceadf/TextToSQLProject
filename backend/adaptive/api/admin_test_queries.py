@@ -10,6 +10,11 @@ Surface on the loopback synthetic prototype:
 The browser chooses only a query ID; it cannot send SQL, QueryIR or filter
 values. Responses carry semantic column names, at most five sorted rows, a
 row count and a result hash; never SQL, physical names, paths or tracebacks.
+
+Phase 8-05 adds verified baselines (server-computed hashes an admin confirms)
+and a regression run of the same fixed queries on the active version or on a
+recorded, non-active published version before re-activation. Regression is a
+warning only; it never publishes, activates or blocks anything.
 """
 
 from __future__ import annotations
@@ -17,6 +22,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -40,13 +46,17 @@ from ..ontology.loader import load_default_ontology
 from ..policy import SchemaAdaptiveAstPolicy
 from ..registration import reviews as review_storage
 from ..relations.physical import build_physical_relation_graph
-from .review_publish import _parse_query_params
+from .review_publish import _parse_query_params, _parse_strict_body, _read_limited_body
 
 
 TEST_QUERY_SET_VERSION = "admin-test-queries-v1"
 TEST_QUERY_RESULT_VERSION = "admin-test-query-result-v1"
 TEST_QUERIES_PATH = "/api/adaptive/v1/registrations/test-queries"
 TEST_QUERY_PATH = "/api/adaptive/v1/registrations/test-query"
+VERIFIED_QUERIES_PATH = "/api/adaptive/v1/registrations/verified-queries"
+REGRESSION_PATH = "/api/adaptive/v1/registrations/regression"
+REGRESSION_VERSION = "verified-query-regression-v1"
+VERIFIED_LIST_VERSION = "verified-queries-v1"
 MAX_PREVIEW_ROWS = 5
 MAX_RESULT_ROWS = 200
 
@@ -97,6 +107,7 @@ class AdminTestQueryErrorCode(str, Enum):
     INVALID_REQUEST = "ADMIN_TEST_QUERY_INVALID_REQUEST"
     NOT_FOUND = "ADMIN_TEST_QUERY_NOT_FOUND"
     FAILED = "ADMIN_TEST_QUERY_FAILED"
+    CONFLICT = "ADMIN_TEST_QUERY_CONFLICT"
     INTERNAL_ERROR = "ADMIN_TEST_QUERY_INTERNAL_ERROR"
 
 
@@ -112,6 +123,7 @@ def _error(exc: AdminTestQueryError) -> JSONResponse:
         AdminTestQueryErrorCode.INVALID_REQUEST: 400,
         AdminTestQueryErrorCode.NOT_FOUND: 404,
         AdminTestQueryErrorCode.FAILED: 422,
+        AdminTestQueryErrorCode.CONFLICT: 409,
     }.get(exc.code, 500)
     error: dict[str, Any] = {"code": exc.code.value}
     if exc.failure_code is not None:
@@ -172,23 +184,26 @@ def _ordered_rows(rows: list[list[Any]]) -> list[list[Any]]:
     return sorted(rows, key=lambda row: (_sort_key(row), _tagged(row)))
 
 
-def run_test_query(repository_root: str | Path, database_id: str, query_id: str) -> dict[str, Any]:
+def _map_review_error(exc: Exception) -> AdminTestQueryError:
+    if isinstance(exc, review_storage.ReviewError):
+        if exc.code is review_storage.ReviewErrorCode.INVALID_INPUT:
+            return AdminTestQueryError(AdminTestQueryErrorCode.INVALID_REQUEST)
+        if exc.code in (
+            review_storage.ReviewErrorCode.ARTIFACT_MISMATCH,
+            review_storage.ReviewErrorCode.PUBLISH_BLOCKED,
+        ):
+            return AdminTestQueryError(AdminTestQueryErrorCode.NOT_FOUND)
+        if exc.code is review_storage.ReviewErrorCode.REVIEW_CONFLICT:
+            return AdminTestQueryError(AdminTestQueryErrorCode.CONFLICT)
+    # Storage and private-root faults are operational, not "no such database".
+    return AdminTestQueryError(AdminTestQueryErrorCode.INTERNAL_ERROR)
+
+
+def _execute(loaded: Any, database_id: str, query_id: str) -> dict[str, Any]:
+    """Run one fixed query on an already strictly loaded published mapping."""
     definition = TEST_QUERIES.get(query_id)
     if definition is None:
         raise AdminTestQueryError(AdminTestQueryErrorCode.INVALID_REQUEST)
-    try:
-        activation = review_storage.load_activation(
-            repository_root=repository_root, database_id=database_id
-        )
-    except review_storage.ReviewError as exc:
-        if exc.code is review_storage.ReviewErrorCode.INVALID_INPUT:
-            raise AdminTestQueryError(AdminTestQueryErrorCode.INVALID_REQUEST) from None
-        if exc.code is review_storage.ReviewErrorCode.ARTIFACT_MISMATCH:
-            raise AdminTestQueryError(AdminTestQueryErrorCode.NOT_FOUND) from None
-        # Storage and private-root faults are operational, not "no such database".
-        raise AdminTestQueryError(AdminTestQueryErrorCode.INTERNAL_ERROR) from None
-    except Exception:
-        raise AdminTestQueryError(AdminTestQueryErrorCode.INTERNAL_ERROR) from None
     try:
         query_ir = QueryIR.model_validate({
             "entity": definition["entity"],
@@ -196,12 +211,12 @@ def run_test_query(repository_root: str | Path, database_id: str, query_id: str)
             "filters": [],
             "limit": MAX_RESULT_ROWS,
         })
-        graph = build_physical_relation_graph(activation.catalog)
+        graph = build_physical_relation_graph(loaded.catalog)
         harness = ExecutionHarness(
             model=FakeModel({query_id: query_ir.model_dump(mode="json")}),
-            compiler=SchemaAdaptiveSQLiteCompiler(graph, activation.profile),
-            sql_policy=SchemaAdaptiveAstPolicy(graph, activation.profile),
-            executor=SQLiteReadOnlyExecutor({database_id: activation.database_path}),
+            compiler=SchemaAdaptiveSQLiteCompiler(graph, loaded.profile),
+            sql_policy=SchemaAdaptiveAstPolicy(graph, loaded.profile),
+            executor=SQLiteReadOnlyExecutor({database_id: loaded.database_path}),
         )
         result = harness.run(
             HarnessRequest(
@@ -210,7 +225,7 @@ def run_test_query(repository_root: str | Path, database_id: str, query_id: str)
                 question=query_id,
             ),
             _runtime_ontology(),
-            to_harness_mapping(activation.profile),
+            to_harness_mapping(loaded.profile),
         )
     except Exception:
         raise AdminTestQueryError(AdminTestQueryErrorCode.INTERNAL_ERROR) from None
@@ -235,13 +250,119 @@ def run_test_query(repository_root: str | Path, database_id: str, query_id: str)
     return {
         "version": TEST_QUERY_RESULT_VERSION,
         "database_id": database_id,
-        "mapping_version": int(activation.mapping_version),
+        "mapping_version": int(loaded.mapping_version),
         "query_id": query_id,
         "columns": columns,
         "rows": rows[:MAX_PREVIEW_ROWS],
         "row_count": len(rows),
         "row_count_capped": len(rows) >= MAX_RESULT_ROWS,
         "result_sha256": digest,
+    }
+
+
+def run_test_query(repository_root: str | Path, database_id: str, query_id: str) -> dict[str, Any]:
+    if query_id not in TEST_QUERIES:
+        raise AdminTestQueryError(AdminTestQueryErrorCode.INVALID_REQUEST)
+    try:
+        activation = review_storage.load_activation(
+            repository_root=repository_root, database_id=database_id
+        )
+    except Exception as exc:
+        raise _map_review_error(exc) from None
+    return _execute(activation, database_id, query_id)
+
+
+def _baseline_payload(record: Any) -> list[dict[str, Any]]:
+    if record is None:
+        return []
+    return [item.model_dump(mode="json") for item in record.entries]
+
+
+def verify_test_query(
+    repository_root: str | Path, database_id: str, query_id: str, verified_by: str
+) -> dict[str, Any]:
+    """Record the server-computed result of the active version as the baseline."""
+    result = run_test_query(repository_root, database_id, query_id)
+    try:
+        entry = review_storage.VerifiedQueryEntry(
+            query_id=query_id,
+            mapping_version=int(result["mapping_version"]),
+            result_sha256=str(result["result_sha256"]),
+            row_count=int(result["row_count"]),
+            verified_by=review_storage.validate_reviewer(verified_by),
+            verified_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        )
+    except review_storage.ReviewError:
+        raise AdminTestQueryError(AdminTestQueryErrorCode.INVALID_REQUEST) from None
+    except Exception:
+        raise AdminTestQueryError(AdminTestQueryErrorCode.INTERNAL_ERROR) from None
+    try:
+        record = review_storage.record_verified_query(
+            repository_root=repository_root, database_id=database_id, entry=entry
+        )
+    except Exception as exc:
+        raise _map_review_error(exc) from None
+    return {
+        "version": VERIFIED_LIST_VERSION,
+        "database_id": database_id,
+        "entries": _baseline_payload(record),
+    }
+
+
+def run_regression(repository_root: str | Path, database_id: str, mapping_version: int) -> dict[str, Any]:
+    """Compare every fixed query on one published version with its baseline."""
+    try:
+        target = review_storage.load_published_version(
+            repository_root=repository_root, database_id=database_id, mapping_version=mapping_version
+        )
+    except Exception as exc:
+        raise _map_review_error(exc) from None
+    try:
+        active: int | None = review_storage.load_activation(
+            repository_root=repository_root, database_id=database_id
+        ).mapping_version
+    except Exception:
+        active = None
+    baselines = review_storage.load_verified_queries(repository_root=repository_root, database_id=database_id)
+    by_query = {item.query_id: item for item in (baselines.entries if baselines else [])}
+    results: list[dict[str, Any]] = []
+    for query_id in TEST_QUERIES:
+        baseline = by_query.get(query_id)
+        entry: dict[str, Any] = {
+            "query_id": query_id,
+            "baseline_mapping_version": baseline.mapping_version if baseline else None,
+            "baseline_row_count": baseline.row_count if baseline else None,
+            "row_count": None,
+            "failure_code": None,
+        }
+        try:
+            outcome = _execute(target, database_id, query_id)
+        except AdminTestQueryError as exc:
+            if exc.code is not AdminTestQueryErrorCode.FAILED:
+                raise
+            entry["status"] = "FAILED"
+            entry["failure_code"] = exc.failure_code
+            results.append(entry)
+            continue
+        entry["row_count"] = int(outcome["row_count"])
+        if baseline is None:
+            entry["status"] = "UNVERIFIED"
+        elif baseline.result_sha256 == outcome["result_sha256"]:
+            entry["status"] = "MATCH"
+        else:
+            entry["status"] = "CHANGED"
+        results.append(entry)
+    summary = {
+        status.lower(): sum(item["status"] == status for item in results)
+        for status in ("MATCH", "CHANGED", "FAILED", "UNVERIFIED")
+    }
+    return {
+        "version": REGRESSION_VERSION,
+        "database_id": database_id,
+        "mapping_version": int(target.mapping_version),
+        "active_mapping_version": active,
+        "summary": summary,
+        "results": results,
     }
 
 
@@ -265,6 +386,56 @@ def register_admin_test_query_routes(app: FastAPI) -> None:
                     for query_id, definition in TEST_QUERIES.items()
                 ],
             })
+        except Exception:
+            return _error(AdminTestQueryError(AdminTestQueryErrorCode.INTERNAL_ERROR))
+
+    @app.post(VERIFIED_QUERIES_PATH)
+    async def verify_route(http_request: Request) -> JSONResponse:
+        try:
+            raw = await _read_limited_body(http_request)
+            payload = _parse_strict_body(bytes(raw)) if isinstance(raw, (bytes, bytearray)) and raw else None
+            keys = {"action", "database_id", "query_id", "verified_by"}
+            if (
+                payload is None
+                or set(payload) != keys
+                or payload.get("action") != "VERIFY"
+                or not all(isinstance(payload[key], str) for key in keys)
+            ):
+                return _error(AdminTestQueryError(AdminTestQueryErrorCode.INVALID_REQUEST))
+            try:
+                root = Path(str(http_request.app.state.mapping_review_repository_root))
+            except Exception:
+                return _error(AdminTestQueryError(AdminTestQueryErrorCode.INTERNAL_ERROR))
+            try:
+                body = verify_test_query(
+                    root, payload["database_id"], payload["query_id"], payload["verified_by"]
+                )
+            except AdminTestQueryError as exc:
+                return _error(exc)
+            text = json.dumps(body, ensure_ascii=False, sort_keys=True, allow_nan=False)
+            return JSONResponse(status_code=200, content=json.loads(text))
+        except Exception:
+            return _error(AdminTestQueryError(AdminTestQueryErrorCode.INTERNAL_ERROR))
+
+    @app.get(REGRESSION_PATH)
+    async def regression_route(http_request: Request) -> JSONResponse:
+        try:
+            params = _parse_query_params(http_request)
+            if params is None or set(params) != {"database_id", "mapping_version"}:
+                return _error(AdminTestQueryError(AdminTestQueryErrorCode.INVALID_REQUEST))
+            version_text = params["mapping_version"]
+            if not version_text.isascii() or not version_text.isdigit() or len(version_text) > 4:
+                return _error(AdminTestQueryError(AdminTestQueryErrorCode.INVALID_REQUEST))
+            try:
+                root = Path(str(http_request.app.state.mapping_review_repository_root))
+            except Exception:
+                return _error(AdminTestQueryError(AdminTestQueryErrorCode.INTERNAL_ERROR))
+            try:
+                body = run_regression(root, params["database_id"], int(version_text))
+            except AdminTestQueryError as exc:
+                return _error(exc)
+            text = json.dumps(body, ensure_ascii=False, sort_keys=True, allow_nan=False)
+            return JSONResponse(status_code=200, content=json.loads(text))
         except Exception:
             return _error(AdminTestQueryError(AdminTestQueryErrorCode.INTERNAL_ERROR))
 

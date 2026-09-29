@@ -17,6 +17,7 @@ import {
 } from './mappingReview.ts';
 import { isStaleResponse, nextOperation } from './state.ts';
 import TestQueryPanel from './TestQueryPanel.tsx';
+import { fetchRegression, toTestQueryMessage, type RegressionResult } from './testQueries.ts';
 
 const domReviewFetch: ReviewFetchLike = (url, init) =>
   fetch(url, {
@@ -168,6 +169,7 @@ function VersionHistory({
   pendingVersion,
   disabled,
   canConfirm,
+  onCheck,
   onSelect,
   onCancel,
   onConfirm,
@@ -177,6 +179,7 @@ function VersionHistory({
   pendingVersion: number | null;
   disabled: boolean;
   canConfirm: boolean;
+  onCheck: (version: number) => void;
   onSelect: (version: number) => void;
   onCancel: () => void;
   onConfirm: (version: number) => void;
@@ -198,6 +201,11 @@ function VersionHistory({
               {entry.latest ? ' · 최신' : ''}
               {!entry.activatable ? ' · 현재 스키마에서 실행 불가' : ''}
             </span>
+            {entry.activatable ? (
+              <button type="button" disabled={disabled} onClick={() => onCheck(entry.version)}>
+                회귀 확인
+              </button>
+            ) : null}
             {!entry.active && entry.activatable && pendingVersion !== entry.version ? (
               <button type="button" disabled={disabled} onClick={() => onSelect(entry.version)}>
                 이 버전으로 되돌리기
@@ -240,6 +248,9 @@ export default function MappingReviewPanel({ databaseId, fetchFn, onPublished, b
   const [activatedVersion, setActivatedVersion] = useState<number | null>(null);
   // Bumped on every committed publish/activation so previews never outlive them.
   const [previewEpoch, setPreviewEpoch] = useState(0);
+  const [regression, setRegression] = useState<RegressionResult | null>(null);
+  const [regressionError, setRegressionError] = useState<string | null>(null);
+  const regressionRef = useRef(0);
 
   const operationRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
@@ -316,6 +327,26 @@ export default function MappingReviewPanel({ databaseId, fetchFn, onPublished, b
     }
   }
 
+  /** Compare verified baselines with one published version; a warning only. */
+  async function checkRegression(version: number): Promise<void> {
+    const operation = nextOperation(regressionRef.current);
+    regressionRef.current = operation;
+    setRegression(null);
+    setRegressionError(null);
+    try {
+      const next = await fetchRegression(
+        (url, init) => fetch(url, { method: init.method, headers: init.headers, signal: init.signal }),
+        databaseId,
+        version,
+      );
+      if (!mountedRef.current || isStaleResponse(regressionRef.current, operation)) return;
+      setRegression(next);
+    } catch (unknown) {
+      if (!mountedRef.current || isStaleResponse(regressionRef.current, operation)) return;
+      setRegressionError(toTestQueryMessage(unknown));
+    }
+  }
+
   async function handleCarryOver(): Promise<void> {
     if (isBusy(status)) return;
     const baseId = carryBases.some((entry) => entry.database_id === carryBase)
@@ -371,6 +402,7 @@ export default function MappingReviewPanel({ databaseId, fetchFn, onPublished, b
       if (controller.signal.aborted) return;
       setPublishedVersion(result.mapping_version);
       setPreviewEpoch((value) => value + 1);
+      void checkRegression(result.mapping_version);
       setError(null);
       setStatus('published');
       onPublished?.(databaseId);
@@ -415,6 +447,7 @@ export default function MappingReviewPanel({ databaseId, fetchFn, onPublished, b
       setPendingActivation(null);
       setActivatedVersion(result.mapping_version);
       setPreviewEpoch((value) => value + 1);
+      void checkRegression(result.mapping_version);
       onPublished?.(databaseId);
       try {
         const refreshed = await fetchReviewDetail(caller, databaseId, { signal: controller.signal });
@@ -548,6 +581,7 @@ export default function MappingReviewPanel({ databaseId, fetchFn, onPublished, b
                 setActivatedVersion(null);
                 setPendingActivation(version);
               }}
+              onCheck={(version) => void checkRegression(version)}
               onCancel={() => setPendingActivation(null)}
               onConfirm={(version) => void handleActivate(version)}
             />
@@ -559,7 +593,38 @@ export default function MappingReviewPanel({ databaseId, fetchFn, onPublished, b
               key={`test-query-${detail.active_mapping_version}-${previewEpoch}`}
               databaseId={databaseId}
               activeVersion={detail.active_mapping_version}
+              reviewer={reviewer}
             />
+          ) : null}
+          {regressionError !== null ? (
+            <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-900" role="alert">
+              회귀 확인 실패: {regressionError}
+            </div>
+          ) : null}
+          {regression !== null ? (
+            <div className="rounded-lg border border-slate-200 px-3 py-2 text-xs" role="status">
+              <div className="font-semibold">
+                mapping-v{regression.mapping_version} verified query 회귀
+                {regression.active_mapping_version === regression.mapping_version ? ' (실행 중)' : ' (비활성 버전)'}
+                {' · '}일치 {regression.summary.match} · 변경 {regression.summary.changed} · 실패{' '}
+                {regression.summary.failed} · 기준선 없음 {regression.summary.unverified}
+              </div>
+              {regression.summary.changed + regression.summary.failed > 0 ? (
+                <div className="text-amber-700">
+                  verified 결과와 다른 query가 있습니다. 재활성화·게시 전에 결과를 확인해 주세요. (자동 차단하지 않습니다)
+                </div>
+              ) : null}
+              {regression.results.map((item) => (
+                <div key={item.query_id}>
+                  {item.query_id} · {item.status}
+                  {item.row_count !== null ? ` · ${item.row_count}행` : ''}
+                  {item.baseline_mapping_version !== null
+                    ? ` (기준 mapping-v${item.baseline_mapping_version}, ${item.baseline_row_count}행)`
+                    : ''}
+                  {item.failure_code !== null ? ` · ${item.failure_code}` : ''}
+                </div>
+              ))}
+            </div>
           ) : null}
           <div className="flex items-center gap-2">
             <button
