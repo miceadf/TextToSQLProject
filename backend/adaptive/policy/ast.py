@@ -11,6 +11,10 @@ from backend.adaptive.harness.contracts import (
     HarnessStage,
 )
 from backend.adaptive.harness.errors import HarnessFailure
+from backend.adaptive.mapping.transforms import (
+    TRANSFORM_OPERATORS,
+    render_postgres_transform,
+)
 from backend.adaptive.ontology.contracts import Operator
 from backend.adaptive.relations.contracts import JoinPlan, JoinPlanStatus
 
@@ -86,7 +90,22 @@ class AstReadOnlyPolicy:
                 "the root SQL node must be SELECT",
             )
 
-        for node in root.walk():
+        # Declared transform expressions are opaque to the node allowlist;
+        # projection and WHERE validation require each one to equal the
+        # fixed template applied to its mapped column exactly.
+        transform_ids = self._transform_candidate_ids(root, context)
+
+        def is_transform(node: exp.Expression) -> bool:
+            return id(node) in transform_ids
+
+        for node in root.walk(prune=is_transform):
+            if is_transform(node):
+                if any(inner.comments for inner in node.walk()):
+                    self._fail(
+                        HarnessErrorCode.UNSAFE_SQL_NODE,
+                        "SQL comments are not allowed",
+                    )
+                continue
             if node.comments:
                 self._fail(
                     HarnessErrorCode.UNSAFE_SQL_NODE,
@@ -120,7 +139,9 @@ class AstReadOnlyPolicy:
             alias_by_table,
             legacy_compatible=legacy_compatible,
         )
-        for node in root.walk():
+        for node in root.walk(prune=is_transform):
+            if is_transform(node):
+                continue
             if not isinstance(node, _ALLOWED_NODE_TYPES):
                 self._fail(
                     HarnessErrorCode.UNSAFE_SQL_NODE,
@@ -260,9 +281,7 @@ class AstReadOnlyPolicy:
             root.expressions,
             context.query_ir.select,
         ):
-            if not isinstance(expression, exp.Alias) or not isinstance(
-                expression.this, exp.Column
-            ):
+            if not isinstance(expression, exp.Alias):
                 self._fail(
                     HarnessErrorCode.INVALID_PROJECTION,
                     "each projection must be one aliased physical column",
@@ -277,6 +296,21 @@ class AstReadOnlyPolicy:
                 self._fail(
                     HarnessErrorCode.INVALID_PROJECTION,
                     f"semantic field '{semantic_field}' has no published mapping",
+                )
+            if semantic_field in context.field_transforms:
+                self._validate_exact_transform(
+                    expression.this,
+                    context,
+                    semantic_field,
+                    alias_by_table,
+                    legacy_compatible=legacy_compatible,
+                    code=HarnessErrorCode.INVALID_PROJECTION,
+                )
+                continue
+            if not isinstance(expression.this, exp.Column):
+                self._fail(
+                    HarnessErrorCode.INVALID_PROJECTION,
+                    "each projection must be one aliased physical column",
                 )
             self._validate_exact_column(
                 expression.this,
@@ -366,14 +400,29 @@ class AstReadOnlyPolicy:
                     HarnessErrorCode.UNAUTHORIZED_COLUMN,
                     f"filter field '{filter_ir.field}' has no published mapping",
                 )
-            self._validate_exact_column(
-                predicate.this,
-                mapping.table,
-                mapping.column,
-                alias_by_table,
-                legacy_compatible=legacy_compatible,
-                code=HarnessErrorCode.UNAUTHORIZED_COLUMN,
-            )
+            if filter_ir.field in context.field_transforms:
+                if filter_ir.operator not in TRANSFORM_OPERATORS:
+                    self._fail(
+                        HarnessErrorCode.UNSAFE_SQL_NODE,
+                        f"operator for transformed field '{filter_ir.field}' is not allowed",
+                    )
+                self._validate_exact_transform(
+                    predicate.this,
+                    context,
+                    filter_ir.field,
+                    alias_by_table,
+                    legacy_compatible=legacy_compatible,
+                    code=HarnessErrorCode.UNAUTHORIZED_COLUMN,
+                )
+            else:
+                self._validate_exact_column(
+                    predicate.this,
+                    mapping.table,
+                    mapping.column,
+                    alias_by_table,
+                    legacy_compatible=legacy_compatible,
+                    code=HarnessErrorCode.UNAUTHORIZED_COLUMN,
+                )
             if not self._is_anonymous_placeholder(predicate.expression):
                 self._fail(
                     HarnessErrorCode.INVALID_PLACEHOLDER,
@@ -505,6 +554,60 @@ class AstReadOnlyPolicy:
         expected_qualifier = "" if legacy_compatible else alias_by_table.get(table)
         if expected_qualifier is None or expression.table != expected_qualifier:
             self._fail(code, f"column '{table}.{column_name}' has an invalid qualifier")
+
+    @staticmethod
+    def _transform_candidate_ids(
+        root: exp.Select,
+        context: AstPolicyContext,
+    ) -> set[int]:
+        """Positions where a declared transform is expected (validated later)."""
+        transforms = context.field_transforms
+        if not transforms:
+            return set()
+        candidates: set[int] = set()
+        for expression, semantic_field in zip(root.expressions, context.query_ir.select):
+            if semantic_field in transforms and isinstance(expression, exp.Alias):
+                candidates.add(id(expression.this))
+        where = root.args.get("where")
+        if isinstance(where, exp.Where):
+            predicates = AstReadOnlyPolicy._flatten_and(where.this)
+            for predicate, filter_ir in zip(predicates, context.query_ir.filters):
+                target = predicate.args.get("this")
+                if filter_ir.field in transforms and isinstance(target, exp.Expression):
+                    candidates.add(id(target))
+        return candidates
+
+    def _validate_exact_transform(
+        self,
+        expression: exp.Expression | None,
+        context: AstPolicyContext,
+        semantic_field: str,
+        alias_by_table: dict[str, str],
+        *,
+        legacy_compatible: bool,
+        code: HarnessErrorCode,
+    ) -> None:
+        if context.dialect != "postgres":
+            self._fail(code, "value transforms are only supported for postgres")
+        mapping = context.mapping.fields[semantic_field]
+        qualifier = "" if legacy_compatible else alias_by_table.get(mapping.table)
+        if qualifier is None:
+            self._fail(code, f"column '{mapping.table}.{mapping.column}' has an invalid qualifier")
+        column_sql = exp.column(mapping.column, table=qualifier or None, quoted=True).sql(
+            dialect=context.dialect
+        )
+        try:
+            expected = sqlglot.parse_one(
+                render_postgres_transform(context.field_transforms[semantic_field], column_sql),
+                read=context.dialect,
+            )
+        except SqlglotError as error:
+            self._fail(code, str(error))
+        if not isinstance(expression, exp.Expression) or expression != expected:
+            self._fail(
+                code,
+                f"expected the declared transform of '{mapping.table}.{mapping.column}'",
+            )
 
     @staticmethod
     def _is_anonymous_placeholder(expression: exp.Expression | None) -> bool:

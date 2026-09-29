@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, computed_field
+from pydantic import BaseModel, Field, computed_field
 
 from backend.adaptive.harness.contracts import CompiledQuery, QueryIR
 from backend.adaptive.mapping.contracts import PublishedMappingProfile
+from backend.adaptive.mapping.transforms import FieldTransform
 from backend.adaptive.relations.contracts import JoinPlanningResult
 
 
@@ -17,6 +18,8 @@ class AstPolicyContext(BaseModel):
     mapping: PublishedMappingProfile
     join_result: JoinPlanningResult
     dialect: Literal["sqlite", "postgres"] = "sqlite"
+    # Declared per-field value transforms; only the postgres runtime sets them.
+    field_transforms: dict[str, FieldTransform] = Field(default_factory=dict)
 
     @computed_field
     @property

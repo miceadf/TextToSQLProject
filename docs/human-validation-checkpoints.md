@@ -10,6 +10,8 @@
 
 사용자 확인(2026-09-29): legacy 서비스의 PostgreSQL 강좌 DB는 충남대 수강신청 테이블을 그대로 가져온 것이 아니라 팀이 유사한 스키마와 데이터로 직접 구성한 것이다. 사용자는 legacy와 스키마 적응 prototype을 함께 실행하는 팀 내부 공유(`npm run dev:all`)에서 실제 데이터 노출을 고려하지 않아도 된다고 밝혔다. 이 확인은 legacy 강좌 DB에 대한 사실 기록이며, 기존 CNU 학습 데이터셋(5,385 SQL)·가명 artifact의 E3와 외부 시연 L5 판단을 AI가 대신 승인한 것이 아니다.
 
+Phase 7-12(2026-09-29): legacy 챗봇의 대상 view를 QueryIR 경로에 부분 mapping으로 등록했다. mapping은 12개 field이고, 미지원 3개와 학점·시간 변환을 포함한다. legacy DB에는 읽기 전용으로 연결해 schema inspection, profile 작성, 고정 query smoke를 실행했고, 구조와 집계만 기록했다. 이 mapping은 개발자가 작성했다. legacy 강좌 DB가 팀 구성 데이터라는 사용자 확인에 근거한 개발용 등록이며, 실제 학교 DB의 L2 mapping 검토를 대신하지 않는다. 변환 목록(`SLASH_FIRST_NUMERIC`, `TIME_TO_HHMM`)이 실제 학교 DB의 값 형식에 맞는지는 L2에서 다시 확인한다.
+
 ## 바로 또는 최대한 빠르게 확인할 것
 
 정식 40건 승인을 지금 끝낼 필요는 없다. 아래는 **설계가 잘못되면 후속 개발을 크게 되돌릴 수 있는** 짧은 확인이다.

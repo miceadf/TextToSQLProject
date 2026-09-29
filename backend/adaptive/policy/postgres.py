@@ -10,6 +10,7 @@ from backend.adaptive.harness.contracts import (
 )
 from backend.adaptive.harness.errors import HarnessFailure
 from backend.adaptive.mapping.contracts import PublishedMappingProfile
+from backend.adaptive.mapping.transforms import FieldTransform
 from backend.adaptive.relations.contracts import PhysicalRelationGraph
 from backend.adaptive.relations.errors import RelationGraphError
 from backend.adaptive.relations.planner import plan_join_path
@@ -35,10 +36,17 @@ class SchemaAdaptivePostgresPolicy:
         mapping: PublishedMappingProfile,
         *,
         policy: AstReadOnlyPolicy | None = None,
+        field_transforms: dict[str, FieldTransform] | None = None,
     ) -> None:
         self._graph = graph.model_copy(deep=True)
         self._mapping = mapping.model_copy(deep=True)
         self._policy = policy or AstReadOnlyPolicy()
+        self._field_transforms = {
+            field: FieldTransform(transform)
+            for field, transform in (field_transforms or {}).items()
+        }
+        if not set(self._field_transforms).issubset(self._mapping.fields):
+            raise ValueError("field transforms must target published mapping fields")
 
     def validate(
         self,
@@ -72,6 +80,7 @@ class SchemaAdaptivePostgresPolicy:
                 mapping=self._mapping,
                 join_result=join_result,
                 dialect=self.DIALECT,
+                field_transforms=dict(self._field_transforms),
             )
         )
 

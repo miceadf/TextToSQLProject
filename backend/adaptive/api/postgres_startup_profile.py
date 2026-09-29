@@ -27,6 +27,11 @@ _FIXED_FAILURE_MESSAGE = "postgres startup profile unavailable"
 _MAX_FILE_BYTES = 256 * 1024
 
 _PROFILE_VERSION = "postgres-runtime-profile-v1"
+# Phase 7-12: v2 adds view inspection, declared value transforms, and an
+# explicit list of canonical fields the database cannot answer.
+_PROFILE_VERSION_V2 = "postgres-runtime-profile-v2"
+_MAX_PROFILE_FIELDS = 64
+_SEMANTIC_FIELD_PATTERN = re.compile(r"^[A-Z][A-Za-z]{0,63}\.[a-z][a-z_]{0,63}$")
 
 _DB_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 _LABEL_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _().-]{0,63}$")
@@ -36,6 +41,9 @@ _HEX64_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
 _PROFILE_KEYS = frozenset(
     {"version", "database_id", "label", "schema", "dsn_env", "mapping_sha256"}
+)
+_PROFILE_V2_EXTRA_KEYS = frozenset(
+    {"include_views", "field_transforms", "unsupported_fields"}
 )
 _MAPPING_KEYS = frozenset(
     {
@@ -105,19 +113,52 @@ def _check_sized(raw: Any) -> bytes:
     return content
 
 
-def _parse_profile_payload(raw: bytes, *, expected_id: str) -> dict[str, str]:
+def _parse_v2_extras(payload: dict[str, Any]) -> None:
+    from ..mapping.transforms import FieldTransform
+
+    if not isinstance(payload["include_views"], bool):
+        raise _fail()
+    transforms = payload["field_transforms"]
+    if not isinstance(transforms, dict) or len(transforms) > _MAX_PROFILE_FIELDS:
+        raise _fail()
+    for semantic, transform in transforms.items():
+        if not isinstance(semantic, str) or _SEMANTIC_FIELD_PATTERN.fullmatch(semantic) is None:
+            raise _fail()
+        if not isinstance(transform, str) or transform not in FieldTransform.__members__:
+            raise _fail()
+    unsupported = payload["unsupported_fields"]
+    if not isinstance(unsupported, list) or len(unsupported) > _MAX_PROFILE_FIELDS:
+        raise _fail()
+    for semantic in unsupported:
+        if not isinstance(semantic, str) or _SEMANTIC_FIELD_PATTERN.fullmatch(semantic) is None:
+            raise _fail()
+    # One canonical spelling: sorted and unique.
+    if unsupported != sorted(set(unsupported)):
+        raise _fail()
+    if set(unsupported) & set(transforms):
+        raise _fail()
+
+
+def _parse_profile_payload(raw: bytes, *, expected_id: str) -> dict[str, Any]:
     content = _check_sized(raw)
     payload = _parse_strict_json(content)
     try:
         if not isinstance(payload, dict):
             raise _fail()
-        if set(payload.keys()) != set(_PROFILE_KEYS):
+        version = payload.get("version")
+        if version == _PROFILE_VERSION:
+            expected_keys = set(_PROFILE_KEYS)
+        elif version == _PROFILE_VERSION_V2:
+            expected_keys = set(_PROFILE_KEYS | _PROFILE_V2_EXTRA_KEYS)
+        else:
+            raise _fail()
+        if set(payload.keys()) != expected_keys:
             raise _fail()
         for key in _PROFILE_KEYS:
             if not isinstance(payload[key], str):
                 raise _fail()
-        if payload["version"] != _PROFILE_VERSION:
-            raise _fail()
+        if version == _PROFILE_VERSION_V2:
+            _parse_v2_extras(payload)
         if payload["database_id"] != expected_id:
             raise _fail()
         if not _valid_database_id(payload["database_id"]):
@@ -344,9 +385,12 @@ def load_postgres_startup_profiles(
                 raise _fail() from None
             if not isinstance(dsn, str) or not dsn or not dsn.strip():
                 raise _fail()
+            is_v2 = profile_doc["version"] == _PROFILE_VERSION_V2
             try:
                 connection = PostgresConnectionConfig(
-                    dsn, schema=str(profile_doc["schema"])
+                    dsn,
+                    schema=str(profile_doc["schema"]),
+                    include_views=bool(profile_doc["include_views"]) if is_v2 else False,
                 )
             except Exception:
                 raise _fail() from None
@@ -356,6 +400,8 @@ def load_postgres_startup_profiles(
                     label=str(profile_doc["label"]),
                     connection_config=connection,
                     published_mapping=mapping,
+                    field_transforms=dict(profile_doc["field_transforms"]) if is_v2 else None,
+                    unsupported_fields=list(profile_doc["unsupported_fields"]) if is_v2 else (),
                 )
             except Exception:
                 raise _fail() from None

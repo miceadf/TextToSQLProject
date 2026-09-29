@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from backend.adaptive.harness.contracts import QueryIR
 from backend.adaptive.mapping.contracts import PublishedMappingProfile
+from backend.adaptive.mapping.transforms import FieldTransform
 from backend.adaptive.relations.contracts import JoinPlanningResult
 
 
@@ -18,9 +19,13 @@ class JoinCompilationRequest(BaseModel):
     query_ir: QueryIR
     mapping: PublishedMappingProfile
     join_result: JoinPlanningResult
+    # Declared per-field value transforms (PostgreSQL runtime only).
+    field_transforms: dict[str, FieldTransform] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_semantic_fields(self) -> "JoinCompilationRequest":
+        if not set(self.field_transforms).issubset(self.mapping.fields):
+            raise ValueError("field transforms must target published mapping fields")
         referenced = sorted(
             {
                 *self.query_ir.select,

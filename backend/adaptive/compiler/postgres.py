@@ -13,6 +13,11 @@ from backend.adaptive.harness.contracts import (
 )
 from backend.adaptive.harness.errors import HarnessFailure
 from backend.adaptive.mapping.contracts import PublishedMappingProfile
+from backend.adaptive.mapping.transforms import (
+    TRANSFORM_OPERATORS,
+    FieldTransform,
+    render_postgres_transform,
+)
 from backend.adaptive.ontology.contracts import Operator
 from backend.adaptive.relations.contracts import JoinPlan, JoinPlanStatus, PhysicalRelationGraph
 from backend.adaptive.relations.errors import RelationGraphError
@@ -77,9 +82,18 @@ class JoinCapablePostgresCompiler:
                 "JOIN plan does not introduce every mapped table",
             )
 
+        transforms = request.field_transforms
+
+        def value_sql(field: str) -> str:
+            physical = mappings[field]
+            qualified = self._qualified(alias_by_table[physical.table], physical.column)
+            transform = transforms.get(field)
+            if transform is None:
+                return qualified
+            return render_postgres_transform(transform, qualified)
+
         projections = [
-            f"{self._qualified(alias_by_table[mappings[field].table], mappings[field].column)} "
-            f"AS {quote_identifier(field)}"
+            f"{value_sql(field)} AS {quote_identifier(field)}"
             for field in request.query_ir.select
         ]
 
@@ -93,9 +107,14 @@ class JoinCapablePostgresCompiler:
         predicates: list[str] = []
         parameters: list[str | int | float | bool] = []
         for item in request.query_ir.filters:
-            physical = mappings[item.field]
+            if item.field in transforms and item.operator not in TRANSFORM_OPERATORS:
+                self._fail(
+                    HarnessErrorCode.INVALID_OPERATOR,
+                    f"operator '{item.operator.value}' is not allowed on transformed field "
+                    f"'{item.field}'",
+                )
             predicates.append(
-                f"{self._qualified(alias_by_table[physical.table], physical.column)} "
+                f"{value_sql(item.field)} "
                 f"{SQL_OPERATORS[item.operator]} {POSTGRES_PLACEHOLDER}"
             )
             value = item.value
@@ -198,10 +217,17 @@ class SchemaAdaptivePostgresCompiler:
         mapping: PublishedMappingProfile,
         *,
         compiler: JoinCapablePostgresCompiler | None = None,
+        field_transforms: dict[str, FieldTransform] | None = None,
     ) -> None:
         self._graph = graph.model_copy(deep=True)
         self._mapping = mapping.model_copy(deep=True)
         self._compiler = compiler or JoinCapablePostgresCompiler()
+        self._field_transforms = {
+            field: FieldTransform(transform)
+            for field, transform in (field_transforms or {}).items()
+        }
+        if not set(self._field_transforms).issubset(self._mapping.fields):
+            raise ValueError("field transforms must target published mapping fields")
 
     def compile(
         self,
@@ -231,6 +257,7 @@ class SchemaAdaptivePostgresCompiler:
                 query_ir=query_ir,
                 mapping=self._mapping,
                 join_result=join_result,
+                field_transforms=dict(self._field_transforms),
             )
         )
 

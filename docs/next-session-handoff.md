@@ -1,6 +1,6 @@
 # 새 Codex 대화용 짧은 인수인계
 
-현재 기준: 2026-09-29, Phase 8-05 verified query 기준선·버전 회귀 비교까지 완료. 최신 상태는 항상 Git과 코드로 다시 확인한다. 설계와 로드맵의 원본은 [`schema-adaptive-text-to-sql-plan.md`](schema-adaptive-text-to-sql-plan.md), 독립 평가 세트 설계 기준은 [`independent-evaluation-set-design.md`](independent-evaluation-set-design.md), 안전한 잠정 비교는 [`phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md`](phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md)다.
+현재 기준: 2026-09-29, Phase 7-12 legacy view 부분 mapping·선언형 값 변환까지 완료(8-05까지의 관리자 기능 포함). 최신 상태는 항상 Git과 코드로 다시 확인한다. 설계와 로드맵의 원본은 [`schema-adaptive-text-to-sql-plan.md`](schema-adaptive-text-to-sql-plan.md), 독립 평가 세트 설계 기준은 [`independent-evaluation-set-design.md`](independent-evaluation-set-design.md), 안전한 잠정 비교는 [`phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md`](phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md)다.
 
 ## 프로젝트와 현재 경계
 
@@ -62,12 +62,18 @@
 - 현재 로컬에는 fine-tuned tag만 확인되어 base instruct 평가는 정확한 tag가 별도로 준비될 때 진행한다. E3·L5 팀 결정 대기와 합성 개발은 병행한다.
 - `docs/desktop-test-handoff.md`는 초기 데스크톱 이전 시점의 기록이다.
 
+- Phase 7-12: legacy 챗봇의 view `v_course_info`를 profile v2로 등록한다. mapping 12개, 미지원 3개(`CourseOffering.year`·`semester`·`Department.code`), 변환은 학점 `SLASH_FIRST_NUMERIC`와 시간 `TIME_TO_HHMM`이다. private profile은 `.schema-adaptive/postgres-profiles/legacy-view/`에 있다. DSN은 `SCHEMA_ADAPTIVE_POSTGRES_DSN_LEGACY_VIEW` 환경변수로 주고, CLI는 `python -m backend.adaptive.api.legacy_view_profile --check | --write --live | --smoke --live`다. 부분 profile의 catalog는 닫혀 있다(7-14에서 화면 연결). legacy prompt의 `credit_hours = '3'` 비교가 0행이라는 관찰은 7-15 비교 후보다.
+
 ## 실행
 
 팀 논의용 전체 실행은 `npm run dev:all`(legacy `:8000` + 합성 prototype `:8123` + Vite `:5173`). legacy 강좌 DB는 팀이 구성한 유사 데이터라는 사용자 확인이 있다(`docs/synthetic-clarification-team-handoff.md`).
 
 ## 다음 작은 작업
 
+- 다음 순서는 legacy 챗봇 연결이다.
+  - 7-13: legacy view 대상 챗봇 질의 endpoint. Ollama QueryIR 1회 → 기존 실행 경로 → 강좌 카드 형식으로 응답하고, SQL은 노출하지 않으며, 미지원 field를 안내한다.
+  - 7-14: `ChatPopup`의 DB별 경로 선택과 `dev:all` DSN 주입.
+  - 7-15: 같은 질문에 대한 legacy 대 QueryIR 비교.
 0. Phase 8 남은 항목: 8-06 코드값·관계 교정(ontology value mapping 설계 ADR 선행), 8-07 관리자 화면 통합, 8-01~8-05 관리자 흐름의 browser smoke(private storage 격리 방법 필요).
 1. base 모델에 대한 QueryIR prompt 적합성(출력 구조 실패 variant당 8건) 비노출 진단. 주장 범위는 ADR-061로 한정됐고 확정 수치는 L1·L3 뒤다.
 2. 목록 전체 질문에 불필요한 filter를 붙이는 모델 출력 경향(Course는 질문 전체 `equals`로 guard 거부, Instructor는 부분 문자열 `contains`로 0행)과 `CONSTRAINT_INVALID_QUERY_IR`의 reflection 거부 미구분은 prompt·진단 후보다. 내장 SYSTEM 제거 후에도 남았다. guard 완화는 하지 않는다.

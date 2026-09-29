@@ -51,6 +51,16 @@ PG_TABLES_QUERY = (
     "ORDER BY c.relname"
 )
 
+# Opt-in (Phase 7-12): also inspect plain views. The default query above is
+# unchanged so existing fingerprints stay identical.
+PG_TABLES_WITH_VIEWS_QUERY = (
+    "SELECT c.relname AS table_name "
+    "FROM pg_catalog.pg_class c "
+    "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace "
+    "WHERE n.nspname = %s AND c.relkind IN ('r', 'p', 'v') "
+    "ORDER BY c.relname"
+)
+
 PG_COLUMNS_QUERY = (
     "SELECT a.attname AS column_name, "
     "pg_catalog.format_type(a.atttypid, a.atttypmod) AS declared_type, "
@@ -170,7 +180,13 @@ class PostgresConnectionConfig:
     The DSN is stored privately and never rendered in repr/str/errors.
     """
 
-    __slots__ = ("_dsn", "_schema", "_connect_timeout", "_statement_timeout_ms")
+    __slots__ = (
+        "_dsn",
+        "_schema",
+        "_connect_timeout",
+        "_statement_timeout_ms",
+        "_include_views",
+    )
 
     def __init__(
         self,
@@ -179,7 +195,10 @@ class PostgresConnectionConfig:
         schema: str = DEFAULT_SCHEMA,
         connect_timeout_seconds: float = DEFAULT_CONNECT_TIMEOUT_SECONDS,
         statement_timeout_ms: int = DEFAULT_STATEMENT_TIMEOUT_MS,
+        include_views: bool = False,
     ) -> None:
+        if not isinstance(include_views, bool):
+            raise ValueError("include_views must be a boolean")
         if not isinstance(dsn, str) or not 1 <= len(dsn) <= 2000:
             raise ValueError("postgres DSN must be a non-empty string")
         if not isinstance(schema, str) or SCHEMA_PATTERN.fullmatch(schema) is None:
@@ -200,6 +219,7 @@ class PostgresConnectionConfig:
         self._schema = schema
         self._connect_timeout = float(connect_timeout_seconds)
         self._statement_timeout_ms = int(statement_timeout_ms)
+        self._include_views = include_views
 
     @property
     def schema(self) -> str:
@@ -212,6 +232,10 @@ class PostgresConnectionConfig:
     @property
     def statement_timeout_ms(self) -> int:
         return self._statement_timeout_ms
+
+    @property
+    def include_views(self) -> bool:
+        return self._include_views
 
     def _redacted(self) -> str:
         return (
@@ -333,7 +357,9 @@ class PostgresAdapter:
                     STATEMENT_TIMEOUT_STATEMENT,
                     (f"{config.statement_timeout_ms}ms",),
                 )
-                tables = self._inspect_tables(cursor, config.schema)
+                tables = self._inspect_tables(
+                    cursor, config.schema, include_views=config.include_views
+                )
             except SchemaInspectionError:
                 raise
             except Exception:
@@ -365,8 +391,11 @@ class PostgresAdapter:
             except Exception:
                 pass
 
-    def _inspect_tables(self, cursor: Any, schema: str) -> list[TableCatalog]:
-        cursor.execute(PG_TABLES_QUERY, (schema,))
+    def _inspect_tables(
+        self, cursor: Any, schema: str, *, include_views: bool = False
+    ) -> list[TableCatalog]:
+        query = PG_TABLES_WITH_VIEWS_QUERY if include_views else PG_TABLES_QUERY
+        cursor.execute(query, (schema,))
         rows = cursor.fetchall()
         table_names = sorted({_field(row, "table_name", 0) for row in rows})
         return [self._inspect_table(cursor, schema, name) for name in table_names]

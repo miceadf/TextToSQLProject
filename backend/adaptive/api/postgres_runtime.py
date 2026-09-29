@@ -22,6 +22,12 @@ from ..harness.contracts import HarnessErrorCode, HarnessStage, MappingStatus
 from ..harness.errors import HarnessFailure
 from ..mapping.bridge import to_harness_mapping
 from ..mapping.contracts import PublishedMappingProfile
+from ..mapping.transforms import (
+    FieldTransform,
+    column_type_supports,
+    normalize_transformed_value,
+    transform_supports_data_type,
+)
 
 POSTGRES_SCHEMA_VALUE = "postgres"
 
@@ -76,6 +82,7 @@ def _copy_connection_config(
             schema=config.schema,
             connect_timeout_seconds=config.connect_timeout_seconds,
             statement_timeout_ms=config.statement_timeout_ms,
+            include_views=config.include_views,
         )
     except Exception:
         raise PostgresRuntimeError() from None
@@ -88,9 +95,20 @@ class PostgresRuntimeProfile:
     one safe label, one connection config, and one explicitly approved
     published mapping. Immutable and redacted: repr/str never render
     DSN, schema, or physical identifiers.
+
+    Phase 7-12: a profile may declare canonical fields the database cannot
+    answer (``unsupported_fields``) and closed-list value transforms. With
+    the defaults the full canonical field set is still required.
     """
 
-    __slots__ = ("_database_id", "_label", "_connection_config", "_published_mapping")
+    __slots__ = (
+        "_database_id",
+        "_label",
+        "_connection_config",
+        "_published_mapping",
+        "_field_transforms",
+        "_unsupported_fields",
+    )
 
     def __init__(
         self,
@@ -99,9 +117,13 @@ class PostgresRuntimeProfile:
         label: str,
         connection_config: PostgresConnectionConfig,
         published_mapping: PublishedMappingProfile,
+        field_transforms: dict[str, FieldTransform] | None = None,
+        unsupported_fields: tuple[str, ...] | list[str] = (),
     ) -> None:
         if not _valid_database_id(database_id):
             raise PostgresRuntimeError()
+        transforms = _copy_transforms(field_transforms)
+        unsupported = _copy_unsupported(unsupported_fields)
         if not _valid_label(label):
             raise PostgresRuntimeError()
         if not isinstance(connection_config, PostgresConnectionConfig):
@@ -122,6 +144,8 @@ class PostgresRuntimeProfile:
             self, "_connection_config", _copy_connection_config(connection_config)
         )
         object.__setattr__(self, "_published_mapping", snapshot)
+        object.__setattr__(self, "_field_transforms", transforms)
+        object.__setattr__(self, "_unsupported_fields", unsupported)
 
     def __setattr__(self, name: str, value: Any) -> None:
         raise PostgresRuntimeError()
@@ -136,6 +160,14 @@ class PostgresRuntimeProfile:
     @property
     def label(self) -> str:
         return self._label
+
+    @property
+    def field_transforms(self) -> dict[str, FieldTransform]:
+        return dict(self._field_transforms)
+
+    @property
+    def unsupported_fields(self) -> tuple[str, ...]:
+        return self._unsupported_fields
 
     @property
     def connection_config(self) -> PostgresConnectionConfig:
@@ -161,6 +193,34 @@ class PostgresRuntimeProfile:
         return self._redacted()
 
 
+def _copy_transforms(value: Any) -> dict[str, FieldTransform]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise PostgresRuntimeError()
+    copied: dict[str, FieldTransform] = {}
+    try:
+        for field, transform in value.items():
+            if not isinstance(field, str) or not field:
+                raise PostgresRuntimeError()
+            copied[field] = FieldTransform(transform)
+    except PostgresRuntimeError:
+        raise
+    except Exception:
+        raise PostgresRuntimeError() from None
+    return copied
+
+
+def _copy_unsupported(value: Any) -> tuple[str, ...]:
+    if not isinstance(value, (tuple, list)):
+        raise PostgresRuntimeError()
+    if any(not isinstance(item, str) or not item for item in value):
+        raise PostgresRuntimeError()
+    if len(set(value)) != len(value):
+        raise PostgresRuntimeError()
+    return tuple(sorted(value))
+
+
 class ValidatedPostgresContext:
     """Startup-validated per-database runtime (server-owned, redacted)."""
 
@@ -175,6 +235,8 @@ class ValidatedPostgresContext:
         "_compiler",
         "_policy",
         "_graph",
+        "_field_transforms",
+        "_unsupported_fields",
     )
 
     def __init__(
@@ -190,8 +252,12 @@ class ValidatedPostgresContext:
         compiler: Any,
         policy: Any,
         graph: Any,
+        field_transforms: dict[str, FieldTransform] | None = None,
+        unsupported_fields: tuple[str, ...] = (),
     ) -> None:
         object.__setattr__(self, "_database_id", database_id)
+        object.__setattr__(self, "_field_transforms", _copy_transforms(field_transforms))
+        object.__setattr__(self, "_unsupported_fields", _copy_unsupported(unsupported_fields))
         object.__setattr__(self, "_label", label)
         object.__setattr__(self, "_published_mapping", published_mapping)
         object.__setattr__(self, "_expected_fingerprint", expected_fingerprint)
@@ -241,6 +307,33 @@ class ValidatedPostgresContext:
 
     def published_mapping(self) -> PublishedMappingProfile:
         return self._published_mapping.model_copy(deep=True)
+
+    def field_transforms(self) -> dict[str, FieldTransform]:
+        return dict(self._field_transforms)
+
+    def unsupported_fields(self) -> tuple[str, ...]:
+        """Canonical fields this database explicitly cannot answer."""
+        return self._unsupported_fields
+
+    def normalize_rows(self, columns: Any, rows: Any) -> Any:
+        """JSON-safe values for transformed fields; other values unchanged."""
+        if not self._field_transforms or not isinstance(rows, list):
+            return rows
+        normalized = []
+        for row in rows:
+            if not isinstance(row, dict):
+                return rows
+            normalized.append(
+                {
+                    key: (
+                        normalize_transformed_value(self._field_transforms[key], value)
+                        if key in self._field_transforms
+                        else value
+                    )
+                    for key, value in row.items()
+                }
+            )
+        return normalized
 
     def harness_mapping(self) -> Any:
         return to_harness_mapping(self._published_mapping.model_copy(deep=True))
@@ -305,12 +398,20 @@ def _validate_one(
         if int(published.ontology_version) != int(expected_ontology_version):
             raise PostgresRuntimeError()
         canonical = set(_canonical_select())
-        if set(published.fields.keys()) != canonical:
+        transforms = profile.field_transforms
+        unsupported = set(profile.unsupported_fields)
+        mapped = set(published.fields.keys())
+        # Partial mapping only through an explicit unsupported list: the two
+        # sets are disjoint and together cover the canonical fields exactly.
+        if mapped & unsupported or mapped | unsupported != canonical or not mapped:
+            raise PostgresRuntimeError()
+        if not set(transforms).issubset(mapped):
             raise PostgresRuntimeError()
         tables = getattr(catalog, "tables", None)
         if not isinstance(tables, list) or not tables:
             raise PostgresRuntimeError()
         columns_by_table: dict[str, set[str]] = {}
+        declared_types: dict[tuple[str, str], str] = {}
         for table in tables:
             tname = str(getattr(table, "name", ""))
             cols = getattr(table, "columns", None)
@@ -320,6 +421,10 @@ def _validate_one(
             if any(not n for n in names) or len(names) != len(set(names)):
                 raise PostgresRuntimeError()
             columns_by_table[tname] = set(names)
+            for col in cols:
+                declared_types[(tname, str(getattr(col, "name", "")))] = str(
+                    getattr(col, "declared_type", "") or ""
+                )
         physical_fields: set[tuple[str, str]] = set()
         for _, field in published.fields.items():
             tname = str(getattr(field, "table", ""))
@@ -332,6 +437,25 @@ def _validate_one(
             if physical in physical_fields:
                 raise PostgresRuntimeError()
             physical_fields.add(physical)
+        if transforms:
+            from ..ontology.loader import load_default_ontology
+
+            ontology_fields = {
+                field.name: field
+                for entity in load_default_ontology().entities
+                for field in entity.fields
+            }
+            for semantic, transform in transforms.items():
+                ontology_field = ontology_fields.get(semantic)
+                if ontology_field is None or not transform_supports_data_type(
+                    transform, ontology_field.data_type
+                ):
+                    raise PostgresRuntimeError()
+                target = published.fields[semantic]
+                if not column_type_supports(
+                    transform, declared_types.get((target.table, target.column), "")
+                ):
+                    raise PostgresRuntimeError()
         from ..relations.physical import build_physical_relation_graph
 
         graph = build_physical_relation_graph(catalog)
@@ -348,8 +472,12 @@ def _validate_one(
         from ..compiler.postgres import SchemaAdaptivePostgresCompiler
         from ..policy.postgres import SchemaAdaptivePostgresPolicy
 
-        compiler = SchemaAdaptivePostgresCompiler(graph, published)
-        policy = SchemaAdaptivePostgresPolicy(graph, published)
+        compiler = SchemaAdaptivePostgresCompiler(
+            graph, published, field_transforms=transforms
+        )
+        policy = SchemaAdaptivePostgresPolicy(
+            graph, published, field_transforms=transforms
+        )
     except Exception:
         raise PostgresRuntimeError() from None
     return ValidatedPostgresContext(
@@ -363,6 +491,8 @@ def _validate_one(
         compiler=compiler,
         policy=policy,
         graph=graph,
+        field_transforms=transforms,
+        unsupported_fields=tuple(sorted(unsupported)),
     )
 
 
@@ -540,7 +670,8 @@ class DatabaseRoutingExecutor:
         if current is not True:
             raise _stale_failure()
         try:
-            return context.executor().execute(database_id, compiled)
+            columns, rows = context.executor().execute(database_id, compiled)
+            return columns, context.normalize_rows(columns, rows)
         except Exception:
             raise HarnessFailure(
                 HarnessErrorCode.EXECUTION_ERROR,

@@ -262,6 +262,13 @@ Schema Inspector가 생성하는 표준 메타데이터다.
 
 공통 ontology와 학교별 물리 스키마를 연결한다.
 
+Phase 7-12부터 PostgreSQL profile v2는 두 가지를 추가로 선언할 수 있다.
+
+- 값 표현이 다른 column에 적용할 닫힌 목록의 변환. 예: 학점 `"3/3/0"` → 3, TIME → `"HH:MM"`.
+- DB에 대응 column이 없는 canonical field의 명시적 미지원 목록.
+
+변환 식은 코드의 고정 template에서만 나오며, AST policy가 exact 비교로 검증한다(ADR-068).
+
 ```yaml
 Course.name: sbjt_mst.sbjt_nm
 Course.credits: sbjt_mst.pnt
@@ -665,6 +672,10 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 - [x] Phase 7-09 합성 prototype Ollama end-to-end live smoke(경계 `COMPLETED`; 모델 출력 4건 모두 reflection guard 거부, 성공 실행 경로 live 미확인)
 - [x] Phase 7-10 runtime Ollama 요청 형식 명시(Ollama 활성화 시 `--ollama-request-format` 필수, config v2, 형식 단일 적용; no-system 재실행에서 성공 실행 경로 live 첫 통과)
 - [x] Phase 7-11 요청 형식을 `OllamaQueryModel` 안으로 이동(생성 시점 transport fail-fast, 형식별 provenance 구분; `model-template` hash 유지)
+- [x] Phase 7-12 legacy view 부분 mapping과 선언형 값 변환(profile v2, `unsupported_fields`, `SLASH_FIRST_NUMERIC`·`TIME_TO_HHMM`, view inspection opt-in, 등록·smoke CLI; legacy DB live smoke 통과)
+- [ ] Phase 7-13 legacy view 대상 챗봇 질의 endpoint(Ollama QueryIR 1회 → 기존 실행 경로 → 강좌 카드 형식, SQL 비노출, 미지원 field 안내)
+- [ ] Phase 7-14 `ChatPopup`의 DB별 경로 선택(legacy 기준선은 기존 경로 유지)
+- [ ] Phase 7-15 같은 질문의 legacy 챗봇 대 QueryIR 경로 비교 보고
 - [ ] 실제 CNU DB regression test
 - [ ] SQL dialect 차이 처리
 - [ ] 응답시간·GPU/메모리 사용량 기록
@@ -1698,6 +1709,26 @@ SQLite DB 입력
 - 결정: 관리자 VERIFY 요청은 query ID와 검토자만 보내고, 서버가 활성 버전에서 고정 query를 실행한 결과 hash·행 수·버전을 `verified-queries.json`(`verified-queries-v1`, query당 최신 1개, 행 값 없음)에 원자적으로 기록한다. 회귀는 모든 고정 query를 대상 버전에서 실행해 기준선과 비교하며(`MATCH`·`CHANGED`·`FAILED`·`UNVERIFIED`), 대상은 활성 버전 또는 `current.json` 게시 digest 기록에 있고 bytes가 같으며 재활성화 검사를 통과하는 비활성 버전이다. 비활성 버전 실행은 관리자 회귀의 고정 query에 한하고 activation·사용자 질의 경로는 바꾸지 않는다. 회귀 결과는 경고이며 publish·재활성화를 자동으로 막거나 되돌리지 않는다. 손상된 기준선은 없는 것으로 보고 명시적 VERIFY가 교체한다.
 - 이유: 클라이언트가 hash를 보내면 기준선이 실제 실행 결과와 무관해질 수 있다. 재활성화 전에 대상 버전을 확인하려면 비활성 게시 버전 실행이 필요하지만, 이미 검토·게시되고 digest로 고정된 mapping에 고정 query만 허용하면 새 실행 권한이나 raw 질의 통로가 생기지 않는다. 자동 차단은 의도된 mapping 변경(예: 컬럼 교정)도 막으므로 판단을 관리자에게 남긴다.
 
+### ADR-068: legacy 챗봇 비교는 같은 view에 부분 mapping하고 값 차이는 닫힌 목록의 선언형 변환으로 흡수한다
+
+- 날짜: 2026-09-29
+- 상태: 채택
+- 결정: legacy 챗봇의 대상 view `v_course_info`를 PostgreSQL private profile v2(`postgres-runtime-profile-v2`)로 QueryIR 경로에 등록한다. 구성은 다음과 같다.
+  - mapping과 미지원: canonical 15개 중 12개를 mapping하고, 대응 column이 없는 3개(`CourseOffering.year`·`semester`·`Department.code`)는 명시적 `unsupported_fields`로 둔다. mapping ∪ 미지원 = canonical이고 둘은 겹치지 않아야 한다. v1 profile은 여전히 15개 전체를 요구한다.
+  - 값 변환: 표현 차이는 `FieldTransform` 닫힌 목록으로만 처리한다. `SLASH_FIRST_NUMERIC`(`CAST(SPLIT_PART(col,'/',1) AS NUMERIC)`)과 `TIME_TO_HHMM`(`TO_CHAR(col,'HH24:MI')`)이며, 식은 코드의 고정 template에서만 나온다.
+  - 변환 적용 조건: ontology 타입·column 선언 타입과 모두 호환되어야 하고, 비교 연산자만 허용한다.
+  - AST policy: 변환 위치의 subtree가 mapping column에 선언 변환을 적용해 파싱한 AST와 정확히 같을 때만 허용한다. 그 subtree만 노드 allowlist에서 제외하고, 그 밖의 함수·Cast·literal은 계속 거부한다.
+  - inspector: `include_views`를 명시적으로 켤 때만 view를 포함한다. 기본 query와 fingerprint는 바뀌지 않는다.
+- 이유:
+  - legacy 챗봇과 같은 view를 쓰면, 두 경로의 결과 차이가 질문 이해 방식에서만 생긴다.
+  - 기본 table에 mapping하면 LEFT JOIN이 없어 시간표 없는 강좌(632행)가 빠진다. 이는 별도 단계(B)로 둔다.
+  - 값 형식 차이는 실제 DB에 흔하다. 하지만 모델이나 관리자가 SQL 식을 쓰게 하면 policy가 검증할 수 없다. 닫힌 목록과 exact AST 비교는 검증 가능성을 유지하면서 표현 차이를 흡수한다.
+  - 미지원 field를 명시 목록으로만 허용해야 누락 mapping과 의도된 미지원이 구분된다.
+- 한계:
+  - column 구성이 같은 채 view 정의만 바뀌면 fingerprint가 바뀌지 않는다.
+  - 이 mapping은 팀이 구성한 legacy DB에 대한 개발자 작성 mapping이며, 실제 학교 DB의 L2 검토가 아니다.
+  - AI가 변환을 제안하는 기능은 이후 단계다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -1936,3 +1967,4 @@ SQLite DB 입력
 - Phase 8-04 게시·활성 mapping의 고정 test query 미리보기 완료(합성). `api/admin_test_queries.py`(고정 QueryIR 5개, 기존 실행 경로, 최대 5행·행 수·결과 hash), `TestQueryPanel`을 추가했다(ADR-066, [`docs/prompts/phase8-04-test-query-preview.md`](prompts/phase8-04-test-query-preview.md)). 구현 중 compiler가 entity가 아니라 select field의 JOIN tree로 행 단위를 정해 과목·학과만 select하면 schema마다 행 수가 달라지는 것을 확인하고, 모든 test query에 개설강좌 단위 field를 넣어 flat·coded·hybrid에서 같은 hash가 나오게 했다. `gpt-6-luna` high review-only 지적 4건을 모두 재현 또는 코드 확인 후 수정했다: (1) 큰 정수를 float로 비교해 정렬 key가 같아지면 DB 행 순서가 hash에 반영됨 → 정확한 숫자 비교와 tagged 값 tie-breaker, (2) frontend가 고정 query와 다른 column(비canonical 이름 포함)을 받아들임 → canonical field 집합과 선택 query의 select 일치 요구, (3) 재활성화 성공 뒤 상세 갱신이 실패하면 이전 버전 미리보기가 남음 → publish·재활성화마다 미리보기 재생성, 확인된 활성 버전과 다르면 숨김(React 컴포넌트 테스트 환경이 없어 tsc·lint로만 확인), (4) 저장소 오류를 404로 반환 → 500. 관련 backend 7개·frontend 5개, 전체 pytest(tests) 1124개·6 skip·610 subtests, tsc·eslint·compileall·diff check 통과. 실제 학교 DB·live 모델 호출 없음
 - Phase 8-05 verified query 기준선·버전 회귀 비교 완료(합성). storage `load_published_version`·`verified-queries.json` 기록, `admin_test_queries`의 공통 실행 함수 분리와 VERIFY·회귀 route, 결과 기록 버튼·버전별 회귀 확인·publish·재활성화 직후 자동 회귀 UI를 추가했다(ADR-067, [`docs/prompts/phase8-05-verified-query-regression.md`](prompts/phase8-05-verified-query-regression.md)). review 디렉터리 허용 파일명을 `_REVIEW_FILENAMES` 하나로 모았다. `gpt-6-luna` high review-only 지적 3건을 재현·수정했다: (1) 원자적 교체 중 프로세스가 죽어 남은 mkstemp staging 파일(`*.json.<random>.tmp`) 때문에 activation 로드가 거부됨(draft·activation 쓰기에도 있던 기존 위험) → 허용 파일명의 staging 잔여물만 무시하고 그 외 모르는 파일은 계속 fail closed, (2) frontend가 고정 query 일부만 담긴 회귀 결과를 받아들임 → 고정 5개 전체·서버 순서 요구, (3) 행 수가 다른 `MATCH`를 받아들임 → `MATCH`는 행 수 일치 요구. 관련 backend 32개·frontend 5개, 전체 pytest(tests) 1131개·6 skip·610 subtests, tsc·eslint·compileall·diff check 통과. 실제 학교 DB·live 모델 호출 없음
 - 팀 논의용 전체 실행 명령 추가. `package.json`에 `dev:backend:venv`(legacy backend를 venv Python으로, reload 없이)와 `dev:all`(legacy `:8000`·합성 prototype `:8123`·Vite `:5173` 동시 실행)을 추가했다. 기존 `dev:backend`·`dev:full`·`dev:adaptive-full`은 그대로 둔다(`dev:backend`는 시스템 Python을 쓰며 이 환경의 시스템 Python에는 legacy 의존성이 없다). 사용자 확인: legacy 강좌 DB는 실제 충남대 테이블이 아니라 팀이 구성한 유사 스키마·데이터다(`docs/human-validation-checkpoints.md`에 기록, E3/L5 상태는 변경하지 않음). 앱 내 browser로 legacy 목록 200건·legacy assistant 질의·합성 DB 전환·clarification 결과를 확인했고, SQLite 업로드 이후 관리자 흐름은 확인하지 않았다. venv의 transformers는 고정 버전(4.46.3)이 아닌 5.8.1이지만 legacy backend 시작과 assistant 질의는 정상 동작했다
+- Phase 7-12 legacy view 부분 mapping과 선언형 값 변환 완료. 사용자 결정에 따라 legacy 챗봇의 대상 view `v_course_info`를 QueryIR 경로에 등록했다(A, 부분 mapping, 15개 field 비교). 주요 변경은 다음과 같다. (1) `mapping/transforms.py`의 닫힌 목록 `FieldTransform`(`SLASH_FIRST_NUMERIC`, `TIME_TO_HHMM`)과 결과 정규화. (2) PostgreSQL compiler의 변환식 렌더링과 변환 field의 `contains` 거부. (3) AST policy의 exact 변환 AST 비교와, 그 subtree로 한정한 allowlist 예외. (4) inspector의 `include_views` opt-in(기본 query·fingerprint 불변). (5) runtime profile의 `field_transforms`·`unsupported_fields` 검증: 합집합=canonical, 교집합 없음, ontology·column 타입 호환. `unsupported_fields()` 노출, 변환 결과값 정규화 포함. (6) startup profile v2 strict load(v1 불변). (7) `api/legacy_view_profile.py` CLI(`--check`, `--write --live`, `--smoke --live`; 출력은 고정 code와 수치뿐). 부분 profile의 catalog는 15개 전체를 요구하므로 닫힌다(화면 연결은 7-14). `gpt-6-luna` high review-only는 AST policy 우회 경로를 찾지 못했고 3건을 지적했다. CLI parse 오류가 인자를 그대로 출력하는 문제와 반쯤 교체된 profile 쌍을 `UNCHANGED`로 보고하는 문제는 재현한 뒤 고쳤다(고정 code parser, 재생성 byte 비교). 테스트 공백(projection·predicate 개수·순서 변화, v1 profile 로드)은 보강했다. 동시 `--write` 경쟁은 단일 운영자 개발 CLI라 고치지 않고 잔여 위험으로 둔다. 신규 53개와 기존 PostgreSQL·policy·compiler 103개 테스트, 전체 pytest 1184개·6 skip·610 subtests, compileall, diff check가 통과했다. legacy DB 확인은 다음과 같다(읽기 전용 연결, 구조·집계만 확인). view는 6,846행·개설강좌 4,003개이고, 시간표 없는 행은 632개다. `credit_hours`는 전부 `학점/이론/실습` 형식이며, `course_year`는 학년(1~5)이라 연도가 아니다. `--write --live`와 `--smoke --live`는 고정 query 5개 모두 기대대로 통과했다(목록·학점=3·오후 시작·이수구분 포함은 200행 상한이고 형식 검사 통과, 연도 질의는 `MAPPING_MISSING`). scratch 대조에서 한도 아래 조건 3개(학점 1.5, 금요일 18시 이후, 정원 150 초과)는 view 직접 SQL과 결과 multiset이 같았다(75·33·42행). 참고로 legacy prompt가 지시하는 `credit_hours = '3'` 비교는 0행이고, 변환 기준 학점 3은 4,253행이다. 7-15 비교의 관찰 후보이며 성능 주장이 아니다. mapping은 팀이 구성한 legacy DB에 대한 개발자 작성 mapping이며 L2 검토가 아니다. legacy backend·view·legacy DB 변경 없음. ADR-068 추가
