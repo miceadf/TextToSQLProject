@@ -16,6 +16,8 @@ Phase 7-13(2026-09-29): legacy view 대상 QueryIR 챗봇 endpoint를 추가하�
 
 Phase 7-14(2026-09-29): `npm run dev:all`이 legacy backend의 `backend/.env` DB·Ollama 설정을 재사용해 QueryIR 챗봇 경로를 켠다. 화면의 `DB 변경`에서 `Legacy DB (QueryIR)`를 고르면 AI Course Assistant가 QueryIR 경로로 답한다. 팀 내부 비교용 개발 경로이며, 외부 시연(L5)이나 사용성 평가(L4)를 대신하지 않는다.
 
+Phase 7-15(2026-09-29): legacy 챗봇과 QueryIR 경로를 개발자 작성 30문항으로 비교했다. 기준 SQL과 한국어 의미 해석(예: `오전`=12시 이전)은 개발자 판단이며 gold가 아니다. 결과 문서의 수치를 팀 공유 외 용도(논문·성능 주장)로 쓰기 전에 L1 문항·기준 검토와 L3 결과 검토가 필요하다. 후속 서버 정책(limit, 문자열 `contains` 완화, 코드값 정규화, field 별칭, 학년 등 ontology 확장)은 사용자·팀 결정 대기다.
+
 ## 바로 또는 최대한 빠르게 확인할 것
 
 정식 40건 승인을 지금 끝낼 필요는 없다. 아래는 **설계가 잘못되면 후속 개발을 크게 되돌릴 수 있는** 짧은 확인이다.
