@@ -14,6 +14,8 @@ Phase 7-12(2026-09-29): legacy 챗봇의 대상 view를 QueryIR 경로에 부분
 
 Phase 7-13(2026-09-29): legacy view 대상 QueryIR 챗봇 endpoint를 추가하고, 로컬 Ollama와 legacy DB로 8개 질문을 live 실행했다(상태·행 수만 기록). 이 실행은 동작 확인이며 L1/L3 전의 모델 성능 근거가 아니다. 모델이 문자열 field에 구절 전체를 `equals`로 넣는 경향을 server 규칙으로 완화할지는 7-15 비교 뒤 사용자가 결정한다.
 
+Phase 7-14(2026-09-29): `npm run dev:all`이 legacy backend의 `backend/.env` DB·Ollama 설정을 재사용해 QueryIR 챗봇 경로를 켠다. 화면의 `DB 변경`에서 `Legacy DB (QueryIR)`를 고르면 AI Course Assistant가 QueryIR 경로로 답한다. 팀 내부 비교용 개발 경로이며, 외부 시연(L5)이나 사용성 평가(L4)를 대신하지 않는다.
+
 ## 바로 또는 최대한 빠르게 확인할 것
 
 정식 40건 승인을 지금 끝낼 필요는 없다. 아래는 **설계가 잘못되면 후속 개발을 크게 되돌릴 수 있는** 짧은 확인이다.

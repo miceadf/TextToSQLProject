@@ -335,3 +335,6 @@ export const CATALOG_TRANSPORT_MESSAGE = '연결에 실패했습니다. 다시 �
 export const CATALOG_CONTRACT_MESSAGE = '응답 형식이 올바르지 않습니다. 다시 시도해 주세요.';
 export const CATALOG_GENERIC_MESSAGE = '처리 중 오류가 발생했습니다. 다시 시도해 주세요.';
 export const CATALOG_UNAVAILABLE_MESSAGE = '합성 기준 정보를 사용할 수 없습니다. 다시 시도해 주세요.';
+// Phase 7-14: a partially mapped PostgreSQL DB is queried through the chatbot only.
+export const CATALOG_VIA_CHAT_MESSAGE =
+  '이 DB는 강좌 목록 대신 오른쪽 아래 AI Course Assistant로 질문해 조회합니다(QueryIR 경로).';

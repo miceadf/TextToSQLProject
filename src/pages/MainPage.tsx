@@ -14,6 +14,7 @@ import {
   CATALOG_CONTRACT_MESSAGE,
   CATALOG_TRANSPORT_MESSAGE,
   CATALOG_UNAVAILABLE_MESSAGE,
+  CATALOG_VIA_CHAT_MESSAGE,
   LEGACY_SELECTION_ID,
   STORAGE_KEY,
   canonicalToCourse,
@@ -33,6 +34,7 @@ import {
   type SqliteUploadSuccess,
 } from '../adaptive-prototype/sqliteUpload.ts'
 import MappingReviewPanel from '../adaptive-prototype/MappingReviewPanel.tsx'
+import { chatTargetFor } from '../adaptive-prototype/chatQuery.ts'
 import SchemaComparePanel from '../adaptive-prototype/SchemaComparePanel.tsx'
 import { coursesApi } from '../services/api'
 import type { Course } from '../types/course'
@@ -86,6 +88,7 @@ function toCatalogMessage(error: unknown): string {
     if (error.kind === 'transport') return CATALOG_TRANSPORT_MESSAGE
     if (error.kind === 'contract') return CATALOG_CONTRACT_MESSAGE
     if (error.serverCode === 'SYNTHETIC_CATALOG_CONTEXT_UNAVAILABLE') return CATALOG_UNAVAILABLE_MESSAGE
+    if (error.serverCode === 'SYNTHETIC_CATALOG_UNSUPPORTED') return CATALOG_VIA_CHAT_MESSAGE
     return CATALOG_GENERIC_MESSAGE
   }
   return CATALOG_GENERIC_MESSAGE
@@ -407,6 +410,10 @@ export default function MainPage({
     () => getConflictingCourseIds(hoveredCourse, selectedCourses),
     [hoveredCourse, selectedCourses],
   )
+  const chatTarget = useMemo(() => chatTargetFor(activeDbId, registry), [activeDbId, registry])
+  // A partially mapped PostgreSQL DB (Phase 7-12) has no full course catalog;
+  // it is queried through the AI Course Assistant instead. Other errors keep retry.
+  const catalogOnlyViaChat = catalogError === CATALOG_VIA_CHAT_MESSAGE
   const completedCourseCodes = useMemo(
     () => extractCompletedCourseCodes(completedCourses),
     [completedCourses],
@@ -798,8 +805,14 @@ export default function MainPage({
         {activeDbId !== LEGACY_SELECTION_ID ? (
           <div className="mt-2 text-xs text-slate-500" role="status">
             {catalogLoading ? '합성 목록을 불러오는 중입니다.' : null}
-            {catalogError !== null ? catalogError : null}
-            {catalogError !== null ? (
+            {catalogOnlyViaChat ? (
+              <span className="font-semibold text-violet-700" data-testid="catalog-via-chat">
+                {CATALOG_VIA_CHAT_MESSAGE}
+              </span>
+            ) : catalogError !== null ? (
+              catalogError
+            ) : null}
+            {catalogError !== null && !catalogOnlyViaChat ? (
               <button
                 type="button"
                 onClick={() => setCatalogRetry((value) => value + 1)}
@@ -935,6 +948,7 @@ export default function MainPage({
       <ChatPopup
         open={popupOpen}
         onClose={() => setPopupOpen(false)}
+        chatTarget={chatTarget}
         userStudentNo={userStudentNo}
         selectedCourses={selectedCourses}
         selectedIds={selectedIds}

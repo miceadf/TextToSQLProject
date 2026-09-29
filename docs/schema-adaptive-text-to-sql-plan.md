@@ -674,7 +674,7 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 - [x] Phase 7-11 요청 형식을 `OllamaQueryModel` 안으로 이동(생성 시점 transport fail-fast, 형식별 provenance 구분; `model-template` hash 유지)
 - [x] Phase 7-12 legacy view 부분 mapping과 선언형 값 변환(profile v2, `unsupported_fields`, `SLASH_FIRST_NUMERIC`·`TIME_TO_HHMM`, view inspection opt-in, 등록·smoke CLI; legacy DB live smoke 통과)
 - [x] Phase 7-13 legacy view 대상 챗봇 질의 endpoint(`adaptive-chat-query-v1`; Ollama QueryIR 1회 → 기존 실행 경로 → 서버 고정 카드 field, SQL·물리 이름 비노출, `UNSUPPORTED`·`NOT_UNDERSTOOD`, 시간 filter 값 정규화; legacy DB·로컬 Ollama live 확인)
-- [ ] Phase 7-14 `ChatPopup`의 DB별 경로 선택(legacy 기준선은 기존 경로 유지)
+- [x] Phase 7-14 `ChatPopup`의 DB별 경로 선택(legacy 기준선은 기존 경로 유지, postgres는 QueryIR, 그 밖의 합성 DB는 챗봇 미지원 안내), 부분 mapping catalog 409 구분, `dev:all` launcher의 legacy DSN·Ollama 재사용(browser 확인)
 - [ ] Phase 7-15 같은 질문의 legacy 챗봇 대 QueryIR 경로 비교 보고
 - [ ] 실제 CNU DB regression test
 - [ ] SQL dialect 차이 처리
@@ -1750,6 +1750,32 @@ SQLite DB 입력
 - 한계:
   - 모델이 문자열 field에 `equals`로 구절 전체를 넣는 경향(예: `김 교수님`)이 남아 0행이 나온다. legacy prompt는 문자열 비교에 LIKE를 강제한다. 서버 완화 규칙이나 prompt 변경 여부는 7-15 비교 뒤 사용자 결정으로 둔다.
 
+### ADR-070: 챗봇 경로는 선택된 DB 종류로 정하고, dev:all은 legacy backend의 .env를 같은 DB·모델에 한해 재사용한다
+
+- 날짜: 2026-09-29
+- 상태: 채택
+- 결정:
+  - `ChatPopup`은 `DB 변경` 선택에 따라 경로를 정한다.
+    - Legacy 기준선: 기존 `/api/v1/chat/query`
+    - registry `schema === 'postgres'`: QueryIR endpoint
+    - 그 밖의 합성·private SQLite: "챗봇 미지원" 안내만 한다. legacy DB로 질의하지 않는다.
+  - 대상 DB가 바뀌면 진행 중 요청을 layout effect에서 동기 무효화한다. 두 경로 모두 요청 시점 대상과 다른 응답은 버린다.
+  - 부분 mapping PostgreSQL의 catalog는 DB 조회 없이 409 `SYNTHETIC_CATALOG_UNSUPPORTED`로 답한다. 화면은 이 code일 때만 챗봇 사용 안내를 보인다.
+  - `npm run dev:all`은 `backend/adaptive/api/dev_launcher.py`를 쓴다.
+    - launcher는 `backend/.env`의 `DATABASE_URL`, `OLLAMA_BASE_URL`, `OLLAMA_MODEL`만 읽는다.
+    - private legacy-view profile이 있고 DSN 환경변수가 비어 있으면, DSN을 프로세스 안에서만 그 변수로 넘긴다.
+    - Ollama는 loopback일 때만 no-system 형식으로 켠다.
+    - profile 오류, DB 검증 실패, 모델 구성 실패는 각자 해당 부분만 끄고, 고정 상태 한 줄만 출력한다.
+    - 기존 `dev:adaptive-prototype`은 바꾸지 않는다.
+- 이유:
+  - legacy 챗봇과 비교하려면 두 경로가 같은 DB와 같은 모델(`text2sql_qwen`)을 써야 한다. legacy backend가 이미 소유한 설정을 재사용하면 팀원이 별도 환경변수를 맞출 필요가 없다.
+  - 합성 DB를 골라도 legacy DB로 질의하던 기존 동작은 사용자가 지적한 혼동의 원인이었다.
+  - catalog 미지원과 일시 오류를 같은 code로 두면, 완전 mapping DB의 장애가 안내 문구에 가려 재시도가 사라진다.
+- 한계:
+  - launcher는 개발 편의 경로이며 배포 경로가 아니다.
+  - 부분 mapping DB의 목록 화면은 없다.
+  - QueryIR 경로의 limit(모델 기본 50)과 문자열 `equals` 경향은 7-15 비교 뒤 정한다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -1990,3 +2016,4 @@ SQLite DB 입력
 - 팀 논의용 전체 실행 명령 추가. `package.json`에 `dev:backend:venv`(legacy backend를 venv Python으로, reload 없이)와 `dev:all`(legacy `:8000`·합성 prototype `:8123`·Vite `:5173` 동시 실행)을 추가했다. 기존 `dev:backend`·`dev:full`·`dev:adaptive-full`은 그대로 둔다(`dev:backend`는 시스템 Python을 쓰며 이 환경의 시스템 Python에는 legacy 의존성이 없다). 사용자 확인: legacy 강좌 DB는 실제 충남대 테이블이 아니라 팀이 구성한 유사 스키마·데이터다(`docs/human-validation-checkpoints.md`에 기록, E3/L5 상태는 변경하지 않음). 앱 내 browser로 legacy 목록 200건·legacy assistant 질의·합성 DB 전환·clarification 결과를 확인했고, SQLite 업로드 이후 관리자 흐름은 확인하지 않았다. venv의 transformers는 고정 버전(4.46.3)이 아닌 5.8.1이지만 legacy backend 시작과 assistant 질의는 정상 동작했다
 - Phase 7-12 legacy view 부분 mapping과 선언형 값 변환 완료. 사용자 결정에 따라 legacy 챗봇의 대상 view `v_course_info`를 QueryIR 경로에 등록했다(A, 부분 mapping, 15개 field 비교). 주요 변경은 다음과 같다. (1) `mapping/transforms.py`의 닫힌 목록 `FieldTransform`(`SLASH_FIRST_NUMERIC`, `TIME_TO_HHMM`)과 결과 정규화. (2) PostgreSQL compiler의 변환식 렌더링과 변환 field의 `contains` 거부. (3) AST policy의 exact 변환 AST 비교와, 그 subtree로 한정한 allowlist 예외. (4) inspector의 `include_views` opt-in(기본 query·fingerprint 불변). (5) runtime profile의 `field_transforms`·`unsupported_fields` 검증: 합집합=canonical, 교집합 없음, ontology·column 타입 호환. `unsupported_fields()` 노출, 변환 결과값 정규화 포함. (6) startup profile v2 strict load(v1 불변). (7) `api/legacy_view_profile.py` CLI(`--check`, `--write --live`, `--smoke --live`; 출력은 고정 code와 수치뿐). 부분 profile의 catalog는 15개 전체를 요구하므로 닫힌다(화면 연결은 7-14). `gpt-6-luna` high review-only는 AST policy 우회 경로를 찾지 못했고 3건을 지적했다. CLI parse 오류가 인자를 그대로 출력하는 문제와 반쯤 교체된 profile 쌍을 `UNCHANGED`로 보고하는 문제는 재현한 뒤 고쳤다(고정 code parser, 재생성 byte 비교). 테스트 공백(projection·predicate 개수·순서 변화, v1 profile 로드)은 보강했다. 동시 `--write` 경쟁은 단일 운영자 개발 CLI라 고치지 않고 잔여 위험으로 둔다. 신규 53개와 기존 PostgreSQL·policy·compiler 103개 테스트, 전체 pytest 1184개·6 skip·610 subtests, compileall, diff check가 통과했다. legacy DB 확인은 다음과 같다(읽기 전용 연결, 구조·집계만 확인). view는 6,846행·개설강좌 4,003개이고, 시간표 없는 행은 632개다. `credit_hours`는 전부 `학점/이론/실습` 형식이며, `course_year`는 학년(1~5)이라 연도가 아니다. `--write --live`와 `--smoke --live`는 고정 query 5개 모두 기대대로 통과했다(목록·학점=3·오후 시작·이수구분 포함은 200행 상한이고 형식 검사 통과, 연도 질의는 `MAPPING_MISSING`). scratch 대조에서 한도 아래 조건 3개(학점 1.5, 금요일 18시 이후, 정원 150 초과)는 view 직접 SQL과 결과 multiset이 같았다(75·33·42행). 참고로 legacy prompt가 지시하는 `credit_hours = '3'` 비교는 0행이고, 변환 기준 학점 3은 4,253행이다. 7-15 비교의 관찰 후보이며 성능 주장이 아니다. mapping은 팀이 구성한 legacy DB에 대한 개발자 작성 mapping이며 L2 검토가 아니다. legacy backend·view·legacy DB 변경 없음. ADR-068 추가
 - Phase 7-13 legacy view 대상 QueryIR 챗봇 질의 endpoint 완료. `api/chat_query.py`의 `POST /api/adaptive/v1/chat/query`(`adaptive-chat-query-v1`)를 prototype에 등록했다. 검증된 PostgreSQL context 전용이며, Ollama가 없으면 503이다. 모델 호출은 1회이고 처리는 다음과 같다: 구조 검증, 미지원 field는 실행 없이 `UNSUPPORTED`와 label, 반사 guard, 서버 고정 카드 projection, 기존 harness 실행. 응답은 카드 행과 이해한 filter(label·연산자·값)다. live 확인 중 시간 filter 값 `"14:00:00"`이 `HH:MM` 문자열 비교에서 어긋나는 결함을 발견했다. 그래서 `normalize_filter_value`를 변환 계약에 넣고 compiler·policy에 같게 적용했다. `gpt-6-luna` high review-only 지적 2건을 재현해 고쳤다. (1) understood 값에 물리 identifier·SQL 문자열이 되돌아갈 수 있는 문제: 단어 단위 identifier·질문 포함 반사 거부. (2) 초가 0이 아닌 시간 값의 정밀도 불일치: 표현 불가 값은 compiler·policy·챗봇 모두 거부. live 확인(legacy DB 읽기 전용, `text2sql_qwen:latest`·`alpaca-raw-no-system-v1`, 8개 질문, 상태·행 수만 기록) 결과는 다음과 같다. `SUCCEEDED` 6건 중 4건은 50행(모델 limit)이고, 2건은 0행이다: `김 교수님`을 `equals`로 넣은 경우, `오후`를 14:00~15:00으로 해석한 경우. 연도·학기 질문 2건은 `UNSUPPORTED`다. 모델 성능 주장이 아니다. 7-12 smoke도 계속 통과한다. 관련 테스트 152개(66 subtests), 전체 pytest 1233개·6 skip·610 subtests, compileall, diff check 통과. 문자열 `equals` 경향의 처리 방식은 7-15 비교 뒤 결정한다. legacy·frontend 변경 없음. ADR-069 추가
+- Phase 7-14 ChatPopup의 DB별 경로 선택과 `dev:all` 연결 완료. `src/adaptive-prototype/chatQuery.ts`에 경로 선택, `adaptive-chat-query-v1` strict parser·client, 카드 key 변환, 안내 문구를 추가했다. `ChatPopup`은 현재 경로를 표시한다. QueryIR 경로에서는 카드·시간표와 함께 SQL 대신 "이해한 조건"을 보이고, 수강 이력 제외를 비활성화한다. 합성·private SQLite DB는 legacy로 질의하지 않고 미지원을 안내한다. 부분 mapping PostgreSQL catalog는 409 `SYNTHETIC_CATALOG_UNSUPPORTED`로 구분하고, 화면은 이때만 챗봇 안내를 보인다. `backend/adaptive/api/dev_launcher.py`와 `dev:adaptive-prototype:legacy` script를 추가했고, `dev:all`이 이를 쓴다. launcher는 legacy `.env`의 세 key만 읽어 legacy-view DSN(프로세스 안)과 loopback Ollama를 켜며, 부분별로 독립 강등한다. `gpt-6-luna` high review-only 지적 6건 중 5건을 재현해 고쳤다. (1) launcher가 모델 실패를 DB 실패로 처리해 둘 다 끌 수 있던 문제: profile 로드·모델 구성·조립을 분리. (2) 완전 mapping PostgreSQL의 일시 catalog 오류도 챗봇 안내로 가리던 문제: 409 전용 code. (3) DB 전환 직후 이전 응답이 새 화면에 붙을 수 있던 경합: layout effect 무효화와 legacy 경로 대상 확인. (4) 결과 문자열 길이 제한 불일치: 서버 1,000자. (5) client 제어 문자 검증. 완전 mapping DB의 연도·학기 카드 상세 미표시는 legacy view에 해당 field가 없어 보류했다. browser 확인(`dev:all`)은 다음과 같다. launcher 상태 `legacy-view=enabled, ollama=enabled`. 합성 flat → 챗봇 미지원 표시. Legacy DB (QueryIR) → 목록 자리 안내(409)와 재시도 버튼 없음, `3학점 전공 과목 알려줘` 50건과 이해한 조건 `학점 = 3`, 연도 질문은 미지원 안내, SQL 패널 없음. Legacy 기준선 → 기존 SQL 경로·SQL 패널, 같은 질문 `교양 과목 중에 금요일 수업`에서 legacy 190행(119과목) 대 QueryIR 50행(모델 limit). 상위 카드 순서와 표시 형식은 같았다. 행 수 차이는 7-15의 limit 정책 항목이다. 관련 Python 테스트 125개, frontend 13개 파일 전체(7-14 신규 8개 포함), tsc·eslint(src 전체), 전체 pytest 1246개·6 skip·610 subtests, compileall, diff check 통과. legacy backend·DB 변경 없음. ADR-070 추가

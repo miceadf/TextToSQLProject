@@ -499,7 +499,8 @@ def test_partial_postgres_catalog_fails_closed_but_is_listed() -> None:
     listed = client.get(DATABASES_PATH).json()["databases"]
     assert {"database_id": DATABASE_ID, "label": lvp.LABEL, "schema": "postgres"} in listed
     response = client.get(CATALOG_PATH, params={"database_id": DATABASE_ID})
-    assert response.status_code == 404
+    assert response.status_code == 409
+    assert response.json() == {"error": {"code": "SYNTHETIC_CATALOG_UNSUPPORTED"}}
     assert "s3cret" not in response.text
 
 

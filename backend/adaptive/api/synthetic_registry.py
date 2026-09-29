@@ -137,6 +137,8 @@ _LEGACY_COLUMNS = {
 class SyntheticCatalogErrorCode(str, Enum):
     INVALID_REQUEST = "SYNTHETIC_CATALOG_INVALID_REQUEST"
     CONTEXT_UNAVAILABLE = "SYNTHETIC_CATALOG_CONTEXT_UNAVAILABLE"
+    # Phase 7-14: a partially mapped PostgreSQL profile has no full catalog.
+    UNSUPPORTED = "SYNTHETIC_CATALOG_UNSUPPORTED"
     INTERNAL_ERROR = "SYNTHETIC_CATALOG_INTERNAL_ERROR"
 
 
@@ -322,6 +324,8 @@ def _status_for(code: str) -> int:
         return 400
     if code == SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value:
         return 404
+    if code == SyntheticCatalogErrorCode.UNSUPPORTED.value:
+        return 409
     return 500
 
 
@@ -495,6 +499,12 @@ def register_synthetic_database_routes(
                 return _error_response(SyntheticCatalogErrorCode.INVALID_REQUEST.value)
             postgres_context = frozen_postgres.get(database_id) if isinstance(database_id, str) else None
             if postgres_context is not None:
+                try:
+                    partial = bool(postgres_context.unsupported_fields())
+                except Exception:
+                    return _error_response(SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value)
+                if partial:
+                    return _error_response(SyntheticCatalogErrorCode.UNSUPPORTED.value)
                 try:
                     from .postgres_runtime import is_postgres_context_current
                     from ..harness.contracts import MappingStatus as _PgMappingStatus

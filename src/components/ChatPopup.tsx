@@ -1,4 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  chatErrorMessage,
+  chatRowsToLegacyRows,
+  describeAnswer,
+  describeUnderstood,
+  postChatQuery,
+} from '../adaptive-prototype/chatQuery.ts'
+import type { ChatTarget } from '../adaptive-prototype/chatQuery.ts'
 import { getAccessToken } from '../services/apiClient'
 import type { Course, CourseDetail } from '../types/course'
 import { cn } from '../utils/cn'
@@ -377,9 +385,24 @@ function rowsToCourses(rows: unknown[]) {
   return [...courses.values()]
 }
 
+const LEGACY_CHAT_TARGET: ChatTarget = { kind: 'legacy' }
+
+function chatTargetKey(target: ChatTarget) {
+  if (target.kind === 'queryir') return `queryir:${target.databaseId}`
+  if (target.kind === 'unsupported') return `unsupported:${target.label}`
+  return 'legacy'
+}
+
+function chatTargetCaption(target: ChatTarget) {
+  if (target.kind === 'queryir') return `${target.label} · QueryIR 경로`
+  if (target.kind === 'unsupported') return `${target.label} · 챗봇 미지원`
+  return 'Legacy 기준선 · 기존 SQL 경로'
+}
+
 export default function ChatPopup({
   open,
   onClose,
+  chatTarget = LEGACY_CHAT_TARGET,
   userStudentNo,
   selectedCourses,
   selectedIds,
@@ -391,6 +414,7 @@ export default function ChatPopup({
 }: {
   open: boolean
   onClose: () => void
+  chatTarget?: ChatTarget
   userStudentNo?: string
   selectedCourses: Course[]
   selectedIds: Set<string>
@@ -419,6 +443,9 @@ export default function ChatPopup({
   const [excludeCompletedCourses, setExcludeCompletedCourses] = useState(false)
   const [guidelineOpen, setGuidelineOpen] = useState(true)
   const [sqlOpen, setSqlOpen] = useState(true)
+  const [lastUnderstood, setLastUnderstood] = useState('')
+  const targetKey = chatTargetKey(chatTarget)
+  const targetKeyRef = useRef(targetKey)
 
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const abortRef = useRef<AbortController | null>(null)
@@ -442,6 +469,34 @@ export default function ChatPopup({
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [mounted, onClose])
+
+  // A different database answers differently: drop the previous answer and say so.
+  // Layout effect: the ref flips during commit, before any pending answer resolves.
+  useLayoutEffect(() => {
+    if (targetKeyRef.current === targetKey) return
+    targetKeyRef.current = targetKey
+    abortRef.current?.abort()
+    abortRef.current = null
+    setLoading(false)
+    setDbCourses(null)
+    setLastSql('')
+    setLastWarning('')
+    setLastError('')
+    setLastUnderstood('')
+    // Restoring the stored selection on page load is not a change the user made.
+    setMessages((prev) =>
+      prev.some((message) => message.role === 'user')
+        ? [
+            ...prev,
+            {
+              id: makeId('sys'),
+              role: 'system',
+              text: `질의 대상이 바뀌었습니다: ${chatTargetCaption(chatTarget)}`,
+            },
+          ]
+        : prev,
+    )
+  }, [targetKey, chatTarget])
 
   useEffect(() => {
     if (!mounted) return
@@ -487,7 +542,20 @@ export default function ChatPopup({
     setInput('')
     setLastError('')
     setLastWarning('')
+    setLastUnderstood('')
     setDbCourses(null)
+
+    if (chatTarget.kind === 'unsupported') {
+      setLastError(
+        `${chatTarget.label}은(는) AI Course Assistant를 지원하지 않습니다. 상단의 '합성 질의 열기'를 사용해 주세요.`,
+      )
+      return
+    }
+
+    if (chatTarget.kind === 'queryir') {
+      await sendQueryIr(text, chatTarget.databaseId)
+      return
+    }
 
     if (excludeCompletedCourses && !userStudentNo) {
       setLastError('수강 이력 과목 제외는 로그인 후 사용할 수 있습니다.')
@@ -502,6 +570,7 @@ export default function ChatPopup({
     setLoading(true)
     const controller = new AbortController()
     abortRef.current = controller
+    const requestKey = targetKeyRef.current
 
     try {
       const token = getAccessToken()
@@ -518,6 +587,7 @@ export default function ChatPopup({
         signal: controller.signal,
       })
       const payload = (await res.json()) as QueryApiResponse
+      if (controller.signal.aborted || targetKeyRef.current !== requestKey) return
 
       if (!res.ok || payload.error) {
         const errorText =
@@ -561,6 +631,7 @@ export default function ChatPopup({
       if (error instanceof DOMException && error.name === 'AbortError') {
         return
       }
+      if (controller.signal.aborted || targetKeyRef.current !== requestKey) return
       const errorText = '백엔드 연결에 실패했습니다. 서버 실행 상태를 확인해주세요.'
       setLastError(errorText)
       setDbCourses(null)
@@ -573,8 +644,45 @@ export default function ChatPopup({
         },
       ])
     } finally {
-      abortRef.current = null
-      setLoading(false)
+      if (abortRef.current === controller) {
+        abortRef.current = null
+        setLoading(false)
+      }
+    }
+  }
+
+  async function sendQueryIr(text: string, databaseId: string) {
+    setMessages((prev) => [...prev, { id: makeId('usr'), role: 'user', text }])
+    setLastSql('')
+    setLoading(true)
+    const controller = new AbortController()
+    abortRef.current = controller
+    const requestKey = targetKeyRef.current
+    try {
+      const answer = await postChatQuery(
+        (url, init) => fetch(url, init),
+        databaseId,
+        text,
+        { signal: controller.signal },
+      )
+      // The user may have switched databases while the model was answering.
+      if (controller.signal.aborted || targetKeyRef.current !== requestKey) return
+      setDbCourses(answer.status === 'SUCCEEDED' ? rowsToCourses(chatRowsToLegacyRows(answer.rows)) : null)
+      setLastUnderstood(answer.status === 'SUCCEEDED' ? describeUnderstood(answer.filters) : '')
+      if (answer.status !== 'SUCCEEDED') setLastWarning(describeAnswer(answer))
+      setMessages((prev) => [...prev, { id: makeId('sys'), role: 'system', text: describeAnswer(answer) }])
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return
+      if (controller.signal.aborted || targetKeyRef.current !== requestKey) return
+      const errorText = chatErrorMessage(error)
+      setLastError(errorText)
+      setDbCourses(null)
+      setMessages((prev) => [...prev, { id: makeId('sys'), role: 'system', text: `요청 실패: ${errorText}` }])
+    } finally {
+      if (abortRef.current === controller) {
+        abortRef.current = null
+        setLoading(false)
+      }
     }
   }
 
@@ -608,6 +716,19 @@ export default function ChatPopup({
             </div>
             <div className="text-xs text-slate-500">
               Course search · timetable preview
+            </div>
+            <div
+              className={cn(
+                'mt-0.5 text-[11px] font-semibold',
+                chatTarget.kind === 'queryir'
+                  ? 'text-violet-700'
+                  : chatTarget.kind === 'unsupported'
+                    ? 'text-amber-700'
+                    : 'text-slate-500',
+              )}
+              data-testid="chat-target"
+            >
+              {chatTargetCaption(chatTarget)}
             </div>
           </div>
           <button
@@ -655,12 +776,15 @@ export default function ChatPopup({
             <label className="mb-2 flex items-center gap-2 text-xs font-semibold text-slate-700">
               <input
                 type="checkbox"
-                checked={excludeCompletedCourses}
+                checked={chatTarget.kind === 'legacy' && excludeCompletedCourses}
                 onChange={(event) => setExcludeCompletedCourses(event.target.checked)}
-                disabled={loading}
+                disabled={loading || chatTarget.kind !== 'legacy'}
                 className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
               />
               수강 이력 존재 과목 제외
+              {chatTarget.kind === 'queryir' ? (
+                <span className="font-normal text-slate-400">(QueryIR 경로에서는 미지원)</span>
+              ) : null}
             </label>
             {loading ? (
               <div
@@ -740,6 +864,14 @@ export default function ChatPopup({
             {lastError && (
               <div className="mt-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
                 {lastError}
+              </div>
+            )}
+            {lastUnderstood && (
+              <div
+                className="mt-2 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-xs text-violet-800"
+                data-testid="chat-understood"
+              >
+                <span className="font-semibold">이해한 조건 (QueryIR)</span>: {lastUnderstood}
               </div>
             )}
             {lastSql && (

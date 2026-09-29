@@ -21,6 +21,7 @@ npm run dev:all
 - legacy 쪽은 기존처럼 `backend/.env`의 PostgreSQL·Ollama 설정이 필요하다(Redis는 없으면 cache 없이 동작).
 - 접속: `http://localhost:5173/` (legacy 목록·AI Course Assistant, `DB 변경`의 합성 DB 선택·SQLite 업로드), `합성 질의 열기` → `/adaptive-prototype`.
 - 2026-09-29 기계적 browser 확인: legacy 목록 200건, legacy assistant 질의 응답("SQL 실행 완료: 50건"), `DB 변경` → 합성 flat 6건 목록 전환, `강의 목록 보여줘` → 두 의미 선택 → 강의명 6행. SQLite 업로드 이후 관리자 흐름은 browser로 확인하지 않았다.
+- QueryIR 챗봇 비교(Phase 7-14): `dev:all`은 `backend/.env`의 DB·Ollama 설정을 재사용해 `Legacy DB (QueryIR)`를 켠다. 시작 로그의 `adaptive dev launcher: legacy-view=..., ollama=...` 줄에서 상태를 확인한다. legacy-view profile은 한 번만 만들면 되고, 명령은 `python -m backend.adaptive.api.legacy_view_profile --write --live`이며 DSN 환경변수가 필요하다. 화면에서 `DB 변경` → `Legacy DB (QueryIR)` → AI Course Assistant로 질문하면, QueryIR 경로 답과 "이해한 조건"이 보인다. `Legacy 기준선`으로 바꾸면 같은 질문을 기존 SQL 경로로 볼 수 있다. 합성 SQLite DB에서는 챗봇이 미지원으로 안내된다.
 - 사용자 확인(2026-09-29): legacy DB는 충남대 수강신청 테이블을 그대로 가져온 것이 아니라 팀이 유사한 스키마·데이터로 직접 구성한 것이다. 따라서 이 전체 실행은 실제 개인정보 노출을 전제로 하지 않는다.
 
 ## 실행

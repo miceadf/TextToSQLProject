@@ -43,6 +43,8 @@ from .synthetic_registry import _REF_TO_DTO_KEY, CANONICAL_SELECT, is_valid_data
 CHAT_QUERY_PATH = "/api/adaptive/v1/chat/query"
 CHAT_QUERY_VERSION = "adaptive-chat-query-v1"
 MAX_QUESTION_LENGTH = 500
+# Longest text cell a response may carry; the frontend parser uses the same cap.
+MAX_TEXT_LENGTH = 1000
 
 _REQUEST_KEYS = frozenset({"database_id", "query"})
 _NOT_UNDERSTOOD_STAGES = frozenset({HarnessStage.IR_GENERATED, HarnessStage.IR_VALIDATED})
@@ -146,7 +148,11 @@ def _reflects_boundary(
 
 
 def _json_value(value: Any) -> Any:
-    if value is None or isinstance(value, (bool, str, int)):
+    if isinstance(value, str):
+        if len(value) > MAX_TEXT_LENGTH:
+            raise ChatQueryError(ChatQueryErrorCode.EXECUTION_FAILED, "RESULT_SHAPE_MISMATCH")
+        return value
+    if value is None or isinstance(value, (bool, int)):
         return value
     if isinstance(value, float):
         if value != value or value in (float("inf"), float("-inf")):

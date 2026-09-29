@@ -271,6 +271,14 @@ def test_unexpected_result_value_type_fails_closed() -> None:
     assert response.json()["error"]["failure_code"] == "RESULT_SHAPE_MISMATCH"
 
 
+def test_overlong_text_value_fails_closed() -> None:
+    executor = RecordingExecutor(rows=[{**ROW, "Course.name": "가" * 1001}])
+    client, _ = make_client(FakeModel(GOOD_IR), executor=executor)
+    response = post(client)
+    assert response.status_code == 500
+    assert response.json()["error"]["failure_code"] == "RESULT_SHAPE_MISMATCH"
+
+
 def test_unknown_and_drifted_databases_are_404() -> None:
     model = FakeModel(GOOD_IR)
     client, _ = make_client(model)
