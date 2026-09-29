@@ -76,7 +76,14 @@ class JoinCapablePostgresCompiler:
             )
 
         mapped_tables = {mappings[field].table for field in referenced_fields}
-        if mapped_tables != set(plan.required_tables):
+        anchor_table = request.anchor_table
+        if anchor_table is not None and plan.anchor_table != anchor_table:
+            self._fail(
+                HarnessErrorCode.INVALID_JOIN_PLAN,
+                "JOIN plan does not start from the declared anchor table",
+            )
+        expected_tables = mapped_tables | ({anchor_table} if anchor_table else set())
+        if expected_tables != set(plan.required_tables):
             self._fail(
                 HarnessErrorCode.INVALID_JOIN_PLAN,
                 "JOIN plan required tables do not match QueryIR field mappings",
@@ -115,7 +122,9 @@ class JoinCapablePostgresCompiler:
             f"SELECT {', '.join(projections)} "
             f"FROM {quote_identifier(plan.anchor_table)} AS {quote_identifier(anchor_alias)}"
         )
-        sql += self._compile_joins(plan, alias_by_table)
+        sql += self._compile_joins(
+            plan, alias_by_table, keyword="LEFT JOIN" if anchor_table else "JOIN"
+        )
 
         predicates: list[str] = []
         parameters: list[str | int | float | bool] = []
@@ -192,7 +201,13 @@ class JoinCapablePostgresCompiler:
             )
         return aliases
 
-    def _compile_joins(self, plan: JoinPlan, alias_by_table: dict[str, str]) -> str:
+    def _compile_joins(
+        self,
+        plan: JoinPlan,
+        alias_by_table: dict[str, str],
+        *,
+        keyword: str = "JOIN",
+    ) -> str:
         clauses: list[str] = []
         for step in plan.steps:
             relation = step.relation
@@ -217,7 +232,7 @@ class JoinCapablePostgresCompiler:
                 for pair in relation.column_pairs
             ]
             clauses.append(
-                f" JOIN {quote_identifier(step.traversal_to)} "
+                f" {keyword} {quote_identifier(step.traversal_to)} "
                 f"AS {quote_identifier(joined_alias)} ON {' AND '.join(predicates)}"
             )
         return "".join(clauses)
@@ -241,6 +256,7 @@ class SchemaAdaptivePostgresCompiler:
         *,
         compiler: JoinCapablePostgresCompiler | None = None,
         field_transforms: dict[str, FieldTransform] | None = None,
+        anchor_table: str | None = None,
     ) -> None:
         self._graph = graph.model_copy(deep=True)
         self._mapping = mapping.model_copy(deep=True)
@@ -251,6 +267,11 @@ class SchemaAdaptivePostgresCompiler:
         }
         if not set(self._field_transforms).issubset(self._mapping.fields):
             raise ValueError("field transforms must target published mapping fields")
+        if anchor_table is not None and anchor_table not in {
+            field.table for field in self._mapping.fields.values()
+        }:
+            raise ValueError("anchor table must be a published mapping table")
+        self._anchor_table = anchor_table
 
     def compile(
         self,
@@ -267,6 +288,7 @@ class SchemaAdaptivePostgresCompiler:
                 self._graph,
                 self._mapping,
                 semantic_fields,
+                anchor_table=self._anchor_table,
             )
         except RelationGraphError as exc:
             raise HarnessFailure(
@@ -281,6 +303,7 @@ class SchemaAdaptivePostgresCompiler:
                 mapping=self._mapping,
                 join_result=join_result,
                 field_transforms=dict(self._field_transforms),
+                anchor_table=self._anchor_table,
             )
         )
 

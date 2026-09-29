@@ -6,12 +6,17 @@ can answer the same questions for comparison. The mapping is developer
 authored for the team-built legacy DB (user statement 2026-09-29) and is
 not an L2 review of a real school database.
 
+Phase 7-17 adds a second target: the same canonical fields mapped onto the
+view's base tables, with the offering table as the declared row anchor so
+every JOIN is a LEFT JOIN from it (profile v3). ``--target`` selects the
+target; the default stays the view.
+
 Modes (all opt-in, loopback CLI only):
 
 - ``--check``: strict-load the private profile files (no DB connection).
-- ``--write --live``: inspect the DB with views included, verify the view
-  columns, and write ``profile.json``/``mapping.json`` under the Git-ignored
-  ``.schema-adaptive/postgres-profiles/legacy-view/`` directory.
+- ``--write --live``: inspect the DB (views included for the view target),
+  verify every mapped column, and write ``profile.json``/``mapping.json``
+  under the Git-ignored ``.schema-adaptive/postgres-profiles/<id>/``.
 - ``--smoke --live``: run fixed QueryIRs through the validated runtime
   (QueryIR validation, compiler, AST policy, read-only executor).
 
@@ -28,6 +33,7 @@ import os
 import re
 import sys
 import tempfile
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -43,6 +49,17 @@ PROFILE_DIR = Path(".schema-adaptive/postgres-profiles") / DATABASE_ID
 PROFILE_VERSION = "postgres-runtime-profile-v2"
 REVIEWER = "developer"
 REASON = "Phase 7-12 developer mapping of the team-built legacy view (not an L2 review)"
+
+BASE_DATABASE_ID = "legacy-base"
+BASE_LABEL = "Legacy DB tables (QueryIR)"
+BASE_DSN_ENV = "SCHEMA_ADAPTIVE_POSTGRES_DSN_LEGACY_BASE"
+BASE_PROFILE_DIR = Path(".schema-adaptive/postgres-profiles") / BASE_DATABASE_ID
+BASE_PROFILE_VERSION = "postgres-runtime-profile-v3"
+BASE_REASON = (
+    "Phase 7-17 developer mapping of the team-built legacy base tables (not an L2 review)"
+)
+# One result row per offering, like the view: the view's FROM table.
+BASE_ANCHOR_TABLE = "cnu_courses"
 
 # canonical field -> (view column, expected declared type prefix)
 VIEW_FIELDS: dict[str, tuple[str, str]] = {
@@ -69,6 +86,75 @@ FIELD_TRANSFORMS: dict[str, FieldTransform] = {
 # The view has no department code, and its ``course_year`` is the target
 # grade (1-5), not the offering year; there is no semester column.
 UNSUPPORTED_FIELDS = ("CourseOffering.semester", "CourseOffering.year", "Department.code")
+
+# canonical field -> (base table, column, expected declared type prefix).
+# Same fields, transforms and unsupported list as the view so the two
+# targets differ only in how rows are joined. The department table does
+# have a code column; mapping it is left for later on purpose.
+BASE_FIELDS: dict[str, tuple[str, str, str]] = {
+    "Course.code": ("subject", "subject_code", "character varying"),
+    "Course.name": ("subject", "subject_name", "character varying"),
+    "Course.credits": ("subject", "credit_hours", "character varying"),
+    "Course.category": ("subject", "category", "character varying"),
+    "Department.name": ("department", "dept_name", "character varying"),
+    "Instructor.name": ("cnu_courses", "professor", "character varying"),
+    "CourseOffering.section": ("cnu_courses", "section", "character varying"),
+    "CourseOffering.capacity": ("cnu_courses", "capacity", "integer"),
+    "CourseOffering.enrolled": ("cnu_courses", "enrolled", "integer"),
+    "Schedule.day": ("course_schedule", "day_of_week", "character varying"),
+    "Schedule.start_time": ("course_schedule", "start_time", "time"),
+    "Schedule.end_time": ("course_schedule", "end_time", "time"),
+}
+
+
+@dataclass(frozen=True)
+class LegacyProfileSpec:
+    """One registration target over the same legacy DB."""
+
+    target: str
+    database_id: str
+    label: str
+    dsn_env: str
+    profile_dir: Path
+    profile_version: str
+    reason: str
+    # canonical field -> (table, column, expected declared type prefix)
+    fields: dict[str, tuple[str, str, str]]
+    include_views: bool
+    anchor_table: str | None
+    missing_code: str
+    mismatch_code: str
+
+
+VIEW_SPEC = LegacyProfileSpec(
+    target="view",
+    database_id=DATABASE_ID,
+    label=LABEL,
+    dsn_env=DSN_ENV,
+    profile_dir=PROFILE_DIR,
+    profile_version=PROFILE_VERSION,
+    reason=REASON,
+    fields={semantic: (VIEW, column, kind) for semantic, (column, kind) in VIEW_FIELDS.items()},
+    include_views=True,
+    anchor_table=None,
+    missing_code="VIEW_MISSING",
+    mismatch_code="VIEW_COLUMN_MISMATCH",
+)
+BASE_SPEC = LegacyProfileSpec(
+    target="base",
+    database_id=BASE_DATABASE_ID,
+    label=BASE_LABEL,
+    dsn_env=BASE_DSN_ENV,
+    profile_dir=BASE_PROFILE_DIR,
+    profile_version=BASE_PROFILE_VERSION,
+    reason=BASE_REASON,
+    fields=dict(BASE_FIELDS),
+    include_views=False,
+    anchor_table=BASE_ANCHOR_TABLE,
+    missing_code="TABLE_MISSING",
+    mismatch_code="COLUMN_MISMATCH",
+)
+SPECS = {spec.target: spec for spec in (VIEW_SPEC, BASE_SPEC)}
 
 _HHMM = re.compile(r"^\d{2}:\d{2}$")
 
@@ -137,57 +223,80 @@ class LegacyViewProfileError(Exception):
         self.code = code
 
 
-def build_documents(schema_fingerprint: str, published_at: datetime) -> tuple[bytes, bytes]:
+def build_documents(
+    schema_fingerprint: str,
+    published_at: datetime,
+    spec: LegacyProfileSpec = VIEW_SPEC,
+) -> tuple[bytes, bytes]:
     """Serialize ``mapping.json`` and the ``profile.json`` that pins its hash."""
     from ..mapping.contracts import PublishedMappingProfile
 
     mapping = PublishedMappingProfile(
-        database_id=DATABASE_ID,
+        database_id=spec.database_id,
         version=1,
         schema_fingerprint=schema_fingerprint,
         ontology_version=1,
         published_by=REVIEWER,
         published_at=published_at,
         fields={
-            semantic: {"table": VIEW, "column": column, "reviewer": REVIEWER, "reason": REASON}
-            for semantic, (column, _) in VIEW_FIELDS.items()
+            semantic: {"table": table, "column": column, "reviewer": REVIEWER, "reason": spec.reason}
+            for semantic, (table, column, _) in spec.fields.items()
         },
     )
     mapping_bytes = (
         json.dumps(mapping.model_dump(mode="json"), ensure_ascii=False, indent=2, sort_keys=True)
         + "\n"
     ).encode("utf-8")
-    profile = {
-        "version": PROFILE_VERSION,
-        "database_id": DATABASE_ID,
-        "label": LABEL,
+    profile: dict[str, Any] = {
+        "version": spec.profile_version,
+        "database_id": spec.database_id,
+        "label": spec.label,
         "schema": SCHEMA,
-        "dsn_env": DSN_ENV,
+        "dsn_env": spec.dsn_env,
         "mapping_sha256": hashlib.sha256(mapping_bytes).hexdigest(),
-        "include_views": True,
+        "include_views": spec.include_views,
         "field_transforms": {field: transform.value for field, transform in FIELD_TRANSFORMS.items()},
         "unsupported_fields": sorted(UNSUPPORTED_FIELDS),
     }
+    if spec.anchor_table is not None:
+        profile["anchor_table"] = spec.anchor_table
     profile_bytes = (
         json.dumps(profile, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     ).encode("utf-8")
     return profile_bytes, mapping_bytes
 
 
-def verify_view_catalog(catalog: Any) -> None:
-    """Require the view and every mapped column with its expected type."""
+def verify_catalog(catalog: Any, spec: LegacyProfileSpec = VIEW_SPEC) -> None:
+    """Require every mapped table and column with its expected type.
+
+    Transformed fields use the runtime's own column-type rule, so a profile
+    written here is never one the runtime would then reject (a ``time``
+    prefix alone would also accept ``timestamp``).
+    """
+    from ..mapping.transforms import column_type_supports
+
     tables = {getattr(table, "name", None): table for table in getattr(catalog, "tables", [])}
-    view = tables.get(VIEW)
-    if view is None:
-        raise LegacyViewProfileError("VIEW_MISSING")
-    declared = {column.name: str(column.declared_type or "").lower() for column in view.columns}
-    for column, expected in VIEW_FIELDS.values():
+    for semantic, (table_name, column, expected) in spec.fields.items():
+        table = tables.get(table_name)
+        if table is None:
+            raise LegacyViewProfileError(spec.missing_code)
+        declared = {item.name: str(item.declared_type or "").lower() for item in table.columns}
         actual = declared.get(column)
         if actual is None or not actual.startswith(expected):
-            raise LegacyViewProfileError("VIEW_COLUMN_MISMATCH")
+            raise LegacyViewProfileError(spec.mismatch_code)
+        transform = FIELD_TRANSFORMS.get(semantic)
+        if transform is not None and not column_type_supports(transform, actual):
+            raise LegacyViewProfileError(spec.mismatch_code)
 
 
-def _existing_pair_matches(directory: Path, fingerprint: str) -> bool:
+def verify_view_catalog(catalog: Any) -> None:
+    """Require the view and every mapped column with its expected type."""
+    verify_catalog(catalog, VIEW_SPEC)
+
+
+def _existing_pair_matches(
+    directory: Path, fingerprint: str, spec: LegacyProfileSpec = VIEW_SPEC
+) -> bool:
     """True only if both files are exactly what this fingerprint would produce.
 
     Rebuilding with the stored ``published_at`` and comparing bytes also
@@ -199,7 +308,7 @@ def _existing_pair_matches(directory: Path, fingerprint: str) -> bool:
         published_at = datetime.fromisoformat(
             str(json.loads(mapping_raw.decode("utf-8"))["published_at"]).replace("Z", "+00:00")
         )
-        expected_profile, expected_mapping = build_documents(fingerprint, published_at)
+        expected_profile, expected_mapping = build_documents(fingerprint, published_at, spec)
     except Exception:
         return False
     return mapping_raw == expected_mapping and profile_raw == expected_profile
@@ -225,22 +334,23 @@ def write_profile(
     *,
     replace: bool,
     now: datetime | None = None,
+    spec: LegacyProfileSpec = VIEW_SPEC,
 ) -> str:
     """Write the private profile for ``catalog``; return a fixed status."""
-    verify_view_catalog(catalog)
-    if getattr(catalog, "database_id", None) != DATABASE_ID:
+    verify_catalog(catalog, spec)
+    if getattr(catalog, "database_id", None) != spec.database_id:
         raise LegacyViewProfileError("INSPECTION_FAILED")
     fingerprint = str(getattr(catalog, "schema_fingerprint", ""))
-    directory = repository_root / PROFILE_DIR
+    directory = repository_root / spec.profile_dir
     mapping_path = directory / "mapping.json"
     profile_path = directory / "profile.json"
     if mapping_path.exists() or profile_path.exists():
-        if _existing_pair_matches(directory, fingerprint):
+        if _existing_pair_matches(directory, fingerprint, spec):
             return "UNCHANGED"
         if not replace:
             raise LegacyViewProfileError("PROFILE_EXISTS")
     profile_bytes, mapping_bytes = build_documents(
-        fingerprint, now or datetime.now(timezone.utc).replace(microsecond=0)
+        fingerprint, now or datetime.now(timezone.utc).replace(microsecond=0), spec
     )
     # The profile pins the mapping hash, so a crash between the two writes
     # leaves a pair the strict loader rejects rather than a mixed state.
@@ -296,7 +406,7 @@ def _check_rows(query_id: str, rows: list[dict[str, Any]]) -> bool:
     return True
 
 
-def run_smoke(context: Any) -> list[dict[str, Any]]:
+def run_smoke(context: Any, spec: LegacyProfileSpec = VIEW_SPEC) -> list[dict[str, Any]]:
     """Run the fixed QueryIRs through the validated runtime; counts only."""
     from ..harness.contracts import HarnessRequest, HarnessStatus
     from ..harness.engine import ExecutionHarness
@@ -307,7 +417,7 @@ def run_smoke(context: Any) -> list[dict[str, Any]]:
         DatabaseRoutingPolicy,
     )
 
-    contexts = {DATABASE_ID: context}
+    contexts = {spec.database_id: context}
     none = _NoSqlite()
     harness = ExecutionHarness(
         model=FakeModel({query_id: query_ir for query_id, query_ir, _ in SMOKE_QUERIES}),
@@ -320,8 +430,8 @@ def run_smoke(context: Any) -> list[dict[str, Any]]:
     for query_id, _query_ir, expected_failure in SMOKE_QUERIES:
         result = harness.run(
             HarnessRequest(
-                request_id=f"legacy-view-smoke:{query_id}",
-                database_id=DATABASE_ID,
+                request_id=f"{spec.database_id}-smoke:{query_id}",
+                database_id=spec.database_id,
                 question=query_id,
             ),
             ontology,
@@ -363,6 +473,7 @@ def _build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--check", action="store_true", help="Strict-load the private profile.")
     mode.add_argument("--write", action="store_true", help="Inspect and write the profile.")
     mode.add_argument("--smoke", action="store_true", help="Run fixed QueryIRs.")
+    parser.add_argument("--target", choices=sorted(SPECS), default="view")
     parser.add_argument("--live", action="store_true", help="Allow a DB connection.")
     parser.add_argument("--replace", action="store_true", help="Replace a different profile.")
     parser.add_argument("--repository-root", default=str(Path.cwd()))
@@ -373,12 +484,12 @@ def _emit(payload: dict[str, Any]) -> None:
     print(json.dumps(payload, ensure_ascii=False, sort_keys=True), flush=True)
 
 
-def _load_profile(repository_root: str) -> Any:
+def _load_profile(repository_root: str, spec: LegacyProfileSpec = VIEW_SPEC) -> Any:
     from .postgres_startup_profile import load_postgres_startup_profiles
 
     try:
         return load_postgres_startup_profiles(
-            repository_root=repository_root, database_ids=[DATABASE_ID]
+            repository_root=repository_root, database_ids=[spec.database_id]
         )[0]
     except Exception:
         raise LegacyViewProfileError("PROFILE_INVALID") from None
@@ -390,16 +501,18 @@ def main(argv: list[str] | None = None, *, environ: dict[str, str] | None = None
     except SystemExit as exc:
         return int(exc.code or 0)
     env = os.environ if environ is None else environ
+    spec = SPECS[args.target]
+    database_id = spec.database_id
     try:
         if args.check:
-            if DSN_ENV not in env:
+            if spec.dsn_env not in env:
                 raise LegacyViewProfileError("ENV_MISSING")
-            _load_profile(args.repository_root)
+            _load_profile(args.repository_root, spec)
             _emit({"mode": "check", "status": "OK"})
             return 0
         if not args.live:
             raise LegacyViewProfileError("LIVE_FLAG_REQUIRED")
-        dsn = env.get(DSN_ENV)
+        dsn = env.get(spec.dsn_env)
         if not isinstance(dsn, str) or not dsn.strip():
             raise LegacyViewProfileError("ENV_MISSING")
         if args.write:
@@ -407,35 +520,41 @@ def main(argv: list[str] | None = None, *, environ: dict[str, str] | None = None
 
             try:
                 catalog = PostgresAdapter(
-                    {DATABASE_ID: PostgresConnectionConfig(dsn, schema=SCHEMA, include_views=True)}
-                ).inspect(DATABASE_ID)
+                    {
+                        database_id: PostgresConnectionConfig(
+                            dsn, schema=SCHEMA, include_views=spec.include_views
+                        )
+                    }
+                ).inspect(database_id)
             except Exception:
                 raise LegacyViewProfileError("INSPECTION_FAILED") from None
-            status = write_profile(Path(args.repository_root), catalog, replace=args.replace)
+            status = write_profile(
+                Path(args.repository_root), catalog, replace=args.replace, spec=spec
+            )
             _emit({"mode": "write", "status": status})
             return 0
         from ..catalog.postgres import PostgresAdapter
         from ..harness.postgres import PostgresReadOnlyExecutor
         from .postgres_runtime import build_validated_contexts
 
-        profile = _load_profile(args.repository_root)
+        profile = _load_profile(args.repository_root, spec)
         try:
             contexts = build_validated_contexts(
                 [profile],
-                adapters_by_id={DATABASE_ID: PostgresAdapter({DATABASE_ID: profile.connection_config})},
+                adapters_by_id={database_id: PostgresAdapter({database_id: profile.connection_config})},
                 executors_by_id={
-                    DATABASE_ID: PostgresReadOnlyExecutor({DATABASE_ID: profile.connection_config})
+                    database_id: PostgresReadOnlyExecutor({database_id: profile.connection_config})
                 },
                 expected_ontology_version=1,
             )
         except Exception:
             raise LegacyViewProfileError("RUNTIME_INVALID") from None
-        results = run_smoke(contexts[DATABASE_ID])
+        results = run_smoke(contexts[database_id], spec)
         ok = all(item["status"] == "OK" for item in results)
         _emit({
             "mode": "smoke",
             "status": "OK" if ok else "UNEXPECTED",
-            "unsupported_fields": list(contexts[DATABASE_ID].unsupported_fields()),
+            "unsupported_fields": list(contexts[database_id].unsupported_fields()),
             "results": results,
         })
         return 0 if ok else 2

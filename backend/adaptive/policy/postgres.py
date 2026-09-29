@@ -37,6 +37,7 @@ class SchemaAdaptivePostgresPolicy:
         *,
         policy: AstReadOnlyPolicy | None = None,
         field_transforms: dict[str, FieldTransform] | None = None,
+        anchor_table: str | None = None,
     ) -> None:
         self._graph = graph.model_copy(deep=True)
         self._mapping = mapping.model_copy(deep=True)
@@ -47,6 +48,11 @@ class SchemaAdaptivePostgresPolicy:
         }
         if not set(self._field_transforms).issubset(self._mapping.fields):
             raise ValueError("field transforms must target published mapping fields")
+        if anchor_table is not None and anchor_table not in {
+            field.table for field in self._mapping.fields.values()
+        }:
+            raise ValueError("anchor table must be a published mapping table")
+        self._anchor_table = anchor_table
 
     def validate(
         self,
@@ -67,6 +73,7 @@ class SchemaAdaptivePostgresPolicy:
                 self._graph,
                 self._mapping,
                 semantic_fields,
+                anchor_table=self._anchor_table,
             )
         except RelationGraphError as exc:
             self._fail(
@@ -81,6 +88,7 @@ class SchemaAdaptivePostgresPolicy:
                 join_result=join_result,
                 dialect=self.DIALECT,
                 field_transforms=dict(self._field_transforms),
+                anchor_table=self._anchor_table,
             )
         )
 

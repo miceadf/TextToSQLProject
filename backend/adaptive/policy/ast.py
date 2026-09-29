@@ -118,7 +118,14 @@ class AstReadOnlyPolicy:
                     f"SQL node '{type(node).__name__}' is not allowed",
                 )
 
-        alias_by_table, legacy_compatible = self._validate_tables(root, plan)
+        if context.anchor_table is not None and plan.anchor_table != context.anchor_table:
+            self._fail(
+                HarnessErrorCode.INVALID_JOIN_PLAN,
+                "JOIN plan does not start from the declared anchor table",
+            )
+        alias_by_table, legacy_compatible = self._validate_tables(
+            root, plan, left_joins=context.anchor_table is not None
+        )
         self._validate_projection(
             root,
             context,
@@ -153,6 +160,8 @@ class AstReadOnlyPolicy:
         self,
         root: exp.Select,
         plan: JoinPlan,
+        *,
+        left_joins: bool = False,
     ) -> tuple[dict[str, str], bool]:
         from_clause = root.args.get("from_")
         if not isinstance(from_clause, exp.From) or not isinstance(
@@ -194,14 +203,22 @@ class AstReadOnlyPolicy:
 
             if self._has_unsupported_args(
                 join,
-                allowed={"this", "on", "kind"},
+                allowed={"this", "on", "kind", "side"},
             ):
                 self._fail(
                     HarnessErrorCode.UNSAFE_SQL_NODE,
                     "JOIN modifiers are not allowed",
                 )
             kind = join.args.get("kind")
-            if kind is not None and str(kind).upper() != "INNER":
+            side = join.args.get("side")
+            if left_joins:
+                # A declared anchor keeps its rows: exactly a plain LEFT JOIN.
+                if kind is not None or side is None or str(side).upper() != "LEFT":
+                    self._fail(
+                        HarnessErrorCode.UNSAFE_SQL_NODE,
+                        "only plain LEFT JOIN is allowed from a declared anchor",
+                    )
+            elif side is not None or (kind is not None and str(kind).upper() != "INNER"):
                 self._fail(
                     HarnessErrorCode.UNSAFE_SQL_NODE,
                     "only default or INNER JOIN is allowed",

@@ -25,11 +25,15 @@ def plan_join_path(
     semantic_fields: Iterable[str],
     *,
     max_states: int = 50_000,
+    anchor_table: str | None = None,
 ) -> JoinPlanningResult:
     """Plan the smallest FK-backed relation tree for published semantic fields.
 
     Relations are traversed in either direction, while each ``JoinStep`` retains
     the original child-to-parent FK relation for later SQL predicate generation.
+
+    With ``anchor_table`` (Phase 7-17) that table is always required and is
+    the plan's anchor, so every result row stands for one anchor row.
     """
     if max_states < 1:
         raise ValueError("max_states must be at least 1")
@@ -44,7 +48,16 @@ def plan_join_path(
     required_tables = _resolve_required_tables(
         graph, profile, normalized_fields
     )
-    anchor = required_tables[0]
+    if anchor_table is None:
+        anchor = required_tables[0]
+    else:
+        if anchor_table not in graph.tables:
+            _raise_issue(
+                RelationErrorCode.UNKNOWN_PHYSICAL_TABLE,
+                "anchor table is absent from the graph",
+            )
+        anchor = anchor_table
+        required_tables = sorted({*required_tables, anchor_table})
 
     if len(required_tables) == 1:
         return JoinPlanningResult(

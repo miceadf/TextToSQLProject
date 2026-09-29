@@ -5,9 +5,10 @@ The legacy backend already owns ``backend/.env`` (``DATABASE_URL``,
 reuses exactly those three values so the legacy chatbot and the QueryIR
 chatbot see the same database and model:
 
-- the legacy DSN is exported in-process as the private legacy-view profile's
+- the legacy DSN is exported in-process as each private legacy profile's
   DSN variable (never printed, never written) only when that Git-ignored
-  profile exists and the variable is not already set;
+  profile exists and the variable is not already set (Phase 7-17: the view
+  profile and the base-table profile);
 - Ollama is enabled only for a loopback base URL, with the no-system request
   format the fine-tuned model needs (ADR-059).
 
@@ -25,9 +26,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .legacy_view_profile import DATABASE_ID as LEGACY_VIEW_ID
-from .legacy_view_profile import DSN_ENV as LEGACY_VIEW_DSN_ENV
-from .legacy_view_profile import PROFILE_DIR as LEGACY_VIEW_PROFILE_DIR
+from .legacy_view_profile import BASE_SPEC, VIEW_SPEC
+
+# Legacy profiles the launcher can enable, in status order.
+LEGACY_SPECS = (BASE_SPEC, VIEW_SPEC)
 
 ENV_FILE = Path("backend/.env")
 REQUEST_FORMAT = "alpaca-raw-no-system-v1"
@@ -66,13 +68,14 @@ def plan_launch(
     """Decide the optional parts; returns (profile IDs, Ollama args, status)."""
     status: dict[str, str] = {}
     profile_ids: list[str] = []
-    if not (repository_root / LEGACY_VIEW_PROFILE_DIR / "profile.json").is_file():
-        status["legacy-view"] = "disabled (PROFILE_MISSING)"
-    elif environ.get(LEGACY_VIEW_DSN_ENV) or env_values.get("DATABASE_URL"):
-        profile_ids.append(LEGACY_VIEW_ID)
-        status["legacy-view"] = "enabled"
-    else:
-        status["legacy-view"] = "disabled (DSN_MISSING)"
+    for spec in LEGACY_SPECS:
+        if not (repository_root / spec.profile_dir / "profile.json").is_file():
+            status[spec.database_id] = "disabled (PROFILE_MISSING)"
+        elif environ.get(spec.dsn_env) or env_values.get("DATABASE_URL"):
+            profile_ids.append(spec.database_id)
+            status[spec.database_id] = "enabled"
+        else:
+            status[spec.database_id] = "disabled (DSN_MISSING)"
 
     model_tag = env_values.get("OLLAMA_MODEL")
     base_url = (env_values.get("OLLAMA_BASE_URL") or "").rstrip("/")
@@ -141,18 +144,21 @@ def main(argv: list[str] | None = None) -> int:
     repository_root = Path(args.repository_root)
     env_values = read_env_file(repository_root / ENV_FILE)
     profile_ids, ollama, status = plan_launch(repository_root, env_values, os.environ)
-    if profile_ids and not os.environ.get(LEGACY_VIEW_DSN_ENV):
-        # Same DSN as the legacy backend; exported only inside this process.
-        os.environ[LEGACY_VIEW_DSN_ENV] = env_values["DATABASE_URL"]
+    for spec in LEGACY_SPECS:
+        if spec.database_id in profile_ids and not os.environ.get(spec.dsn_env):
+            # Same DSN as the legacy backend; exported only inside this process.
+            os.environ[spec.dsn_env] = env_values["DATABASE_URL"]
 
     # Each optional part is prepared on its own, so one failing never
-    # disables the other.
-    profiles: list[Any] | None = None
-    if profile_ids:
+    # disables another.
+    loaded: list[tuple[str, Any]] = []
+    for database_id in profile_ids:
         try:
-            profiles = _load_profiles(profile_ids, repository_root)
+            [profile] = _load_profiles([database_id], repository_root)
         except Exception:
-            status["legacy-view"] = "disabled (PROFILE_INVALID)"
+            status[database_id] = "disabled (PROFILE_INVALID)"
+        else:
+            loaded.append((database_id, profile))
     model: Any | None = None
     if ollama is not None:
         try:
@@ -160,25 +166,32 @@ def main(argv: list[str] | None = None) -> int:
         except Exception:
             status["ollama"] = "disabled (STARTUP_FAILED)"
 
-    app: Any = None
-    try:
-        app = _create_app(profiles, model)
-    except Exception:
-        app = None
-    if app is None and profiles:
-        # Assembly inspects the DB: an unreachable or drifted DB must not
-        # take the prototype down.
-        status["legacy-view"] = "disabled (STARTUP_VALIDATION_FAILED)"
+    def create(profiles: list[Any] | None, with_model: Any | None) -> Any:
         try:
-            app = _create_app(None, model)
+            return _create_app(profiles, with_model)
         except Exception:
-            app = None
+            return None
+
+    # Assembly inspects the DB: an unreachable or drifted DB must not take
+    # the prototype down, and one drifted profile must not disable another.
+    app: Any = None
+    kept: set[str] = set()
+    attempts = [loaded] + ([[item] for item in loaded] if len(loaded) > 1 else [])
+    for subset in attempts:
+        if not subset:
+            continue
+        app = create([profile for _, profile in subset], model)
+        if app is not None:
+            kept = {database_id for database_id, _ in subset}
+            break
+    for database_id, _profile in loaded:
+        if database_id not in kept:
+            status[database_id] = "disabled (STARTUP_VALIDATION_FAILED)"
+    if app is None:
+        app = create(None, model)
     if app is None and model is not None:
         status["ollama"] = "disabled (STARTUP_FAILED)"
-        try:
-            app = _create_app(None, None)
-        except Exception:
-            app = None
+        app = create(None, None)
     if app is None:
         print("adaptive dev launcher: prototype unavailable", flush=True)
         return 2

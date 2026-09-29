@@ -21,6 +21,9 @@ class JoinCompilationRequest(BaseModel):
     join_result: JoinPlanningResult
     # Declared per-field value transforms (PostgreSQL runtime only).
     field_transforms: dict[str, FieldTransform] = Field(default_factory=dict)
+    # Declared row anchor (PostgreSQL runtime only): every JOIN is a LEFT
+    # JOIN from this table so anchor rows are never dropped.
+    anchor_table: str | None = Field(default=None, min_length=1)
 
     @model_validator(mode="after")
     def validate_semantic_fields(self) -> "JoinCompilationRequest":

@@ -42,6 +42,8 @@ LEGACY_URL = "http://127.0.0.1:8000/api/v1/chat/query"
 QUERYIR_URL = "http://127.0.0.1:8123/api/adaptive/v1/chat/query"
 DSN_ENV = "SCHEMA_ADAPTIVE_POSTGRES_DSN_LEGACY_VIEW"
 DATABASE_ID = "legacy-view"
+# Phase 7-17: the QueryIR side can also answer from the base-table profile.
+QUERYIR_DATABASES = ("legacy-view", "legacy-base")
 HTTP_TIMEOUT_SECONDS = 240.0
 
 REFERENCE_PREFIX = "SELECT DISTINCT subject_code, section FROM v_course_info WHERE "
@@ -349,10 +351,10 @@ def ask_legacy(post: PostJson, question: str) -> dict[str, Any]:
     return record
 
 
-def ask_queryir(post: PostJson, question: str) -> dict[str, Any]:
+def ask_queryir(post: PostJson, question: str, database_id: str = DATABASE_ID) -> dict[str, Any]:
     started = time.perf_counter()
     try:
-        status, payload = post(QUERYIR_URL, {"database_id": DATABASE_ID, "query": question}, HTTP_TIMEOUT_SECONDS)
+        status, payload = post(QUERYIR_URL, {"database_id": database_id, "query": question}, HTTP_TIMEOUT_SECONDS)
     except Exception:
         return {"answered": False, "error": "TRANSPORT", "seconds": round(time.perf_counter() - started, 2)}
     record: dict[str, Any] = {"http_status": status, "seconds": round(time.perf_counter() - started, 2)}
@@ -388,6 +390,7 @@ def rerun_with_policy(
     *,
     limit: int,
     relax: bool,
+    database_id: str = DATABASE_ID,
 ) -> dict[str, Any]:
     """Replay one model output under a different server policy (no model call)."""
     from ..api.chat_query import ChatQueryError, answer_chat_query
@@ -408,7 +411,7 @@ def rerun_with_policy(
 
     try:
         answer = answer_chat_query(
-            database_id=DATABASE_ID, question=question, pg_contexts={DATABASE_ID: context}, model=_Replay()
+            database_id=database_id, question=question, pg_contexts={database_id: context}, model=_Replay()
         )
     except ChatQueryError as exc:
         return {"answered": False, "error": exc.code.value}
@@ -459,6 +462,7 @@ def run_live(
     cursor: Any,
     context: Any,
     label: str,
+    database_id: str = DATABASE_ID,
 ) -> dict[str, Any]:
     cases = []
     for case in question_set.cases:
@@ -469,15 +473,17 @@ def run_live(
             "question": case.question,
             "reference_keys": _sorted_keys(reference) if reference is not None else None,
             "legacy": ask_legacy(post, case.question),
-            "queryir": ask_queryir(post, case.question),
+            "queryir": ask_queryir(post, case.question, database_id),
         }
         qir = record["queryir"]
         if qir.get("answered") and context is not None:
             record["queryir_limit200"] = rerun_with_policy(
-                context, case.question, qir.get("filters", []), limit=200, relax=False
+                context, case.question, qir.get("filters", []), limit=200, relax=False,
+                database_id=database_id,
             )
             record["queryir_limit200_contains"] = rerun_with_policy(
-                context, case.question, qir.get("filters", []), limit=200, relax=True
+                context, case.question, qir.get("filters", []), limit=200, relax=True,
+                database_id=database_id,
             )
         else:
             # Refusals and rejected model outputs do not depend on the
@@ -491,6 +497,7 @@ def run_live(
         "label": label,
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "question_set": question_set.version,
+        "queryir_database": database_id,
         "cases": cases,
     }
 
@@ -518,6 +525,7 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("--live", action="store_true", help="Ask both loopback endpoints.")
     mode.add_argument("--summarize", metavar="RUN_JSON", help="Summarize a stored private run.")
     parser.add_argument("--label", default=None)
+    parser.add_argument("--queryir-database", choices=QUERYIR_DATABASES, default=DATABASE_ID)
     parser.add_argument("--repository-root", default=str(Path.cwd()))
     args = parser.parse_args(argv)
     question_set = load_question_set()
@@ -533,7 +541,13 @@ def main(argv: list[str] | None = None) -> int:
     if re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", label) is None:
         print(json.dumps({"status": "FAILED", "code": "INVALID_LABEL"}), flush=True)
         return 2
-    dsn = os.environ.get(DSN_ENV)
+    from ..api.legacy_view_profile import SPECS, _load_profile
+
+    database_id = args.queryir_database
+    [spec] = [item for item in SPECS.values() if item.database_id == database_id]
+    # The reference SQL runs on the same database the QueryIR side answers
+    # from, so both sides are scored against one set of rows.
+    dsn = os.environ.get(spec.dsn_env)
     if not dsn:
         print(json.dumps({"status": "FAILED", "code": "ENV_MISSING"}), flush=True)
         return 2
@@ -542,18 +556,17 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     import psycopg2
 
-    from ..api.legacy_view_profile import _load_profile
     from ..api.postgres_runtime import build_validated_contexts
     from ..catalog.postgres import PostgresAdapter
     from ..harness.postgres import PostgresReadOnlyExecutor
 
-    profile = _load_profile(args.repository_root)
+    profile = _load_profile(args.repository_root, spec)
     context = build_validated_contexts(
         [profile],
-        adapters_by_id={DATABASE_ID: PostgresAdapter({DATABASE_ID: profile.connection_config})},
-        executors_by_id={DATABASE_ID: PostgresReadOnlyExecutor({DATABASE_ID: profile.connection_config})},
+        adapters_by_id={database_id: PostgresAdapter({database_id: profile.connection_config})},
+        executors_by_id={database_id: PostgresReadOnlyExecutor({database_id: profile.connection_config})},
         expected_ontology_version=1,
-    )[DATABASE_ID]
+    )[database_id]
     try:
         connection = psycopg2.connect(dsn, connect_timeout=5, options="-c statement_timeout=5000")
     except Exception:
@@ -561,7 +574,10 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     connection.set_session(readonly=True)
     try:
-        run = run_live(question_set, post=_post_json, cursor=connection.cursor(), context=context, label=label)
+        run = run_live(
+            question_set, post=_post_json, cursor=connection.cursor(), context=context, label=label,
+            database_id=database_id,
+        )
     finally:
         connection.close()
     _write_private(Path(args.repository_root), label, run)

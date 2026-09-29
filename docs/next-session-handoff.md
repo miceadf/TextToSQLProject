@@ -1,6 +1,6 @@
 # 새 Codex 대화용 짧은 인수인계
 
-현재 기준: 2026-09-29, Phase 7-16 챗봇 서버 정책 3종 적용·재비교까지 완료(8-05까지의 관리자 기능 포함). 최신 상태는 항상 Git과 코드로 다시 확인한다. 설계와 로드맵의 원본은 [`schema-adaptive-text-to-sql-plan.md`](schema-adaptive-text-to-sql-plan.md), 독립 평가 세트 설계 기준은 [`independent-evaluation-set-design.md`](independent-evaluation-set-design.md), 안전한 잠정 비교는 [`phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md`](phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md)다.
+현재 기준: 2026-09-29, Phase 7-17 기준 table 보존 LEFT JOIN과 legacy 기본 table 매핑까지 완료(8-05까지의 관리자 기능 포함). 최신 상태는 항상 Git과 코드로 다시 확인한다. 설계와 로드맵의 원본은 [`schema-adaptive-text-to-sql-plan.md`](schema-adaptive-text-to-sql-plan.md), 독립 평가 세트 설계 기준은 [`independent-evaluation-set-design.md`](independent-evaluation-set-design.md), 안전한 잠정 비교는 [`phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md`](phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md)다.
 
 ## 프로젝트와 현재 경계
 
@@ -72,6 +72,8 @@
 
 - Phase 7-16: 챗봇은 limit 200 고정, 이름형 문자열 `contains`, profile 선언 `KOREAN_WEEKDAY` 요일 정규화를 쓴다. PostgreSQL `contains`는 LIKE 와일드카드를 escape한다. 재비교 결과 ONTOLOGY 수용 가능은 QueryIR 14, legacy 17이다. 남은 후보(field 별칭, 이수구분 값 사전, 학년 ontology, prompt)는 결과 문서 §5에 있다.
 
+- Phase 7-17: profile v3 `anchor_table`이 있으면 모든 JOIN이 anchor에서 시작하는 `LEFT JOIN`이다(ADR-073). `legacy-base`(기본 table 4개) profile은 `python -m backend.adaptive.api.legacy_view_profile --write|--smoke --live --target base`로 등록·확인한다. DSN 변수는 `SCHEMA_ADAPTIVE_POSTGRES_DSN_LEGACY_BASE`이고 `dev:all`이 자동으로 설정한다. view 경로와 답이 같다.
+
 ## 실행
 
 팀 논의용 전체 실행은 `npm run dev:all`(legacy `:8000` + 합성 prototype `:8123` + Vite `:5173`). legacy 강좌 DB는 팀이 구성한 유사 데이터라는 사용자 확인이 있다(`docs/synthetic-clarification-team-handoff.md`).
@@ -82,7 +84,9 @@
   - 7-13: 완료.
   - 7-14: 완료.
   - 7-15: 완료.
-  - 7-16: 3종 정책 적용·재비교 완료. 다음은 `docs/phase7-16-chat-policies-recompare-results-2026-09-29.md` §5 후보 중 사용자 결정 항목이다.
+  - 7-16: 3종 정책 적용·재비교 완료.
+  - 7-17: LEFT JOIN·기본 table 매핑 완료.
+  - 승인된 다음 순서(계획 문서 Phase 8 개발 순서): 8-06 코드값·값 사전 → 합성 변형 benchmark·규칙 기반 기준선 → AI mapping 제안 비교 → 8-07 → L1 뒤 prompt·별칭 → Phase 9.
 0. Phase 8 남은 항목: 8-06 코드값·관계 교정(ontology value mapping 설계 ADR 선행), 8-07 관리자 화면 통합, 8-01~8-05 관리자 흐름의 browser smoke(private storage 격리 방법 필요).
 1. base 모델에 대한 QueryIR prompt 적합성(출력 구조 실패 variant당 8건) 비노출 진단. 주장 범위는 ADR-061로 한정됐고 확정 수치는 L1·L3 뒤다.
 2. 목록 전체 질문에 불필요한 filter를 붙이는 모델 출력 경향(Course는 질문 전체 `equals`로 guard 거부, Instructor는 부분 문자열 `contains`로 0행)과 `CONSTRAINT_INVALID_QUERY_IR`의 reflection 거부 미구분은 prompt·진단 후보다. 내장 SYSTEM 제거 후에도 남았다. guard 완화는 하지 않는다.

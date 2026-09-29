@@ -20,6 +20,9 @@ class AstPolicyContext(BaseModel):
     dialect: Literal["sqlite", "postgres"] = "sqlite"
     # Declared per-field value transforms; only the postgres runtime sets them.
     field_transforms: dict[str, FieldTransform] = Field(default_factory=dict)
+    # Declared row anchor (postgres runtime only): every JOIN must then be a
+    # plain LEFT JOIN from this table; without it only INNER JOIN is allowed.
+    anchor_table: str | None = Field(default=None, min_length=1)
 
     @computed_field
     @property

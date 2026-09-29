@@ -677,6 +677,7 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 - [x] Phase 7-14 `ChatPopup`의 DB별 경로 선택(legacy 기준선은 기존 경로 유지, postgres는 QueryIR, 그 밖의 합성 DB는 챗봇 미지원 안내), 부분 mapping catalog 409 구분, `dev:all` launcher의 legacy DSN·Ollama 재사용(browser 확인)
 - [x] Phase 7-15 같은 질문의 legacy 챗봇 대 QueryIR 경로 비교 보고(개발자 작성 30문항, ONTOLOGY 범위 수용 가능 legacy 17·QueryIR 11·서버 정책 변형 13/22, 미지원 field 거절 QueryIR 3/3·legacy 0/3; L1 전 잠정)
 - [x] Phase 7-16 챗봇 서버 정책 3종(limit 200 고정, 이름형 문자열 `contains`, profile 선언형 요일 정규화 `KOREAN_WEEKDAY`)과 PostgreSQL `contains` escape, 재비교(ONTOLOGY 수용 가능 QueryIR 11→14, legacy 17; L1 전 잠정)
+- [x] Phase 7-17 기준 table 보존 LEFT JOIN(profile v3 `anchor_table`, anchor 모드 policy는 수식어 없는 `LEFT JOIN`만, 시작 시 전체 table 조합 경로 유일성 검사)과 legacy 기본 table 매핑 `legacy-base`(view와 전체 관계 6,846행·7-16 답변 22/22·30문항 key 집합 30/30 동일)
 - [ ] 실제 CNU DB regression test
 - [ ] SQL dialect 차이 처리
 - [ ] 응답시간·GPU/메모리 사용량 기록
@@ -690,6 +691,8 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 - [x] mapping publish·rollback 화면(Phase 8-01: 버전 이력·이전 immutable 버전 재활성화, 합성 SQLite만 검증)
 - [x] schema fingerprint 비교(Phase 8-02: 등록 간 읽기 전용 비교·활성 mapping 영향, 합성 SQLite만 검증; PostgreSQL 연결은 순수 함수만 공유)
 - [x] 영향받은 mapping을 `STALE` 처리(Phase 8-03: 새 등록 검토를 기준 활성 mapping 승계로 시작, 영향 field만 `STALE`·재검토; 합성 SQLite만 검증)
+- [ ] 합성 변형 benchmark(형식·코드값·의미·구조)와 규칙 기반 mapping 기준선
+- [ ] AI mapping 제안(닫힌 목록 안의 column·변환·값 사전 제안, 관리자 검토 유지)과 규칙 기반 비교
 - [x] verified query 자동 회귀 테스트(Phase 8-05: 서버 계산 결과 hash를 verified 기준선으로 기록, publish·재활성화 직후와 재활성화 전 비활성 버전에서 고정 query 회귀 비교; 경고만, 자동 차단 없음; 합성 SQLite만 검증)
 - [x] Phase 8-01 mapping 버전 이력과 이전 버전 재활성화(`ACTIVATE`; activation만 교체, publish와 같은 실행 가능성 재검증, 최신 내용 재publish 시 최신 버전 재활성화, 활성 기록 `activated_by`·`activated_at`, frontend 2단계 확인; 합성 입력만)
 - [x] Phase 8-02 등록 간 schema 비교와 활성 mapping 영향 분석(`catalog-diff-v1`·`registration-compare-v1`; table·column·FK 변화, field별 `UNCHANGED`/`TYPE_CHANGED`/`COLUMN_MISSING`/`TABLE_MISSING`, 그대로 옮긴 mapping의 compile·AST 검사 통과 여부; 파일 쓰기·실행 권한 변경·candidate SQL 실행 없음)
@@ -698,6 +701,18 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 - [x] Phase 8-05 verified query 기준선과 버전 회귀 비교(`verified-queries-v1`·`verified-query-regression-v1`; `MATCH`/`CHANGED`/`FAILED`/`UNVERIFIED`, 게시 digest 기록이 있는 비활성 버전도 고정 query로 확인, 행 값 저장 없음)
 
 Phase 8 분할 계획(상세는 [`docs/prompts/phase8-01-mapping-version-rollback.md`](prompts/phase8-01-mapping-version-rollback.md)): 8-01 rollback → 8-02 schema fingerprint 비교 → 8-03 영향 field `STALE` 처리 → 8-04 publish된 mapping의 test query 미리보기 → 8-05 verified query 회귀 → 8-06 코드값·관계 교정(설계 ADR 선행) → 8-07 관리자 화면 통합. 실제 학교 DB는 L2 전 금지.
+
+2026-09-29 개발 순서(사용자 승인, 상세는 변경 이력):
+
+1. 7-17 기준 table 보존 LEFT JOIN과 기본 table 매핑.
+2. 8-06 코드값·값 사전 설계와 구현.
+3. 합성 변형 benchmark(형식·코드값·의미·구조)와 규칙 기반 기준선 측정.
+4. AI mapping 제안과 규칙 기반 비교(닫힌 목록 제안, 관리자 검토 유지).
+5. 8-07 관리자 화면 통합과 browser smoke.
+6. prompt·field 별칭 개선은 L1 질문 세트 확보 뒤.
+7. Phase 9 최종 평가는 L1/L3 뒤.
+
+학년 필드 추가는 팀 결정 사항이다. 개수 요청("3개만") 반영은 보류한다.
 
 ### Phase 9. 최종 평가와 논문
 
@@ -1722,7 +1737,7 @@ SQLite DB 입력
   - inspector: `include_views`를 명시적으로 켤 때만 view를 포함한다. 기본 query와 fingerprint는 바뀌지 않는다.
 - 이유:
   - legacy 챗봇과 같은 view를 쓰면, 두 경로의 결과 차이가 질문 이해 방식에서만 생긴다.
-  - 기본 table에 mapping하면 LEFT JOIN이 없어 시간표 없는 강좌(632행)가 빠진다. 이는 별도 단계(B)로 둔다.
+  - 기본 table에 mapping하면 LEFT JOIN이 없어 시간표 없는 강좌(632행)가 빠진다. 이는 별도 단계(B)로 둔다. (Phase 7-17에서 해결: ADR-073, `legacy-base` profile.)
   - 값 형식 차이는 실제 DB에 흔하다. 하지만 모델이나 관리자가 SQL 식을 쓰게 하면 policy가 검증할 수 없다. 닫힌 목록과 exact AST 비교는 검증 가능성을 유지하면서 표현 차이를 흡수한다.
   - 미지원 field를 명시 목록으로만 허용해야 누락 mapping과 의도된 미지원이 구분된다.
 - 한계:
@@ -1814,6 +1829,25 @@ SQLite DB 입력
   - "3개만" 같은 개수 요청은 반영하지 않는다.
   - `contains` 완화로 `전공`이 `전공(핵심)`·`전공(기초)`를 모두 포함하는 것은 의도된 동작이다.
   - SQLite 경로의 `contains` escape는 이번 범위 밖이다.
+
+### ADR-073: 결과 행의 기준 table(anchor)을 profile이 선언하면 모든 JOIN을 anchor에서 시작하는 LEFT JOIN으로 쓴다
+
+- 날짜: 2026-09-29
+- 상태: 채택(사용자 결정, 개발 순서 1번)
+- 결정:
+  - private PostgreSQL profile `postgres-runtime-profile-v3`는 v2에 필수 `anchor_table`을 더한다. v1·v2는 바꾸지 않는다.
+  - anchor가 있으면 planner는 anchor를 항상 required table에 넣고 계획 시작점으로 고정한다. compiler는 모든 단계를 `LEFT JOIN`으로 쓴다.
+  - AST policy는 anchor 모드에서 수식어 없는 `LEFT JOIN`만, 비 anchor 모드에서 기본·`INNER JOIN`만 허용한다. anchor는 compiler와 policy가 같은 profile 값에서 받아 계획을 각각 세운다.
+  - 시작 검증은 anchor가 매핑된 table인지, 매핑된 table(최대 8개)의 모든 부분집합에서 anchor 고정 계획이 하나로 정해지는지 확인한다. 아니면 fail closed.
+- 이유:
+  - INNER JOIN만 쓰면 선택적 관계(시간표 없는 강좌 등)의 행이 오류 없이 사라진다. legacy 기본 table에서는 6,846행 중 632행이 빠지고 7-16 답변 22개 중 6개가 달라졌다.
+  - "결과 한 행 = anchor 한 행"은 view 정의가 표현하던 의미를 profile 선언으로 옮긴 것이다. 모든 단계를 LEFT로 두면 nullable 정보 없이도 anchor 행 보존이 보장된다. FK 무결성이 있으면 부모 방향 LEFT는 INNER와 같다.
+  - anchor 고정은 같은 table 쌍을 잇는 다른 경로(필수과목 table 등)로 생기는 모호성도 없앤다. 시작 시 전체 부분집합을 확인해 질의 시점의 모호성 실패를 막는다.
+- 한계:
+  - anchor는 자동 추론하지 않는다.
+  - FK 무결성이 깨진 부모 방향 행은 NULL로 남는다.
+  - ORDER BY가 없어 행 상한에 걸리면 부분집합이 달라질 수 있다.
+  - SQLite 경로는 INNER 그대로다.
 
 ## 21. 변경 이력
 
@@ -2058,3 +2092,5 @@ SQLite DB 입력
 - Phase 7-14 ChatPopup의 DB별 경로 선택과 `dev:all` 연결 완료. `src/adaptive-prototype/chatQuery.ts`에 경로 선택, `adaptive-chat-query-v1` strict parser·client, 카드 key 변환, 안내 문구를 추가했다. `ChatPopup`은 현재 경로를 표시한다. QueryIR 경로에서는 카드·시간표와 함께 SQL 대신 "이해한 조건"을 보이고, 수강 이력 제외를 비활성화한다. 합성·private SQLite DB는 legacy로 질의하지 않고 미지원을 안내한다. 부분 mapping PostgreSQL catalog는 409 `SYNTHETIC_CATALOG_UNSUPPORTED`로 구분하고, 화면은 이때만 챗봇 안내를 보인다. `backend/adaptive/api/dev_launcher.py`와 `dev:adaptive-prototype:legacy` script를 추가했고, `dev:all`이 이를 쓴다. launcher는 legacy `.env`의 세 key만 읽어 legacy-view DSN(프로세스 안)과 loopback Ollama를 켜며, 부분별로 독립 강등한다. `gpt-6-luna` high review-only 지적 6건 중 5건을 재현해 고쳤다. (1) launcher가 모델 실패를 DB 실패로 처리해 둘 다 끌 수 있던 문제: profile 로드·모델 구성·조립을 분리. (2) 완전 mapping PostgreSQL의 일시 catalog 오류도 챗봇 안내로 가리던 문제: 409 전용 code. (3) DB 전환 직후 이전 응답이 새 화면에 붙을 수 있던 경합: layout effect 무효화와 legacy 경로 대상 확인. (4) 결과 문자열 길이 제한 불일치: 서버 1,000자. (5) client 제어 문자 검증. 완전 mapping DB의 연도·학기 카드 상세 미표시는 legacy view에 해당 field가 없어 보류했다. browser 확인(`dev:all`)은 다음과 같다. launcher 상태 `legacy-view=enabled, ollama=enabled`. 합성 flat → 챗봇 미지원 표시. Legacy DB (QueryIR) → 목록 자리 안내(409)와 재시도 버튼 없음, `3학점 전공 과목 알려줘` 50건과 이해한 조건 `학점 = 3`, 연도 질문은 미지원 안내, SQL 패널 없음. Legacy 기준선 → 기존 SQL 경로·SQL 패널, 같은 질문 `교양 과목 중에 금요일 수업`에서 legacy 190행(119과목) 대 QueryIR 50행(모델 limit). 상위 카드 순서와 표시 형식은 같았다. 행 수 차이는 7-15의 limit 정책 항목이다. 관련 Python 테스트 125개, frontend 13개 파일 전체(7-14 신규 8개 포함), tsc·eslint(src 전체), 전체 pytest 1246개·6 skip·610 subtests, compileall, diff check 통과. legacy backend·DB 변경 없음. ADR-070 추가
 - Phase 7-15 같은 질문의 legacy 챗봇 대 QueryIR 경로 비교 완료. `backend/adaptive/evaluation/legacy_chat_compare.py`와 질문 세트 `data/legacy-chat-compare-v1.json`을 추가했다. 질문 세트는 개발자 작성 30문항이다(ONTOLOGY 22, OUTSIDE_SCOPE 5, UNSUPPORTED_FIELD 3, 결과 확인 전 고정). `gpt-6-luna` high review-only를 live 실행 전에 받아 지적 9건을 모두 재현해 고쳤다: 기준 SQL AST 형태 검증, redirect 차단, 상한 도달 확인 뒤에만 부분집합 수용, legacy 실제 LIMIT 기록, NULL 분반 보존, 요약 출력에서 질문 원문 제외, 배타적 파일 생성, DB 연결 timeout, 정책 재실행 테스트. live 실행(`dev:all`, 로컬 Ollama, 1회) 결과, ONTOLOGY 범위 수용 가능 문항은 legacy 17, QueryIR 11, `+limit200` 10, `+limit200+contains` 13이다. 요일 정규화를 더한 오프라인 추정은 14다. 미지원 field 거절은 QueryIR 3/3, legacy 0/3이다(legacy는 `2024년`을 4학년으로 조회한 경우 포함). legacy는 학점 형식 불일치(`credit_hours = '3'`)로 3문항이 0행이었다. QueryIR의 주된 실패는 없는 field 이름 생성(`Course.department` 등), 요일·이수구분 값 형식, 부분 학과명 `equals`, 조건 해석 오류다. ontology 밖 질문(학년·선수과목 등)은 legacy 4/5, QueryIR 0~1/5다. 결과는 `docs/phase7-15-legacy-vs-queryir-comparison-results-2026-09-29.md`에 두었다. limit·문자열 완화·코드값 정규화·field 별칭·ontology 확장은 사용자 결정 항목으로 남긴다. 비교 모듈 테스트 38개, 전체 pytest 1284개·6 skip·610 subtests, compileall, diff check 통과. 서버 정책·legacy 변경 없음. 모델 성능 확정 수치가 아니다(L1·L3 전). ADR-071 추가
 - Phase 7-16 챗봇 서버 정책 3종 적용과 재비교 완료(사용자 결정). `chat_query.py`에 `CHAT_ROW_LIMIT = 200`과 이름형 문자열 `contains` 완화(`CONTAINS_FIELDS`)를 넣었다. understood 표시는 실제 실행 조건과 같다. `mapping/transforms.py`에 `KOREAN_WEEKDAY`(identity SQL, 요일 값 정규화, 모르는 값 거부)와 변환별 허용 연산자 `transform_operators()`를 추가했다. legacy-view profile에 `Schedule.day`로 선언했고, private profile은 `--write --live --replace`로 갱신했다(fingerprint 불변, smoke 5/5). `gpt-6-luna` high review-only 지적 1건(PostgreSQL `contains`의 LIKE 와일드카드 미escape)을 재현해 고쳤다. compiler와 policy가 같은 `postgres_contains_pattern`을 쓰며, 실제 PostgreSQL에서 escape 동작을 확인했다. 재비교(`p716-run1`, 모델 출력과 legacy SQL은 7-15와 문항별로 동일) 결과, ONTOLOGY 수용 가능 문항은 QueryIR 11→14, legacy 17이다. 개선 문항은 q05·q19·q21·q22이고, limit 200으로 q02·q11·q14·q18이 `EXACT`가 되었다. q20·q24는 50행 상한이 가리던 오류가 드러났다. 둘 다 맞힌 문항 11, QueryIR만 3(학점 형식 2, legacy key 없는 조회 1), legacy만 6(없는 field 이름, 이수구분 값 형식, 조건 해석, 과도한 값 지정)이다. 결과는 `docs/phase7-16-chat-policies-recompare-results-2026-09-29.md`에 두었다. 관련 테스트 224개(77 subtests), frontend 13개 파일 전체, 전체 pytest 1302개·6 skip·610 subtests, compileall, diff check 통과. legacy·frontend 변경 없음. ADR-072 추가
+- 2026-09-29 개발 순서 결정(사용자 승인). 순서는 다음과 같다: 7-17 기준 table 보존 LEFT JOIN, 8-06 코드값·값 사전, 합성 변형 benchmark와 규칙 기반 기준선, AI mapping 제안 비교, 8-07 관리자 화면 통합, L1 뒤 prompt·별칭 개선, L1/L3 뒤 Phase 9. 이유는 두 가지다. JOIN 한계와 mapping 오류가 섞이면 AI 비교의 원인을 가를 수 없다. 또 benchmark를 AI보다 먼저 고정해야 공정하다. Phase 8 로드맵에 benchmark·AI 제안 항목을 추가했다.
+- Phase 7-17 기준 table 보존 LEFT JOIN 완료(ADR-073). `plan_join_path(anchor_table=)`, compiler `LEFT JOIN`, AST policy anchor 모드(수식어 없는 `LEFT JOIN`만), profile v3 `anchor_table`, 시작 시 매핑 table 전체 부분집합 경로 유일성 검사를 추가했다. `legacy_view_profile.py`를 spec 구조(`--target view|base`)로 일반화하고 legacy 기본 table 4개에 `legacy-base` private profile을 등록했다(smoke 5/5). view와 같은 12 field·변환 4·미지원 3이며, 학과 코드는 JOIN 차이만 보려고 미지원으로 유지했다. anchor 없이는 과목+학과 경로가 모호하다(개설강좌 경유 대 필수과목 table 경유). 실제 DB 동등성 검증 결과다. 카드 전체 관계는 view와 multiset이 같다(6,846행, 시간표 없는 632행 포함). 7-16 답변 22문항을 상한 없이 재실행해도 22/22 같다. INNER JOIN 반례에서는 6,214행으로 줄고 6문항의 답이 달라진다. 같은 30문항 live 비교(`p717-base-run1`)에서는 모델 출력·legacy SQL·판정·key 집합이 모두 30/30 같았다. ONTOLOGY 수용 가능 QueryIR 14, legacy 17이다. `dev:all` launcher는 legacy profile별로 degrade한다. 비교 도구에는 `--queryir-database`를 추가했다. `gpt-6-luna` high review-only 지적 3건을 확인했다. 비교 도구의 기준 SQL이 선택 대상과 다른 DSN 변수를 읽던 문제와, 등록 시 시간 변환 column에 `timestamp`가 통과하던 문제는 재현해 고쳤고 회귀 테스트를 추가했다. 계획 문서의 7-12 전제 갱신 누락은 ADR-068에 해결 표시를 달아 반영했다. 결과는 `docs/phase7-17-anchor-left-join-results-2026-09-29.md`에 두었다. 관련 테스트 208개, 전체 pytest 1339개·6 skip·610 subtests, compileall, diff check 통과. legacy·frontend 변경 없음. ADR-073 추가

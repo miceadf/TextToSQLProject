@@ -8,7 +8,12 @@ from typing import Any
 import pytest
 
 from backend.adaptive.api import dev_launcher
-from backend.adaptive.api.legacy_view_profile import DSN_ENV, PROFILE_DIR
+from backend.adaptive.api.legacy_view_profile import (
+    BASE_DSN_ENV,
+    BASE_PROFILE_DIR,
+    DSN_ENV,
+    PROFILE_DIR,
+)
 
 SECRET_DSN = "postgresql://svc:s3cret-pw-714@127.0.0.1:5432/legacy714"
 
@@ -18,9 +23,9 @@ def _write_env(root: Path, text: str) -> None:
     (root / "backend" / ".env").write_text(text, encoding="utf-8")
 
 
-def _write_profile(root: Path) -> None:
-    (root / PROFILE_DIR).mkdir(parents=True, exist_ok=True)
-    (root / PROFILE_DIR / "profile.json").write_text("{}", encoding="utf-8")
+def _write_profile(root: Path, directory: Path = PROFILE_DIR) -> None:
+    (root / directory).mkdir(parents=True, exist_ok=True)
+    (root / directory / "profile.json").write_text("{}", encoding="utf-8")
 
 
 def test_read_env_file_keeps_only_known_keys(tmp_path: Path) -> None:
@@ -52,7 +57,15 @@ def test_plan_enables_both_parts_when_configured(tmp_path: Path) -> None:
     profile_ids, ollama, status = dev_launcher.plan_launch(tmp_path, env, {})
     assert profile_ids == ["legacy-view"]
     assert ollama == {"model_tag": "text2sql_qwen", "base_url": "http://127.0.0.1:11434"}
-    assert status == {"legacy-view": "enabled", "ollama": "enabled"}
+    assert status == {
+        "legacy-base": "disabled (PROFILE_MISSING)",
+        "legacy-view": "enabled",
+        "ollama": "enabled",
+    }
+    _write_profile(tmp_path, BASE_PROFILE_DIR)
+    profile_ids, _ollama, status = dev_launcher.plan_launch(tmp_path, env, {})
+    assert profile_ids == ["legacy-base", "legacy-view"]
+    assert status["legacy-base"] == "enabled"
 
 
 @pytest.mark.parametrize(
@@ -182,6 +195,69 @@ def test_invalid_profile_keeps_ollama(
     assert calls == [(False, True)]
     out = capsys.readouterr().out
     assert "legacy-view=disabled (PROFILE_INVALID)" in out and "ollama=enabled" in out
+
+
+def test_drifted_base_profile_keeps_the_view_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _write_profile(tmp_path)
+    _write_profile(tmp_path, BASE_PROFILE_DIR)
+    _write_env(tmp_path, f"DATABASE_URL={SECRET_DSN}\n")
+    monkeypatch.delenv(DSN_ENV, raising=False)
+    monkeypatch.delenv(BASE_DSN_ENV, raising=False)
+    calls: list[list[str]] = []
+
+    def fake_create(profiles: Any, model: Any) -> Any:
+        calls.append(list(profiles or []))
+        if profiles and "legacy-base" in profiles:
+            raise RuntimeError("drifted")
+        return _App()
+
+    monkeypatch.setattr(dev_launcher, "_load_profiles", lambda ids, root: list(ids))
+    monkeypatch.setattr(dev_launcher, "_create_app", fake_create)
+    import uvicorn
+
+    monkeypatch.setattr(uvicorn, "run", lambda app, **kwargs: None)
+    assert dev_launcher.main(["--repository-root", str(tmp_path)]) == 0
+    assert calls == [["legacy-base", "legacy-view"], ["legacy-base"], ["legacy-view"]]
+    out = capsys.readouterr().out
+    assert "legacy-base=disabled (STARTUP_VALIDATION_FAILED)" in out
+    assert "legacy-view=enabled" in out
+    assert "s3cret" not in out
+    import os
+
+    # Each profile has its own DSN variable, both exported in-process.
+    assert os.environ.get(DSN_ENV) == SECRET_DSN and os.environ.get(BASE_DSN_ENV) == SECRET_DSN
+
+
+def test_one_invalid_profile_keeps_the_other(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _write_profile(tmp_path)
+    _write_profile(tmp_path, BASE_PROFILE_DIR)
+    _write_env(tmp_path, f"DATABASE_URL={SECRET_DSN}\n")
+    monkeypatch.delenv(DSN_ENV, raising=False)
+    monkeypatch.delenv(BASE_DSN_ENV, raising=False)
+    calls: list[list[str]] = []
+
+    def load(ids: Any, _root: Any) -> Any:
+        if ids == ["legacy-view"]:
+            raise RuntimeError("bad profile")
+        return list(ids)
+
+    def fake_create(profiles: Any, model: Any) -> Any:
+        calls.append(list(profiles or []))
+        return _App()
+
+    monkeypatch.setattr(dev_launcher, "_load_profiles", load)
+    monkeypatch.setattr(dev_launcher, "_create_app", fake_create)
+    import uvicorn
+
+    monkeypatch.setattr(uvicorn, "run", lambda app, **kwargs: None)
+    assert dev_launcher.main(["--repository-root", str(tmp_path)]) == 0
+    assert calls == [["legacy-base"]]
+    out = capsys.readouterr().out
+    assert "legacy-base=enabled" in out and "legacy-view=disabled (PROFILE_INVALID)" in out
 
 
 def test_main_rejects_out_of_range_port(capsys: pytest.CaptureFixture[str]) -> None:

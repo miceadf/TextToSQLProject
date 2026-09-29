@@ -99,6 +99,9 @@ class PostgresRuntimeProfile:
     Phase 7-12: a profile may declare canonical fields the database cannot
     answer (``unsupported_fields``) and closed-list value transforms. With
     the defaults the full canonical field set is still required.
+
+    Phase 7-17: a profile may declare a row ``anchor_table``; every JOIN is
+    then a LEFT JOIN from that table.
     """
 
     __slots__ = (
@@ -108,6 +111,7 @@ class PostgresRuntimeProfile:
         "_published_mapping",
         "_field_transforms",
         "_unsupported_fields",
+        "_anchor_table",
     )
 
     def __init__(
@@ -119,11 +123,13 @@ class PostgresRuntimeProfile:
         published_mapping: PublishedMappingProfile,
         field_transforms: dict[str, FieldTransform] | None = None,
         unsupported_fields: tuple[str, ...] | list[str] = (),
+        anchor_table: str | None = None,
     ) -> None:
         if not _valid_database_id(database_id):
             raise PostgresRuntimeError()
         transforms = _copy_transforms(field_transforms)
         unsupported = _copy_unsupported(unsupported_fields)
+        anchor = _copy_anchor(anchor_table)
         if not _valid_label(label):
             raise PostgresRuntimeError()
         if not isinstance(connection_config, PostgresConnectionConfig):
@@ -146,6 +152,7 @@ class PostgresRuntimeProfile:
         object.__setattr__(self, "_published_mapping", snapshot)
         object.__setattr__(self, "_field_transforms", transforms)
         object.__setattr__(self, "_unsupported_fields", unsupported)
+        object.__setattr__(self, "_anchor_table", anchor)
 
     def __setattr__(self, name: str, value: Any) -> None:
         raise PostgresRuntimeError()
@@ -168,6 +175,10 @@ class PostgresRuntimeProfile:
     @property
     def unsupported_fields(self) -> tuple[str, ...]:
         return self._unsupported_fields
+
+    @property
+    def anchor_table(self) -> str | None:
+        return self._anchor_table
 
     @property
     def connection_config(self) -> PostgresConnectionConfig:
@@ -221,6 +232,44 @@ def _copy_unsupported(value: Any) -> tuple[str, ...]:
     return tuple(sorted(value))
 
 
+def _copy_anchor(value: Any) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value or len(value) > 63 or value != value.strip():
+        raise PostgresRuntimeError()
+    return value
+
+
+# Upper bound on mapped tables for the startup check that every table subset
+# has exactly one anchored JOIN plan (2**8 - 1 plans at most).
+_MAX_ANCHORED_TABLES = 8
+
+
+def _check_anchored_plans(graph: Any, published: PublishedMappingProfile, anchor: str) -> None:
+    """Every combination of mapped tables must resolve to one plan from the anchor."""
+    from itertools import combinations
+
+    from ..relations.contracts import JoinPlanStatus
+    from ..relations.planner import plan_join_path
+
+    fields_by_table: dict[str, str] = {}
+    for semantic in sorted(published.fields):
+        fields_by_table.setdefault(published.fields[semantic].table, semantic)
+    if anchor not in fields_by_table or len(fields_by_table) > _MAX_ANCHORED_TABLES:
+        raise PostgresRuntimeError()
+    tables = sorted(fields_by_table)
+    for size in range(1, len(tables) + 1):
+        for subset in combinations(tables, size):
+            result = plan_join_path(
+                graph,
+                published,
+                [fields_by_table[table] for table in subset],
+                anchor_table=anchor,
+            )
+            if result.status is not JoinPlanStatus.RESOLVED:
+                raise PostgresRuntimeError()
+
+
 class ValidatedPostgresContext:
     """Startup-validated per-database runtime (server-owned, redacted)."""
 
@@ -237,6 +286,7 @@ class ValidatedPostgresContext:
         "_graph",
         "_field_transforms",
         "_unsupported_fields",
+        "_anchor_table",
     )
 
     def __init__(
@@ -254,8 +304,10 @@ class ValidatedPostgresContext:
         graph: Any,
         field_transforms: dict[str, FieldTransform] | None = None,
         unsupported_fields: tuple[str, ...] = (),
+        anchor_table: str | None = None,
     ) -> None:
         object.__setattr__(self, "_database_id", database_id)
+        object.__setattr__(self, "_anchor_table", _copy_anchor(anchor_table))
         object.__setattr__(self, "_field_transforms", _copy_transforms(field_transforms))
         object.__setattr__(self, "_unsupported_fields", _copy_unsupported(unsupported_fields))
         object.__setattr__(self, "_label", label)
@@ -314,6 +366,10 @@ class ValidatedPostgresContext:
     def unsupported_fields(self) -> tuple[str, ...]:
         """Canonical fields this database explicitly cannot answer."""
         return self._unsupported_fields
+
+    def anchor_table(self) -> str | None:
+        """Declared row anchor (physical name; server-side only)."""
+        return self._anchor_table
 
     def normalize_rows(self, columns: Any, rows: Any) -> Any:
         """JSON-safe values for transformed fields; other values unchanged."""
@@ -464,6 +520,10 @@ def _validate_one(
             or str(getattr(graph, "schema_fingerprint", "")) != fingerprint
         ):
             raise PostgresRuntimeError()
+        anchor = profile.anchor_table
+        if anchor is not None:
+            # Fail closed unless every question has one anchored JOIN path.
+            _check_anchored_plans(graph, published, anchor)
     except PostgresRuntimeError:
         raise
     except Exception:
@@ -473,10 +533,10 @@ def _validate_one(
         from ..policy.postgres import SchemaAdaptivePostgresPolicy
 
         compiler = SchemaAdaptivePostgresCompiler(
-            graph, published, field_transforms=transforms
+            graph, published, field_transforms=transforms, anchor_table=anchor
         )
         policy = SchemaAdaptivePostgresPolicy(
-            graph, published, field_transforms=transforms
+            graph, published, field_transforms=transforms, anchor_table=anchor
         )
     except Exception:
         raise PostgresRuntimeError() from None
@@ -493,6 +553,7 @@ def _validate_one(
         graph=graph,
         field_transforms=transforms,
         unsupported_fields=tuple(sorted(unsupported)),
+        anchor_table=anchor,
     )
 
 
