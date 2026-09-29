@@ -33,6 +33,7 @@ import {
   type SqliteUploadSuccess,
 } from '../adaptive-prototype/sqliteUpload.ts'
 import MappingReviewPanel from '../adaptive-prototype/MappingReviewPanel.tsx'
+import SchemaComparePanel from '../adaptive-prototype/SchemaComparePanel.tsx'
 import { coursesApi } from '../services/api'
 import type { Course } from '../types/course'
 import { isStaleResponse, nextOperation } from '../adaptive-prototype/state.ts'
@@ -754,6 +755,11 @@ export default function MainPage({
                     key={uploadResult.database_id}
                     databaseId={uploadResult.database_id}
                     onPublished={() => setRegistryRetry((value) => value + 1)}
+                  />
+                  <SchemaComparePanel
+                    key={`compare-${uploadResult.database_id}`}
+                    candidateDatabaseId={uploadResult.database_id}
+                    baseOptions={registry.filter((entry) => entry.schema === 'private')}
                   />
                 </div>
               ) : null}

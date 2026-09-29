@@ -1472,3 +1472,73 @@ def incomplete_field_ids(*, repository_root: str | Path, database_id: str) -> li
         if entry.decision not in {ReviewDecision.APPROVED, ReviewDecision.REMAPPED}
     )
     return pending[:64]
+
+
+@dataclass(frozen=True)
+class RegistrationComparison:
+    base_database_id: str
+    candidate_database_id: str
+    base_mapping_version: int
+    diff: Any
+    field_impacts: list[Any]
+    ontology_version_match: bool
+    carry_over_executable: bool
+
+
+def compare_registrations(
+    *, repository_root: str | Path, base_database_id: str, candidate_database_id: str
+) -> RegistrationComparison:
+    """Read-only schema comparison against the base's active mapping (Phase 8-02).
+
+    Writes nothing and grants nothing: the carry-over check stops at compile
+    and AST policy validation and never executes SQL.
+    """
+    from ..catalog.compare import FieldImpactStatus, compare_catalogs, mapping_impact
+
+    base_database_id = _validate_database_id(base_database_id)
+    candidate_database_id = _validate_database_id(candidate_database_id)
+    if base_database_id == candidate_database_id:
+        raise _fail(ReviewErrorCode.INVALID_INPUT)
+    root, _review_root_path = _review_root(repository_root)
+    base = load_activation(repository_root=root, database_id=base_database_id)
+    try:
+        candidate = registration_storage.load_registration(
+            repository_root=root, database_id=candidate_database_id
+        )
+    except registration_storage.RegistrationError as exc:
+        # Storage faults are internal errors, not a missing registration.
+        if exc.code in (
+            registration_storage.RegistrationErrorCode.STORAGE_ERROR,
+            registration_storage.RegistrationErrorCode.PRIVATE_STORAGE_INVALID,
+        ):
+            raise _fail(ReviewErrorCode.STORAGE_ERROR) from None
+        raise _fail(ReviewErrorCode.ARTIFACT_MISMATCH) from None
+    except Exception:
+        raise _fail(ReviewErrorCode.STORAGE_ERROR) from None
+    diff = compare_catalogs(base.catalog, candidate.catalog)
+    mapped = {name: (entry.table, entry.column) for name, entry in base.profile.fields.items()}
+    impacts = mapping_impact(mapped, base.catalog, candidate.catalog)
+    ontology_match = base.ontology_version == candidate.manifest.ontology_version
+    executable = False
+    if ontology_match and all(
+        item.status in (FieldImpactStatus.UNCHANGED, FieldImpactStatus.TYPE_CHANGED)
+        for item in impacts
+    ):
+        carried = base.profile.model_copy(update={
+            "database_id": candidate_database_id,
+            "schema_fingerprint": candidate.manifest.schema_fingerprint,
+        })
+        try:
+            _validate_canonical_executable(candidate.catalog, carried)
+            executable = _check_canonical_full_coverage(carried)
+        except ReviewError:
+            executable = False
+    return RegistrationComparison(
+        base_database_id=base_database_id,
+        candidate_database_id=candidate_database_id,
+        base_mapping_version=base.mapping_version,
+        diff=diff,
+        field_impacts=impacts,
+        ontology_version_match=ontology_match,
+        carry_over_executable=executable,
+    )

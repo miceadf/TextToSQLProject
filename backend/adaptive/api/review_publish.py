@@ -6,6 +6,8 @@ Minimal surface on the loopback synthetic prototype:
 - ``POST /api/adaptive/v1/registrations/review`` with a strict JSON body
   carrying one of ``INIT`` / ``APPROVE`` / ``REMAP`` / ``PUBLISH`` /
   ``ACTIVATE`` (Phase 8-01: re-activate an earlier immutable published version).
+- ``GET /api/adaptive/v1/registrations/compare?base_database_id=...&candidate_database_id=...``
+  (Phase 8-02: read-only schema comparison against the base's active mapping).
 
 All mutations reload the server-owned registration / proposal / catalog /
 draft on every call; callers cannot inject drafts, proposals, catalogs,
@@ -32,6 +34,8 @@ from ..registration.reviews import ReviewError, ReviewErrorCode
 
 REVIEW_VERSION = "private-mapping-review-v1"
 REVIEW_PATH = "/api/adaptive/v1/registrations/review"
+COMPARE_VERSION = "registration-compare-v1"
+COMPARE_PATH = "/api/adaptive/v1/registrations/compare"
 
 _MAX_BODY_BYTES = 64 * 1024
 
@@ -338,6 +342,53 @@ def _activation_response(root: Path, database_id: str, activation: Any) -> JSONR
         return _error_response(MappingReviewErrorCode.INTERNAL_ERROR.value)
 
 
+class SchemaCompareErrorCode(str, Enum):
+    INVALID_REQUEST = "SCHEMA_COMPARE_INVALID_REQUEST"
+    NOT_FOUND = "SCHEMA_COMPARE_NOT_FOUND"
+    INTERNAL_ERROR = "SCHEMA_COMPARE_INTERNAL_ERROR"
+
+
+def _compare_error(code: SchemaCompareErrorCode) -> JSONResponse:
+    status = {
+        SchemaCompareErrorCode.INVALID_REQUEST: 400,
+        SchemaCompareErrorCode.NOT_FOUND: 404,
+    }.get(code, 500)
+    return JSONResponse(status_code=status, content={"error": {"code": code.value}})
+
+
+def _compare_payload(comparison: Any) -> dict[str, Any] | None:
+    """Structural metadata only; no samples, defaults, rows, SQL, or paths."""
+    try:
+        diff = comparison.diff
+        payload: dict[str, Any] = {
+            "version": COMPARE_VERSION,
+            "base_database_id": str(comparison.base_database_id),
+            "candidate_database_id": str(comparison.candidate_database_id),
+            "base_mapping_version": int(comparison.base_mapping_version),
+            "base_fingerprint": str(diff.base_fingerprint),
+            "candidate_fingerprint": str(diff.candidate_fingerprint),
+            "identical": bool(diff.identical),
+            "ontology_version_match": bool(comparison.ontology_version_match),
+            "carry_over_executable": bool(comparison.carry_over_executable),
+            "truncated": bool(diff.truncated),
+            "tables_added": [str(name) for name in diff.tables_added],
+            "tables_removed": [str(name) for name in diff.tables_removed],
+            "column_changes": [
+                item.model_dump(mode="json") for item in diff.column_changes
+            ],
+            "foreign_key_changes": [
+                item.model_dump(mode="json") for item in diff.foreign_key_changes
+            ],
+            "field_impacts": [
+                item.model_dump(mode="json") for item in comparison.field_impacts
+            ],
+        }
+        text = json.dumps(payload, ensure_ascii=False, sort_keys=True, allow_nan=False)
+        return json.loads(text)
+    except Exception:
+        return None
+
+
 def _discover_repository_root() -> Path | None:
     try:
         here = Path(__file__).resolve()
@@ -412,6 +463,45 @@ def register_mapping_review_routes(
             return JSONResponse(status_code=200, content=payload)
         except Exception:
             return _error_response(MappingReviewErrorCode.INTERNAL_ERROR.value)
+
+    @app.get(COMPARE_PATH)
+    async def get_compare(http_request: Request) -> JSONResponse:
+        try:
+            params = _parse_query_params(http_request)
+            if params is None or set(params) != {"base_database_id", "candidate_database_id"}:
+                return _compare_error(SchemaCompareErrorCode.INVALID_REQUEST)
+            base_id = params["base_database_id"]
+            candidate_id = params["candidate_database_id"]
+            if not base_id or not candidate_id:
+                return _compare_error(SchemaCompareErrorCode.INVALID_REQUEST)
+            try:
+                root = Path(str(http_request.app.state.mapping_review_repository_root))
+            except Exception:
+                return _compare_error(SchemaCompareErrorCode.INTERNAL_ERROR)
+            try:
+                comparison = review_storage.compare_registrations(
+                    repository_root=root,
+                    base_database_id=base_id,
+                    candidate_database_id=candidate_id,
+                )
+            except ReviewError as exc:
+                if exc.code is ReviewErrorCode.INVALID_INPUT:
+                    return _compare_error(SchemaCompareErrorCode.INVALID_REQUEST)
+                if exc.code is ReviewErrorCode.ARTIFACT_MISMATCH:
+                    return _compare_error(SchemaCompareErrorCode.NOT_FOUND)
+                return _compare_error(SchemaCompareErrorCode.INTERNAL_ERROR)
+            except Exception:
+                return _compare_error(SchemaCompareErrorCode.INTERNAL_ERROR)
+            payload = _compare_payload(comparison)
+            if (
+                payload is None
+                or payload["base_database_id"] != base_id
+                or payload["candidate_database_id"] != candidate_id
+            ):
+                return _compare_error(SchemaCompareErrorCode.INTERNAL_ERROR)
+            return JSONResponse(status_code=200, content=payload)
+        except Exception:
+            return _compare_error(SchemaCompareErrorCode.INTERNAL_ERROR)
 
     @app.post(REVIEW_PATH)
     async def post_review(http_request: Request) -> JSONResponse:
