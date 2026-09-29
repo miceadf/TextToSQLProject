@@ -8,6 +8,9 @@ const FINGERPRINT_PATTERN = /^[0-9a-f]{64}$/;
 const MAX_ID_LENGTH = 64;
 const MAX_TEXT_LENGTH = 200;
 const MAX_REASON_LENGTH = 500;
+const MAX_LISTED_VERSIONS = 50;
+const MAX_MAPPING_VERSION = 9999;
+const UTC_TIMESTAMP_PATTERN = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$/;
 
 export interface ReviewFetchInit {
   method: string;
@@ -60,6 +63,15 @@ export interface ReviewAllowedTable {
   columns: string[];
 }
 
+export interface ReviewMappingVersion {
+  version: number;
+  published_by: string;
+  published_at: string;
+  active: boolean;
+  latest: boolean;
+  activatable: boolean;
+}
+
 export interface ReviewDetail {
   database_id: string;
   label: string;
@@ -67,6 +79,9 @@ export interface ReviewDetail {
   schema_fingerprint: string;
   ontology_version: number;
   mapping_version: number | null;
+  /** Version the server executes (activation record); null when none loads. */
+  active_mapping_version: number | null;
+  mapping_versions: ReviewMappingVersion[];
   fields: ReviewField[];
   allowed_tables: ReviewAllowedTable[];
 }
@@ -180,6 +195,59 @@ function parseAllowedTable(value: unknown): ReviewAllowedTable | null {
   return { name: value['name'], columns };
 }
 
+function isMappingVersionNumber(value: unknown): value is number {
+  return isNonNegativeInteger(value) && value >= 1 && value <= MAX_MAPPING_VERSION;
+}
+
+function parseMappingVersion(value: unknown): ReviewMappingVersion | null {
+  if (!isPlainObject(value)) return null;
+  const keys = ['version', 'published_by', 'published_at', 'active', 'latest', 'activatable'];
+  if (!hasOnlyKeys(value, keys) || Object.keys(value).length !== keys.length) return null;
+  if (!isMappingVersionNumber(value['version'])) return null;
+  if (!isValidReviewer(value['published_by'])) return null;
+  if (typeof value['published_at'] !== 'string' || !UTC_TIMESTAMP_PATTERN.test(value['published_at'])) {
+    return null;
+  }
+  for (const flag of ['active', 'latest', 'activatable']) {
+    if (typeof value[flag] !== 'boolean') return null;
+  }
+  return {
+    version: value['version'],
+    published_by: value['published_by'],
+    published_at: value['published_at'],
+    active: value['active'] as boolean,
+    latest: value['latest'] as boolean,
+    activatable: value['activatable'] as boolean,
+  };
+}
+
+/** Strict version history: increasing, at most one active/latest, consistent pointers. */
+function parseVersionHistory(
+  value: unknown,
+  activeVersion: number | null,
+  latestVersion: number,
+): ReviewMappingVersion[] | null {
+  if (!Array.isArray(value) || value.length > MAX_LISTED_VERSIONS) return null;
+  const versions: ReviewMappingVersion[] = [];
+  for (const entry of value) {
+    const parsed = parseMappingVersion(entry);
+    if (parsed === null) return null;
+    const previous = versions[versions.length - 1];
+    if (previous !== undefined && parsed.version <= previous.version) return null;
+    if (parsed.version > latestVersion) return null;
+    if (parsed.active && !parsed.activatable) return null;
+    versions.push(parsed);
+  }
+  const active = versions.filter((entry) => entry.active);
+  if (activeVersion === null ? active.length !== 0 : active.length !== 1 || active[0].version !== activeVersion) {
+    return null;
+  }
+  // A non-empty history always contains the latest published version exactly once.
+  const latest = versions.filter((entry) => entry.latest);
+  if (versions.length > 0 && (latest.length !== 1 || latest[0].version !== latestVersion)) return null;
+  return versions;
+}
+
 export function parseReviewDetail(value: unknown): ReviewDetail | null {
   if (!isPlainObject(value)) return null;
   if (
@@ -192,6 +260,8 @@ export function parseReviewDetail(value: unknown): ReviewDetail | null {
       'ontology_version',
       'review',
       'mapping_version',
+      'active_mapping_version',
+      'mapping_versions',
     ]) &&
     !hasOnlyKeys(value, [
       'version',
@@ -235,13 +305,22 @@ export function parseReviewDetail(value: unknown): ReviewDetail | null {
     allowedTables.push(parsed);
   }
   let mappingVersion: number | null = null;
-  if ('mapping_version' in value) {
-    if (!isNonNegativeInteger(value['mapping_version']) || (value['mapping_version'] as number) < 1) {
-      return null;
-    }
+  let activeVersion: number | null = null;
+  let history: ReviewMappingVersion[] = [];
+  const published = value['status'] === 'PUBLISHED';
+  const publishedKeys = ['mapping_version', 'active_mapping_version', 'mapping_versions'];
+  // Published details carry all three history keys; pending ones carry none.
+  if (publishedKeys.some((key) => (key in value) !== published)) return null;
+  if (published) {
+    if (!isMappingVersionNumber(value['mapping_version'])) return null;
     mappingVersion = value['mapping_version'] as number;
+    const active = value['active_mapping_version'];
+    if (active !== null && !isMappingVersionNumber(active)) return null;
+    activeVersion = active as number | null;
+    const parsedHistory = parseVersionHistory(value['mapping_versions'], activeVersion, mappingVersion);
+    if (parsedHistory === null) return null;
+    history = parsedHistory;
   }
-  if (value['status'] === 'PUBLISHED' && mappingVersion === null) return null;
   return {
     database_id: value['database_id'],
     label: value['label'],
@@ -249,6 +328,8 @@ export function parseReviewDetail(value: unknown): ReviewDetail | null {
     schema_fingerprint: value['schema_fingerprint'],
     ontology_version: value['ontology_version'],
     mapping_version: mappingVersion,
+    active_mapping_version: activeVersion,
+    mapping_versions: history,
     fields,
     allowed_tables: allowedTables,
   };
@@ -458,6 +539,48 @@ export async function publishReview(
     throw new MappingReviewClientError('contract');
   }
   return parsed;
+}
+
+/** Re-activate an earlier immutable published version (Phase 8-01). */
+export async function activateMappingVersion(
+  fetchFn: ReviewFetchLike,
+  databaseId: string,
+  mappingVersion: number,
+  activatedBy: string,
+  options?: { signal?: AbortSignal },
+): Promise<ReviewPublishResult> {
+  if (!isDatabaseId(databaseId)) throw new MappingReviewClientError('contract');
+  if (!isMappingVersionNumber(mappingVersion)) throw new MappingReviewClientError('contract');
+  if (!isValidReviewer(activatedBy)) throw new MappingReviewClientError('contract');
+  const payload = await postAction(
+    fetchFn,
+    {
+      action: 'ACTIVATE',
+      database_id: databaseId,
+      mapping_version: mappingVersion,
+      activated_by: activatedBy,
+    },
+    options,
+  );
+  const parsed = parseReviewPublish(payload);
+  if (parsed === null || parsed.database_id !== databaseId || parsed.mapping_version !== mappingVersion) {
+    throw new MappingReviewClientError('contract');
+  }
+  return parsed;
+}
+
+export const ACTIVATION_BLOCKED_MESSAGE =
+  '이 버전은 현재 스키마·ontology 기준으로 실행할 수 없어 활성화하지 않았습니다.';
+
+export function toActivationMessage(error: unknown): string {
+  if (
+    error instanceof MappingReviewClientError &&
+    error.kind === 'server' &&
+    error.serverCode === 'MAPPING_REVIEW_PUBLISH_BLOCKED'
+  ) {
+    return ACTIVATION_BLOCKED_MESSAGE;
+  }
+  return toReviewMessage(error);
 }
 
 export const REVIEW_TRANSPORT_MESSAGE = '연결에 실패했습니다. 다시 시도해 주세요.';

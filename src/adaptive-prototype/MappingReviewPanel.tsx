@@ -1,15 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
 import {
+  activateMappingVersion,
   approveReviewField,
   fetchReviewDetail,
   initReview,
   publishReview,
   remapReviewField,
+  toActivationMessage,
   toReviewMessage,
   type MappingReviewStatus,
   type ReviewDetail,
   type ReviewFetchLike,
   type ReviewField,
+  type ReviewMappingVersion,
 } from './mappingReview.ts';
 import { isStaleResponse, nextOperation } from './state.ts';
 
@@ -137,12 +140,80 @@ function FieldRow({
   );
 }
 
+function VersionHistory({
+  versions,
+  activeVersion,
+  pendingVersion,
+  disabled,
+  canConfirm,
+  onSelect,
+  onCancel,
+  onConfirm,
+}: {
+  versions: ReviewMappingVersion[];
+  activeVersion: number | null;
+  pendingVersion: number | null;
+  disabled: boolean;
+  canConfirm: boolean;
+  onSelect: (version: number) => void;
+  onCancel: () => void;
+  onConfirm: (version: number) => void;
+}) {
+  return (
+    <div className="rounded-lg border border-slate-200 px-3 py-2">
+      <div className="font-semibold">mapping 버전 이력</div>
+      <div role="status" className="text-xs text-slate-600">
+        {activeVersion !== null
+          ? `실행 중: mapping-v${activeVersion}`
+          : '실행 중인 버전을 확인할 수 없습니다. 실행 registry에서 제외됩니다.'}
+      </div>
+      <ul className="mt-1 space-y-1">
+        {versions.map((entry) => (
+          <li key={entry.version} className="flex flex-wrap items-center gap-2">
+            <span>
+              mapping-v{entry.version} · {entry.published_by} · {entry.published_at}
+              {entry.active ? ' · 실행 중' : ''}
+              {entry.latest ? ' · 최신' : ''}
+              {!entry.activatable ? ' · 현재 스키마에서 실행 불가' : ''}
+            </span>
+            {!entry.active && entry.activatable && pendingVersion !== entry.version ? (
+              <button type="button" disabled={disabled} onClick={() => onSelect(entry.version)}>
+                이 버전으로 되돌리기
+              </button>
+            ) : null}
+            {pendingVersion === entry.version ? (
+              <span className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={disabled || !canConfirm}
+                  onClick={() => onConfirm(entry.version)}
+                  className="font-semibold text-rose-700"
+                >
+                  mapping-v{entry.version} 재활성화 확인
+                </button>
+                <button type="button" disabled={disabled} onClick={onCancel}>
+                  취소
+                </button>
+              </span>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+      {pendingVersion !== null && !canConfirm ? (
+        <div className="text-xs text-slate-600">재활성화하려면 검토자를 입력해 주세요.</div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function MappingReviewPanel({ databaseId, fetchFn, onPublished }: MappingReviewPanelProps) {
   const [status, setStatus] = useState<MappingReviewStatus>('idle');
   const [detail, setDetail] = useState<ReviewDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reviewer, setReviewer] = useState('');
   const [publishedVersion, setPublishedVersion] = useState<number | null>(null);
+  const [pendingActivation, setPendingActivation] = useState<number | null>(null);
+  const [activatedVersion, setActivatedVersion] = useState<number | null>(null);
 
   const operationRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
@@ -260,6 +331,48 @@ export default function MappingReviewPanel({ databaseId, fetchFn, onPublished }:
     }
   }
 
+  async function handleActivate(version: number): Promise<void> {
+    if (isBusy(status) || detail === null || pendingActivation !== version) return;
+    if (reviewer.trim() === '') {
+      setError('요청 형식이 올바르지 않습니다. 검토자를 입력해 주세요.');
+      return;
+    }
+    const activeReviewer = reviewer;
+    const operation = nextOperation(operationRef.current);
+    operationRef.current = operation;
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setStatus('acting');
+    setError(null);
+    setActivatedVersion(null);
+    try {
+      const result = await activateMappingVersion(caller, databaseId, version, activeReviewer, {
+        signal: controller.signal,
+      });
+      if (!mountedRef.current || isStaleResponse(operationRef.current, operation)) return;
+      if (controller.signal.aborted) return;
+      setPendingActivation(null);
+      setActivatedVersion(result.mapping_version);
+      onPublished?.(databaseId);
+      try {
+        const refreshed = await fetchReviewDetail(caller, databaseId, { signal: controller.signal });
+        if (!mountedRef.current || isStaleResponse(operationRef.current, operation)) return;
+        if (controller.signal.aborted) return;
+        setDetail(refreshed);
+      } catch {
+        // The strict activation response already committed; refresh is best-effort.
+      }
+      setStatus('ready');
+    } catch (unknown) {
+      if (!mountedRef.current || isStaleResponse(operationRef.current, operation)) return;
+      if (controller.signal.aborted) return;
+      setPendingActivation(null);
+      setError(toActivationMessage(unknown));
+      setStatus('error');
+    }
+  }
+
   if (status === 'idle' || (status === 'error' && detail === null)) {
     return (
       <div className="mt-2 space-y-2">
@@ -331,6 +444,21 @@ export default function MappingReviewPanel({ databaseId, fetchFn, onPublished }:
               }
             />
           ))}
+          {detail.status === 'PUBLISHED' && detail.mapping_versions.length > 0 ? (
+            <VersionHistory
+              versions={detail.mapping_versions}
+              activeVersion={detail.active_mapping_version}
+              pendingVersion={pendingActivation}
+              disabled={isBusy(status)}
+              canConfirm={reviewer.trim() !== ''}
+              onSelect={(version) => {
+                setActivatedVersion(null);
+                setPendingActivation(version);
+              }}
+              onCancel={() => setPendingActivation(null)}
+              onConfirm={(version) => void handleActivate(version)}
+            />
+          ) : null}
           <div className="flex items-center gap-2">
             <button
               type="button"
@@ -353,6 +481,11 @@ export default function MappingReviewPanel({ databaseId, fetchFn, onPublished }:
       {status === 'published' && publishedVersion !== null ? (
         <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900" role="status">
           게시되었습니다. 실행 registry에서 DB를 다시 불러온 뒤 선택할 수 있습니다. (mapping-v{publishedVersion})
+        </div>
+      ) : null}
+      {activatedVersion !== null ? (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900" role="status">
+          mapping-v{activatedVersion}을 실행 버전으로 활성화했습니다. 이후 질의부터 이 버전이 적용됩니다.
         </div>
       ) : null}
       {error !== null ? (

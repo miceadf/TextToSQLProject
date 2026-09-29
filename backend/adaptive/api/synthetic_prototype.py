@@ -330,6 +330,40 @@ class _SchemaGuardedExecutor:
             ) from None
 
 
+class _PrivateActivationGuardCompiler:
+    """Refuse to compile a private DB request whose mapping is no longer active.
+
+    A clarification session keeps the mapping it started with; after a
+    publish or re-activation (Phase 8-01) that mapping must not execute.
+    """
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+
+    @property
+    def inner(self) -> Any:
+        return self._inner
+
+    def compile(self, query_ir: Any, mapping: Any) -> Any:
+        database_id = getattr(mapping, "database_id", None)
+        if isinstance(database_id, str) and database_id not in (
+            SYNTHETIC_PROTOTYPE_DATABASE_ID,
+            SYNTHETIC_LEGACY_DATABASE_ID,
+        ):
+            current = _load_private_clarification_mapping(database_id)
+            if (
+                current is None
+                or getattr(mapping, "version", None) != current.version
+                or getattr(mapping, "fields", None) != current.fields
+            ):
+                raise HarnessFailure(
+                    HarnessErrorCode.MAPPING_NOT_PUBLISHED,
+                    "published mapping is stale",
+                    stage=HarnessStage.SQL_COMPILED,
+                )
+        return self._inner.compile(query_ir, mapping)
+
+
 class _FixedConstraintProvider:
     """Deterministic provider: one valid QueryIR for the selected field.
 
@@ -479,7 +513,7 @@ def create_synthetic_clarification_prototype(
                 raise RuntimeError(_PROTOTYPE_CREATION_FAILURE) from None
         executor = SQLiteReadOnlyExecutor(database_paths)
         guarded_executor = _SchemaGuardedExecutor(executor, schema_is_current)
-        compiler = SingleTableSQLiteCompiler()
+        compiler = _PrivateActivationGuardCompiler(SingleTableSQLiteCompiler())
         sql_policy = ConservativeSqlPolicy()
         coordinator = ClarificationSessionCoordinator()
         if pg_contexts:

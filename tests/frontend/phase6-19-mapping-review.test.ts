@@ -89,6 +89,17 @@ describe('phase6-19 review parser and request contract', () => {
       ...detailPayload(),
       status: 'PUBLISHED',
       mapping_version: 1,
+      active_mapping_version: 1,
+      mapping_versions: [
+        {
+          version: 1,
+          published_by: 'tester',
+          published_at: '2026-09-29T00:00:00Z',
+          active: true,
+          latest: true,
+          activatable: true,
+        },
+      ],
     };
     assert.equal(parseReviewDetail(published)?.mapping_version, 1);
     assert.equal(parseReviewDetail({ ...detailPayload(), status: 'PUBLISHED' }), null);

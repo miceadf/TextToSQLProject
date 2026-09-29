@@ -124,7 +124,8 @@ def test_fixed_deps_defensive_copy_readonly_cleanup():
         assert "Mutated" not in third[0].entities
 
         assert isinstance(app.state.synthetic_prototype_executor, SQLiteReadOnlyExecutor)
-        assert isinstance(app.state.synthetic_prototype_compiler, SingleTableSQLiteCompiler)
+        # Phase 8-01 wraps the compiler with the private activation guard.
+        assert isinstance(app.state.synthetic_prototype_compiler.inner, SingleTableSQLiteCompiler)
         assert isinstance(app.state.synthetic_prototype_policy, ConservativeSqlPolicy)
         assert tmpdir.is_dir()
 

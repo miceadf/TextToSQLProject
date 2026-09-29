@@ -5,8 +5,8 @@ Review state lives outside the immutable Phase 6-17 registration directory::
     .schema-adaptive/registration-reviews/<database_id>/
         draft.json
         mapping-vNNNN.json
-        current.json
-        activation.json
+        current.json      (latest published version)
+        activation.json   (sole execution authority; may name an older version)
 
 The registration directory is never modified. All failures surface as
 :class:`ReviewError` carrying only a fixed code string; source/private
@@ -22,11 +22,12 @@ import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from ..mapping import (
     MappingDraft,
@@ -73,6 +74,17 @@ def _fail(code: ReviewErrorCode) -> ReviewError:
     return ReviewError(code)
 
 
+class PublishedVersionRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+    version: int = Field(ge=1)
+    mapping_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    mapping_bytes: int = Field(ge=1)
+
+
+MAX_RECORDED_VERSIONS = 1000
+
+
 class ReviewPointer(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
 
@@ -83,6 +95,40 @@ class ReviewPointer(BaseModel):
     mapping_bytes: int = Field(ge=1)
     schema_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
     ontology_version: int = Field(ge=1)
+    # Phase 8-01: digests of every version this pointer has published, oldest
+    # first and ending with ``version``. Absent in pre-8-01 pointers, whose
+    # only provably published version is the pointer itself.
+    published_versions: list[PublishedVersionRecord] | None = Field(
+        default=None, min_length=1, max_length=MAX_RECORDED_VERSIONS
+    )
+
+    @model_validator(mode="after")
+    def _history_ends_at_pointer(self) -> "ReviewPointer":
+        records = self.published_versions
+        if records is None:
+            return self
+        numbers = [item.version for item in records]
+        if numbers != sorted(set(numbers)):
+            raise ValueError("published versions must be strictly increasing")
+        last = records[-1]
+        if (
+            last.version != self.version
+            or last.mapping_sha256 != self.mapping_sha256
+            or last.mapping_bytes != self.mapping_bytes
+        ):
+            raise ValueError("published versions must end at the pointer")
+        return self
+
+    def published_records(self) -> dict[int, PublishedVersionRecord]:
+        if self.published_versions is None:
+            return {
+                self.version: PublishedVersionRecord(
+                    version=self.version,
+                    mapping_sha256=self.mapping_sha256,
+                    mapping_bytes=self.mapping_bytes,
+                )
+            }
+        return {item.version: item for item in self.published_versions}
 
 
 class ActivationManifest(BaseModel):
@@ -98,6 +144,25 @@ class ActivationManifest(BaseModel):
     content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     content_bytes: int = Field(ge=1)
     label: str = Field(min_length=1, max_length=64)
+    # Optional so manifests written before Phase 8-01 still load unchanged.
+    activated_by: str | None = Field(default=None, min_length=1, max_length=MAX_REVIEWER_LENGTH)
+    activated_at: str | None = Field(
+        default=None, pattern=r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    )
+
+
+MAX_LISTED_VERSIONS = 50
+MAX_MAPPING_VERSION = 9999
+
+
+@dataclass(frozen=True)
+class MappingVersionInfo:
+    version: int
+    published_by: str
+    published_at: str
+    active: bool
+    latest: bool
+    activatable: bool
 
 
 @dataclass(frozen=True)
@@ -490,14 +555,31 @@ def _load_pointer_strict(review_dir: Path) -> ReviewPointer:
     raw = _read_review_file(
         review_dir / CURRENT_FILENAME, review_dir, max_bytes=MAX_MANIFEST_BYTES
     )
-    return _strict_model(raw, ReviewPointer)
+    payload = _parse_json(raw)
+    try:
+        model = ReviewPointer.model_validate(payload)
+    except ValidationError:
+        raise _fail(ReviewErrorCode.ARTIFACT_MISMATCH) from None
+    # Pre-8-01 pointers omit the history; an explicit null stays rejected.
+    if payload != model.model_dump(mode="json", exclude_none=True):
+        raise _fail(ReviewErrorCode.ARTIFACT_MISMATCH)
+    return model
 
 
 def _load_manifest_strict(review_dir: Path) -> ActivationManifest:
     raw = _read_review_file(
         review_dir / ACTIVATION_FILENAME, review_dir, max_bytes=MAX_MANIFEST_BYTES
     )
-    return _strict_model(raw, ActivationManifest)
+    payload = _parse_json(raw)
+    try:
+        model = ActivationManifest.model_validate(payload)
+    except ValidationError:
+        raise _fail(ReviewErrorCode.ARTIFACT_MISMATCH) from None
+    # Pre-8-01 manifests omit the optional activation fields; an explicit null
+    # is never written and stays rejected.
+    if payload != model.model_dump(mode="json", exclude_none=True):
+        raise _fail(ReviewErrorCode.ARTIFACT_MISMATCH)
+    return model
 
 
 def _check_canonical_full_coverage(profile: PublishedMappingProfile) -> bool:
@@ -896,6 +978,19 @@ def publish_review(
                     and existing.ontology_version == candidate.ontology_version
                     and existing.fields == candidate.fields
                 ):
+                    # Publishing the latest reviewed content must make it the
+                    # executing version, even after a rollback or an
+                    # interrupted activation write.
+                    if _active_version_or_none(review_dir) != pointer.version:
+                        _activate_locked(
+                            review_dir,
+                            database_id=database_id,
+                            version=pointer.version,
+                            loaded=loaded,
+                            ontology=ontology,
+                            activated_by=published_by,
+                            record=pointer.published_records().get(pointer.version),
+                        )
                     return load_activation(repository_root=root, database_id=database_id)
             except ReviewError:
                 raise
@@ -908,8 +1003,22 @@ def publish_review(
         mapping_name = _mapping_filename(next_version)
         if (review_dir / mapping_name).exists():
             raise _fail(ReviewErrorCode.REVIEW_CONFLICT)
+        previous_records: list[PublishedVersionRecord] = []
+        if (review_dir / CURRENT_FILENAME).exists():
+            previous_pointer = _load_pointer_strict(review_dir)
+            if previous_pointer.database_id != database_id:
+                raise _fail(ReviewErrorCode.ARTIFACT_MISMATCH)
+            previous_records = sorted(
+                previous_pointer.published_records().values(), key=lambda item: item.version
+            )
         _write_new_file(review_dir / mapping_name, mapping_bytes)
         digest = hashlib.sha256(mapping_bytes).hexdigest()
+        records = [
+            *previous_records,
+            PublishedVersionRecord(
+                version=next_version, mapping_sha256=digest, mapping_bytes=len(mapping_bytes)
+            ),
+        ][-MAX_RECORDED_VERSIONS:]
         pointer = ReviewPointer(
             schema_version=REVIEW_SCHEMA_VERSION,
             database_id=database_id,
@@ -918,9 +1027,10 @@ def publish_review(
             mapping_bytes=len(mapping_bytes),
             schema_fingerprint=candidate.schema_fingerprint,
             ontology_version=candidate.ontology_version,
+            published_versions=records,
         )
         try:
-            pointer_bytes = _json_bytes(pointer.model_dump(mode="json"))
+            pointer_bytes = _json_bytes(pointer.model_dump(mode="json", exclude_none=True))
         except Exception:
             try:
                 (review_dir / mapping_name).unlink(missing_ok=True)
@@ -938,6 +1048,8 @@ def publish_review(
             content_sha256=loaded.manifest.content_sha256,
             content_bytes=loaded.manifest.content_bytes,
             label=loaded.manifest.label,
+            activated_by=published_by,
+            activated_at=_utc_now_text(),
         )
         try:
             manifest_bytes = _json_bytes(manifest.model_dump(mode="json"))
@@ -953,6 +1065,250 @@ def publish_review(
     finally:
         _release_lock(lock_path)
 
+
+def _utc_now_text() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _utc_text(value: datetime) -> str:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _read_version_profile(review_dir: Path, version: int) -> tuple[bytes, PublishedMappingProfile]:
+    raw = _read_review_file(
+        review_dir / _mapping_filename(version), review_dir, max_bytes=MAX_JSON_BYTES
+    )
+    return raw, _strict_model(raw, PublishedMappingProfile)
+
+
+def _check_activatable(
+    profile: PublishedMappingProfile,
+    *,
+    database_id: str,
+    version: int,
+    loaded: Any,
+    ontology: Any,
+) -> None:
+    """Apply the publish-time execution checks to an existing immutable version."""
+    if (
+        profile.database_id != database_id
+        or profile.version != version
+        or profile.status != "PUBLISHED"
+        or profile.schema_fingerprint != loaded.manifest.schema_fingerprint
+        or profile.ontology_version != ontology.version
+        or profile.ontology_version != loaded.manifest.ontology_version
+    ):
+        raise _fail(ReviewErrorCode.PUBLISH_BLOCKED)
+    if not _check_canonical_full_coverage(profile):
+        raise _fail(ReviewErrorCode.PUBLISH_BLOCKED)
+    _validate_canonical_executable(loaded.catalog, profile)
+
+
+def _active_version_or_none(review_dir: Path) -> int | None:
+    try:
+        return _load_manifest_strict(review_dir).mapping_version
+    except Exception:
+        return None
+
+
+def _activate_locked(
+    review_dir: Path,
+    *,
+    database_id: str,
+    version: int,
+    loaded: Any,
+    ontology: Any,
+    activated_by: str,
+    record: "PublishedVersionRecord | None",
+) -> None:
+    """Point activation.json at an existing immutable version; caller holds the lock.
+
+    ``record`` is the digest the pointer stored when the version was published;
+    a version without one (never published) or with different bytes is refused.
+    """
+    if record is None or record.version != version:
+        raise _fail(ReviewErrorCode.ARTIFACT_MISMATCH)
+    raw, profile = _read_version_profile(review_dir, version)
+    if len(raw) != record.mapping_bytes or hashlib.sha256(raw).hexdigest() != record.mapping_sha256:
+        raise _fail(ReviewErrorCode.ARTIFACT_MISMATCH)
+    _check_activatable(
+        profile, database_id=database_id, version=version, loaded=loaded, ontology=ontology
+    )
+    manifest = ActivationManifest(
+        schema_version=ACTIVATION_SCHEMA_VERSION,
+        database_id=database_id,
+        mapping_version=version,
+        schema_fingerprint=loaded.manifest.schema_fingerprint,
+        ontology_version=loaded.manifest.ontology_version,
+        mapping_sha256=hashlib.sha256(raw).hexdigest(),
+        mapping_bytes=len(raw),
+        content_sha256=loaded.manifest.content_sha256,
+        content_bytes=loaded.manifest.content_bytes,
+        label=loaded.manifest.label,
+        activated_by=activated_by,
+        activated_at=_utc_now_text(),
+    )
+    try:
+        manifest_bytes = _json_bytes(manifest.model_dump(mode="json"))
+    except Exception:
+        raise _fail(ReviewErrorCode.STORAGE_ERROR) from None
+    _atomic_replace(review_dir / ACTIVATION_FILENAME, manifest_bytes)
+
+
+def _validate_mapping_version(value: Any) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise _fail(ReviewErrorCode.INVALID_INPUT)
+    if value < 1 or value > MAX_MAPPING_VERSION:
+        raise _fail(ReviewErrorCode.INVALID_INPUT)
+    return value
+
+
+def _load_published_context(review_dir: Path, database_id: str, loaded: Any) -> ReviewPointer:
+    """Require a strict draft and latest pointer for this registration."""
+    draft = _load_draft_strict(review_dir)
+    if (
+        draft.database_id != database_id
+        or draft.schema_fingerprint != loaded.manifest.schema_fingerprint
+        or draft.ontology_version != loaded.manifest.ontology_version
+    ):
+        raise _fail(ReviewErrorCode.ARTIFACT_MISMATCH)
+    if not (review_dir / CURRENT_FILENAME).exists():
+        raise _fail(ReviewErrorCode.ARTIFACT_MISMATCH)
+    pointer = _load_pointer_strict(review_dir)
+    if pointer.database_id != database_id:
+        raise _fail(ReviewErrorCode.ARTIFACT_MISMATCH)
+    return pointer
+
+
+def activate_mapping_version(
+    *,
+    repository_root: str | Path,
+    database_id: str,
+    mapping_version: int,
+    activated_by: str,
+) -> LoadedActivation:
+    """Re-activate an earlier (or the latest) immutable published version (Phase 8-01).
+
+    Only versions up to the latest published pointer are eligible, each is
+    re-validated like a publish, and only ``activation.json`` changes.
+    """
+    database_id = _validate_database_id(database_id)
+    activated_by = validate_reviewer(activated_by)
+    mapping_version = _validate_mapping_version(mapping_version)
+    root, review_root = _review_root(repository_root)
+    review_dir = _validate_review_target(root, review_root, database_id)
+    try:
+        loaded = registration_storage.load_registration(
+            repository_root=root, database_id=database_id
+        )
+    except Exception:
+        raise _fail(ReviewErrorCode.ARTIFACT_MISMATCH) from None
+    try:
+        ontology = load_default_ontology()
+    except Exception:
+        raise _fail(ReviewErrorCode.STORAGE_ERROR) from None
+    if not review_dir.is_dir() or _is_redirect(review_dir):
+        raise _fail(ReviewErrorCode.ARTIFACT_MISMATCH)
+    lock_path = _acquire_lock(review_root, database_id)
+    try:
+        pointer = _load_published_context(review_dir, database_id, loaded)
+        if not (review_dir / ACTIVATION_FILENAME).exists():
+            raise _fail(ReviewErrorCode.ARTIFACT_MISMATCH)
+        record = pointer.published_records().get(mapping_version)
+        if record is None:
+            raise _fail(ReviewErrorCode.ARTIFACT_MISMATCH)
+        if _active_version_or_none(review_dir) == mapping_version:
+            try:
+                return load_activation(repository_root=root, database_id=database_id)
+            except ReviewError:
+                pass  # rewrite a damaged record for the same version below
+        _activate_locked(
+            review_dir,
+            database_id=database_id,
+            version=mapping_version,
+            loaded=loaded,
+            ontology=ontology,
+            activated_by=activated_by,
+            record=record,
+        )
+        return load_activation(repository_root=root, database_id=database_id)
+    finally:
+        _release_lock(lock_path)
+
+
+def list_mapping_versions(
+    *, repository_root: str | Path, database_id: str
+) -> list[MappingVersionInfo]:
+    """Metadata of published versions (newest last); no mapping content or paths."""
+    database_id = _validate_database_id(database_id)
+    root, review_root = _review_root(repository_root)
+    review_dir = _validate_review_target(root, review_root, database_id)
+    if not review_dir.is_dir() or _is_redirect(review_dir):
+        raise _fail(ReviewErrorCode.ARTIFACT_MISMATCH)
+    try:
+        loaded = registration_storage.load_registration(
+            repository_root=root, database_id=database_id
+        )
+        ontology = load_default_ontology()
+    except Exception:
+        raise _fail(ReviewErrorCode.ARTIFACT_MISMATCH) from None
+    if not (review_dir / CURRENT_FILENAME).exists():
+        return []
+    pointer = _load_pointer_strict(review_dir)
+    if pointer.database_id != database_id:
+        raise _fail(ReviewErrorCode.ARTIFACT_MISMATCH)
+    try:
+        active: int | None = load_activation(
+            repository_root=root, database_id=database_id
+        ).mapping_version
+    except ReviewError:
+        active = None
+    # Only versions the pointer recorded as published; orphan files from an
+    # interrupted publish never appear. The active version is always listed.
+    records = pointer.published_records()
+    numbers = sorted(records)
+    shown = numbers[-MAX_LISTED_VERSIONS:]
+    if active is not None and active in records and active not in shown:
+        shown = [active, *shown]
+    results: list[MappingVersionInfo] = []
+    for version in shown:
+        try:
+            raw, profile = _read_version_profile(review_dir, version)
+        except ReviewError:
+            continue
+        record = records[version]
+        if len(raw) != record.mapping_bytes or hashlib.sha256(raw).hexdigest() != record.mapping_sha256:
+            continue
+        if profile.database_id != database_id or profile.version != version:
+            continue
+        try:
+            validate_reviewer(profile.published_by)
+        except ReviewError:
+            continue
+        try:
+            _check_activatable(
+                profile,
+                database_id=database_id,
+                version=version,
+                loaded=loaded,
+                ontology=ontology,
+            )
+            activatable = True
+        except ReviewError:
+            activatable = False
+        results.append(
+            MappingVersionInfo(
+                version=version,
+                published_by=profile.published_by,
+                published_at=_utc_text(profile.published_at),
+                active=version == active,
+                latest=version == pointer.version,
+                activatable=activatable,
+            )
+        )
+    return results
 
 def load_activation(*, repository_root: str | Path, database_id: str) -> LoadedActivation:
     database_id = _validate_database_id(database_id)

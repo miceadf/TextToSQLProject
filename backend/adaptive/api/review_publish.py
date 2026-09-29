@@ -4,7 +4,8 @@ Minimal surface on the loopback synthetic prototype:
 
 - ``GET /api/adaptive/v1/registrations/review?database_id=...``
 - ``POST /api/adaptive/v1/registrations/review`` with a strict JSON body
-  carrying one of ``INIT`` / ``APPROVE`` / ``REMAP`` / ``PUBLISH``.
+  carrying one of ``INIT`` / ``APPROVE`` / ``REMAP`` / ``PUBLISH`` /
+  ``ACTIVATE`` (Phase 8-01: re-activate an earlier immutable published version).
 
 All mutations reload the server-owned registration / proposal / catalog /
 draft on every call; callers cannot inject drafts, proposals, catalogs,
@@ -123,6 +124,15 @@ class _PublishBody(BaseModel):
     published_by: str = Field(min_length=1, max_length=64)
 
 
+class _ActivateBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+    action: Literal["ACTIVATE"] = "ACTIVATE"
+    database_id: str = Field(min_length=1, max_length=64)
+    mapping_version: int = Field(ge=1, le=review_storage.MAX_MAPPING_VERSION)
+    activated_by: str = Field(min_length=1, max_length=64)
+
+
 def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for key, value in pairs:
@@ -238,8 +248,35 @@ def _summarize_review(loaded_registration: Any, draft: Any) -> dict[str, Any] | 
         return None
 
 
+def _version_history(root: Path, database_id: str) -> list[dict[str, Any]]:
+    """Published version metadata; the active flag comes from the strict activation load."""
+    try:
+        versions = review_storage.list_mapping_versions(
+            repository_root=root, database_id=database_id
+        )
+    except Exception:
+        return []
+    return [
+        {
+            "version": int(item.version),
+            "published_by": str(item.published_by),
+            "published_at": str(item.published_at),
+            "active": bool(item.active),
+            "latest": bool(item.latest),
+            "activatable": bool(item.activatable),
+        }
+        for item in versions
+    ]
+
+
 def _detail_payload(
-    *, database_id: str, loaded_registration: Any, draft: Any, published: Any, mapping_version: Any
+    *,
+    database_id: str,
+    loaded_registration: Any,
+    draft: Any,
+    published: Any,
+    mapping_version: Any,
+    history: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
     try:
         manifest = loaded_registration.manifest
@@ -260,10 +297,45 @@ def _detail_payload(
         }
         if published is not None and mapping_version is not None:
             payload["mapping_version"] = int(mapping_version)
+            entries = list(history or [])
+            active = [item["version"] for item in entries if item["active"]]
+            if len(active) > 1:
+                return None
+            payload["active_mapping_version"] = active[0] if active else None
+            payload["mapping_versions"] = entries
         text = json.dumps(payload, ensure_ascii=False, sort_keys=True, allow_nan=False)
         return json.loads(text)
     except Exception:
         return None
+
+
+def _activation_response(root: Path, database_id: str, activation: Any) -> JSONResponse:
+    """Re-load the committed activation and answer with fixed metadata only."""
+    try:
+        reloaded = review_storage.load_activation(repository_root=root, database_id=database_id)
+    except Exception:
+        return _error_response(MappingReviewErrorCode.INTERNAL_ERROR.value)
+    if (
+        reloaded.mapping_version != activation.mapping_version
+        or reloaded.database_id != database_id
+    ):
+        return _error_response(MappingReviewErrorCode.INTERNAL_ERROR.value)
+    try:
+        content = json.dumps(
+            {
+                "version": REVIEW_VERSION,
+                "database_id": reloaded.database_id,
+                "status": "PUBLISHED",
+                "mapping_version": reloaded.mapping_version,
+                "registry_eligible": True,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            allow_nan=False,
+        )
+        return JSONResponse(status_code=200, content=json.loads(content))
+    except Exception:
+        return _error_response(MappingReviewErrorCode.INTERNAL_ERROR.value)
 
 
 def _discover_repository_root() -> Path | None:
@@ -331,6 +403,7 @@ def register_mapping_review_routes(
                 draft=review.draft,
                 published=review.published,
                 mapping_version=review.mapping_version,
+                history=_version_history(root, database_id),
             )
             if payload is None:
                 return _error_response(MappingReviewErrorCode.INTERNAL_ERROR.value)
@@ -350,7 +423,7 @@ def register_mapping_review_routes(
             if payload is None:
                 return _error_response(MappingReviewErrorCode.INVALID_REQUEST.value)
             action = payload.get("action")
-            if action not in ("INIT", "APPROVE", "REMAP", "PUBLISH"):
+            if action not in ("INIT", "APPROVE", "REMAP", "PUBLISH", "ACTIVATE"):
                 return _error_response(MappingReviewErrorCode.INVALID_REQUEST.value)
             try:
                 root = Path(str(http_request.app.state.mapping_review_repository_root))
@@ -393,6 +466,21 @@ def register_mapping_review_routes(
                         reason=body.reason,
                     )
                     database_id = body.database_id
+                elif action == "ACTIVATE":
+                    body = _ActivateBody.model_validate(payload)
+                    if payload != body.model_dump(mode="json"):
+                        return _error_response(MappingReviewErrorCode.INVALID_REQUEST.value)
+                    try:
+                        activation = review_storage.activate_mapping_version(
+                            repository_root=root,
+                            database_id=body.database_id,
+                            mapping_version=body.mapping_version,
+                            activated_by=body.activated_by,
+                        )
+                    except ReviewError as exc:
+                        # No draft field list here: the target is an immutable version.
+                        return _error_response(_review_to_public_code(exc))
+                    return _activation_response(root, body.database_id, activation)
                 else:
                     body = _PublishBody.model_validate(payload)
                     if payload != body.model_dump(mode="json"):
@@ -410,33 +498,7 @@ def register_mapping_review_routes(
                             )
                             return _publish_blocked_response(fields)
                         return _error_response(_review_to_public_code(exc))
-                    try:
-                        reloaded = review_storage.load_activation(
-                            repository_root=root, database_id=body.database_id
-                        )
-                    except Exception:
-                        return _error_response(MappingReviewErrorCode.INTERNAL_ERROR.value)
-                    if (
-                        reloaded.mapping_version != activation.mapping_version
-                        or reloaded.database_id != body.database_id
-                    ):
-                        return _error_response(MappingReviewErrorCode.INTERNAL_ERROR.value)
-                    try:
-                        content = json.dumps(
-                            {
-                                "version": REVIEW_VERSION,
-                                "database_id": reloaded.database_id,
-                                "status": "PUBLISHED",
-                                "mapping_version": reloaded.mapping_version,
-                                "registry_eligible": True,
-                            },
-                            ensure_ascii=False,
-                            sort_keys=True,
-                            allow_nan=False,
-                        )
-                        return JSONResponse(status_code=200, content=json.loads(content))
-                    except Exception:
-                        return _error_response(MappingReviewErrorCode.INTERNAL_ERROR.value)
+                    return _activation_response(root, body.database_id, activation)
             except ReviewError as exc:
                 if action == "PUBLISH" and exc.code is ReviewErrorCode.PUBLISH_BLOCKED:
                     try:
@@ -468,6 +530,7 @@ def register_mapping_review_routes(
                 draft=review.draft,
                 published=review.published,
                 mapping_version=review.mapping_version,
+                history=_version_history(root, database_id),
             )
             if detail is None:
                 return _error_response(MappingReviewErrorCode.INTERNAL_ERROR.value)
