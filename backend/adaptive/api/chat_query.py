@@ -35,6 +35,7 @@ from ..harness.contracts import (
 from ..harness.engine import ExecutionHarness
 from ..harness.recorded import RecordedFailureCode
 from ..mapping.transforms import normalize_filter_value
+from ..ontology.contracts import Operator
 from ..ontology.loader import load_default_ontology
 from .postgres_runtime import DatabaseRoutingExecutor, is_postgres_context_current
 from .review_publish import _parse_strict_body, _read_limited_body
@@ -45,6 +46,13 @@ CHAT_QUERY_VERSION = "adaptive-chat-query-v1"
 MAX_QUESTION_LENGTH = 500
 # Longest text cell a response may carry; the frontend parser uses the same cap.
 MAX_TEXT_LENGTH = 1000
+# Phase 7-16 server policies (user decision after the 7-15 comparison):
+# the row cap is a display rule, so the server fixes it at the executor
+# maximum instead of the model's (always prompt-example) limit; and
+# name-like strings are matched by containment, since users type partial
+# names ("수학과" for "자연과학대학 수학과").
+CHAT_ROW_LIMIT = 200
+CONTAINS_FIELDS = frozenset({"Course.name", "Department.name", "Instructor.name", "Course.category"})
 
 _REQUEST_KEYS = frozenset({"database_id", "query"})
 _NOT_UNDERSTOOD_STAGES = frozenset({HarnessStage.IR_GENERATED, HarnessStage.IR_VALIDATED})
@@ -267,6 +275,11 @@ def answer_chat_query(
     card_fields = [field for field in CANONICAL_SELECT if field in mapping.fields]
     rewritten = query_ir.model_dump(mode="json")
     rewritten["select"] = card_fields
+    rewritten["limit"] = CHAT_ROW_LIMIT
+    for item in rewritten["filters"]:
+        if item["field"] in CONTAINS_FIELDS and item["operator"] == Operator.EQUALS.value:
+            item["operator"] = Operator.CONTAINS.value
+    executed = QueryIR.model_validate(rewritten)
 
     try:
         harness = ExecutionHarness(
@@ -301,7 +314,7 @@ def answer_chat_query(
         "columns": columns,
         "rows": rows,
         "row_count": len(rows),
-        "limit": query_ir.limit,
+        "limit": executed.limit,
         "understood": {
             "filters": [
                 {
@@ -310,7 +323,7 @@ def answer_chat_query(
                     "operator": item.operator.value,
                     "value": _display_value(transforms, item.field, item.value),
                 }
-                for item in query_ir.filters
+                for item in executed.filters
             ]
         },
     }

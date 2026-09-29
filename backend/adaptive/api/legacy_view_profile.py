@@ -63,6 +63,8 @@ FIELD_TRANSFORMS: dict[str, FieldTransform] = {
     "Course.credits": FieldTransform.SLASH_FIRST_NUMERIC,
     "Schedule.start_time": FieldTransform.TIME_TO_HHMM,
     "Schedule.end_time": FieldTransform.TIME_TO_HHMM,
+    # Phase 7-16: the view stores one-character weekdays ("월").
+    "Schedule.day": FieldTransform.KOREAN_WEEKDAY,
 }
 # The view has no department code, and its ``course_year`` is the target
 # grade (1-5), not the offering year; there is no semester column.

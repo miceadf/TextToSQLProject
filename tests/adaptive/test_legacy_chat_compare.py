@@ -247,10 +247,10 @@ def test_policy_variants_replay_the_same_filters_without_a_model_call() -> None:
     assert plain["answered"] and relaxed["answered"]
     assert plain["keys"] == [("0001", "01")] and plain["limit"] == 200 and plain["capped"] is False
     first, second = executor.queries
-    # Same compiled path; only LIMIT and the string operator changed.
-    assert first.parameters == ["홍길동", 3, 200]
-    assert second.parameters == ["%홍길동%", 3, 200]
-    assert " LIKE %s" in second.sql and " LIKE %s" not in first.sql
+    # Same compiled path. Since Phase 7-16 the chat endpoint itself relaxes
+    # name-like equals and fixes the row cap, so both replays coincide.
+    assert first.parameters == second.parameters == ["%홍길동%", 3, 200]
+    assert first.sql == second.sql
 
 
 def test_post_json_is_loopback_only_and_refuses_redirects() -> None:

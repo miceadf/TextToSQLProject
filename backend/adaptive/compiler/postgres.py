@@ -14,10 +14,10 @@ from backend.adaptive.harness.contracts import (
 from backend.adaptive.harness.errors import HarnessFailure
 from backend.adaptive.mapping.contracts import PublishedMappingProfile
 from backend.adaptive.mapping.transforms import (
-    TRANSFORM_OPERATORS,
     FieldTransform,
     normalize_filter_value,
     render_postgres_transform,
+    transform_operators,
 )
 from backend.adaptive.ontology.contracts import Operator
 from backend.adaptive.relations.contracts import JoinPlan, JoinPlanStatus, PhysicalRelationGraph
@@ -27,6 +27,18 @@ from backend.adaptive.relations.planner import plan_join_path
 from .contracts import JoinCompilationRequest, TableAlias
 
 POSTGRES_PLACEHOLDER = "%s"
+
+
+def postgres_contains_pattern(value: object) -> str:
+    """``LIKE`` pattern for a literal substring.
+
+    PostgreSQL's default LIKE escape character is backslash, so escaping
+    ``\\``, ``%`` and ``_`` keeps a value such as ``전공_핵심`` from matching
+    ``전공X핵심``.
+    """
+    text = str(value)
+    escaped = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
 
 
 class JoinCapablePostgresCompiler:
@@ -108,7 +120,9 @@ class JoinCapablePostgresCompiler:
         predicates: list[str] = []
         parameters: list[str | int | float | bool] = []
         for item in request.query_ir.filters:
-            if item.field in transforms and item.operator not in TRANSFORM_OPERATORS:
+            if item.field in transforms and item.operator not in transform_operators(
+                transforms[item.field]
+            ):
                 self._fail(
                     HarnessErrorCode.INVALID_OPERATOR,
                     f"operator '{item.operator.value}' is not allowed on transformed field "
@@ -128,7 +142,7 @@ class JoinCapablePostgresCompiler:
                         f"value for transformed field '{item.field}' is not representable",
                     )
             if item.operator is Operator.CONTAINS:
-                value = f"%{value}%"
+                value = postgres_contains_pattern(value)
             parameters.append(value)
 
         if predicates:

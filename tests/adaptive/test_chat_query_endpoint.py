@@ -133,7 +133,7 @@ def test_success_returns_card_rows_and_understood_filters() -> None:
     assert body["version"] == CHAT_QUERY_VERSION
     assert body["status"] == "SUCCEEDED"
     assert body["columns"] == CARD_COLUMNS
-    assert body["row_count"] == 1 and body["limit"] == 50
+    assert body["row_count"] == 1 and body["limit"] == 200
     row = body["rows"][0]
     assert row["course_name"] == "자료구조" and row["credits"] == 3 and row["start_time"] == "13:00"
     assert body["understood"]["filters"][0] == {
@@ -145,10 +145,10 @@ def test_success_returns_card_rows_and_understood_filters() -> None:
     assert len(model.calls) == 1
     request, _ontology, mapping = model.calls[0]
     assert request.question == QUESTION and mapping.database_id == DATABASE_ID
-    # Only the projection changed: filters and limit are the model's.
+    # The projection and the row cap are server rules; the filters are the model's.
     [compiled] = executor.queries
     assert compiled.expected_columns[0] == "Course.code"
-    assert compiled.parameters == [3, "월", "12:00", 50]
+    assert compiled.parameters == [3, "월", "12:00", 200]
     assert_no_leak(response.text)
 
 
@@ -159,7 +159,7 @@ def test_time_values_are_normalized_before_binding_and_display() -> None:
     client, executor = make_client(model)
     body = post(client, "오후 2시 이후 수업").json()
     assert body["understood"]["filters"][0]["value"] == "14:00"
-    assert executor.queries[0].parameters == ["14:00", 50]
+    assert executor.queries[0].parameters == ["14:00", 200]
 
 
 def test_word_like_identifiers_only_match_whole_words() -> None:
@@ -169,6 +169,55 @@ def test_word_like_identifiers_only_match_whole_words() -> None:
     client, executor = make_client(model)
     assert post(client).json()["status"] == "SUCCEEDED"
     assert len(executor.queries) == 1
+
+
+def test_server_policies_fix_the_limit_and_relax_name_like_equals() -> None:
+    model = FakeModel(ir(
+        ["Course.name"],
+        [
+            {"field": "Department.name", "operator": "equals", "value": "수학과"},
+            {"field": "Instructor.name", "operator": "equals", "value": "홍길동"},
+            {"field": "Course.category", "operator": "equals", "value": "전공"},
+            {"field": "Course.code", "operator": "equals", "value": "0001-0001"},
+            {"field": "CourseOffering.section", "operator": "equals", "value": "01"},
+            {"field": "Course.credits", "operator": "equals", "value": 3},
+        ],
+        limit=5,
+    ))
+    client, executor = make_client(model)
+    body = post(client, "수학과 홍길동 전공 과목").json()
+    assert body["limit"] == 200
+    assert [item["operator"] for item in body["understood"]["filters"]] == [
+        "contains", "contains", "contains", "equals", "equals", "equals",
+    ]
+    [compiled] = executor.queries
+    assert compiled.parameters == ["%수학과%", "%홍길동%", "%전공%", "0001-0001", "01", 3, 200]
+    assert compiled.sql.count(" LIKE %s") == 3
+
+
+@pytest.mark.parametrize(
+    ("raw", "bound"),
+    [("월요일", "월"), ("월", "월"), ("Mon", "월"), ("friday", "금"), (" 토요일 ", "토")],
+)
+def test_weekday_values_are_normalized(raw: str, bound: str) -> None:
+    model = FakeModel(ir(["Course.name"], [{"field": "Schedule.day", "operator": "equals", "value": raw}]))
+    client, executor = make_client(model)
+    body = post(client, "요일 수업").json()
+    assert body["status"] == "SUCCEEDED"
+    assert body["understood"]["filters"][0]["value"] == bound
+    assert executor.queries[0].parameters == [bound, 200]
+
+
+def test_weekday_contains_is_allowed_and_unknown_days_are_not_understood() -> None:
+    model = FakeModel(ir(["Course.name"], [{"field": "Schedule.day", "operator": "contains", "value": "화요일"}]))
+    client, executor = make_client(model)
+    assert post(client, "화요일 수업").json()["status"] == "SUCCEEDED"
+    assert executor.queries[0].parameters == ["%화%", 200]
+    model = FakeModel(ir(["Course.name"], [{"field": "Schedule.day", "operator": "equals", "value": "주말"}]))
+    client, executor = make_client(model)
+    body = post(client, "주말 수업").json()
+    assert body["status"] == "NOT_UNDERSTOOD" and body["failure_code"] == "INVALID_VALUE_TYPE"
+    assert executor.queries == []
 
 
 def test_unsupported_field_answers_without_execution() -> None:

@@ -12,9 +12,9 @@ from backend.adaptive.harness.contracts import (
 )
 from backend.adaptive.harness.errors import HarnessFailure
 from backend.adaptive.mapping.transforms import (
-    TRANSFORM_OPERATORS,
     normalize_filter_value,
     render_postgres_transform,
+    transform_operators,
 )
 from backend.adaptive.ontology.contracts import Operator
 from backend.adaptive.relations.contracts import JoinPlan, JoinPlanStatus
@@ -402,7 +402,9 @@ class AstReadOnlyPolicy:
                     f"filter field '{filter_ir.field}' has no published mapping",
                 )
             if filter_ir.field in context.field_transforms:
-                if filter_ir.operator not in TRANSFORM_OPERATORS:
+                if filter_ir.operator not in transform_operators(
+                    context.field_transforms[filter_ir.field]
+                ):
                     self._fail(
                         HarnessErrorCode.UNSAFE_SQL_NODE,
                         f"operator for transformed field '{filter_ir.field}' is not allowed",
@@ -478,7 +480,12 @@ class AstReadOnlyPolicy:
                         f"value for transformed field '{filter_ir.field}' is not representable",
                     )
             if filter_ir.operator is Operator.CONTAINS:
-                value = f"%{value}%"
+                if context.dialect == "postgres":
+                    from backend.adaptive.compiler.postgres import postgres_contains_pattern
+
+                    value = postgres_contains_pattern(value)
+                else:
+                    value = f"%{value}%"
             expected_parameters.append(value)
         expected_parameters.append(context.query_ir.limit)
         actual_signature = [

@@ -23,6 +23,7 @@ __all__ = [
     "normalize_filter_value",
     "normalize_transformed_value",
     "render_postgres_transform",
+    "transform_operators",
     "transform_supports_data_type",
 ]
 
@@ -32,16 +33,22 @@ class FieldTransform(str, Enum):
     SLASH_FIRST_NUMERIC = "SLASH_FIRST_NUMERIC"
     # TIME -> "HH:MM" text, matching the canonical time format.
     TIME_TO_HHMM = "TIME_TO_HHMM"
+    # Single-character Korean weekday column ("월"); filter values such as
+    # "월요일" or "Mon" are normalized to it (Phase 7-16).
+    KOREAN_WEEKDAY = "KOREAN_WEEKDAY"
 
 
 _POSTGRES_TEMPLATES = {
     FieldTransform.SLASH_FIRST_NUMERIC: "CAST(SPLIT_PART({column}, '/', 1) AS NUMERIC)",
     FieldTransform.TIME_TO_HHMM: "TO_CHAR({column}, 'HH24:MI')",
+    # The column already holds the canonical form; only filter values change.
+    FieldTransform.KOREAN_WEEKDAY: "{column}",
 }
 
 _DATA_TYPES = {
     FieldTransform.SLASH_FIRST_NUMERIC: frozenset({DataType.NUMBER}),
     FieldTransform.TIME_TO_HHMM: frozenset({DataType.TIME}),
+    FieldTransform.KOREAN_WEEKDAY: frozenset({DataType.STRING}),
 }
 
 # Transformed values are compared, never pattern-matched.
@@ -57,6 +64,20 @@ TRANSFORM_OPERATORS = frozenset(
 )
 
 
+_TRANSFORM_OPERATORS = {
+    FieldTransform.SLASH_FIRST_NUMERIC: TRANSFORM_OPERATORS,
+    FieldTransform.TIME_TO_HHMM: TRANSFORM_OPERATORS,
+    FieldTransform.KOREAN_WEEKDAY: frozenset(
+        {Operator.EQUALS, Operator.NOT_EQUALS, Operator.CONTAINS}
+    ),
+}
+
+
+def transform_operators(transform: FieldTransform) -> frozenset[Operator]:
+    """Operators a transformed field accepts."""
+    return _TRANSFORM_OPERATORS[FieldTransform(transform)]
+
+
 def render_postgres_transform(transform: FieldTransform, qualified_column: str) -> str:
     """Apply the fixed template to an already quoted column reference."""
     return _POSTGRES_TEMPLATES[FieldTransform(transform)].format(column=qualified_column)
@@ -70,7 +91,7 @@ def column_type_supports(transform: FieldTransform, declared_type: str) -> bool:
     """Check the physical declared type the template expects."""
     normalized = (declared_type or "").strip().lower()
     transform = FieldTransform(transform)
-    if transform is FieldTransform.SLASH_FIRST_NUMERIC:
+    if transform in (FieldTransform.SLASH_FIRST_NUMERIC, FieldTransform.KOREAN_WEEKDAY):
         return normalized.startswith(("character varying", "varchar", "text", "character", "char"))
     if transform is FieldTransform.TIME_TO_HHMM:
         return normalized.startswith("time ") or normalized == "time"
@@ -78,6 +99,16 @@ def column_type_supports(transform: FieldTransform, declared_type: str) -> bool:
 
 
 _TIME_TEXT = re.compile(r"^(\d{1,2}):(\d{2})(?::00)?$")
+
+_KOREAN_WEEKDAYS = ("월", "화", "수", "목", "금", "토", "일")
+_ENGLISH_WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+_ENGLISH_WEEKDAY_NAMES = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+_WEEKDAY_ALIASES = {
+    **{day: day for day in _KOREAN_WEEKDAYS},
+    **{day + "요일": day for day in _KOREAN_WEEKDAYS},
+    **dict(zip(_ENGLISH_WEEKDAYS, _KOREAN_WEEKDAYS)),
+    **dict(zip(_ENGLISH_WEEKDAY_NAMES, _KOREAN_WEEKDAYS)),
+}
 
 
 def normalize_filter_value(transform: FieldTransform, value: Any) -> Any:
@@ -88,7 +119,15 @@ def normalize_filter_value(transform: FieldTransform, value: Any) -> Any:
     string comparison silently misorders them. A value minute text cannot
     represent (non-zero seconds, ``"오후"``, ``"25:00"``) raises ``ValueError``
     instead of being compared as arbitrary text.
+
+    ``KOREAN_WEEKDAY`` maps ``"월요일"``, ``"Mon"``, ``"monday"`` and ``"월"``
+    to ``"월"``; any other value (``"주말"``) raises ``ValueError``.
     """
+    if FieldTransform(transform) is FieldTransform.KOREAN_WEEKDAY:
+        day = _WEEKDAY_ALIASES.get(value.strip().lower()) if isinstance(value, str) else None
+        if day is None:
+            raise ValueError("weekday filter value is not a weekday")
+        return day
     if FieldTransform(transform) is FieldTransform.TIME_TO_HHMM:
         match = _TIME_TEXT.fullmatch(value.strip()) if isinstance(value, str) else None
         if match is None:

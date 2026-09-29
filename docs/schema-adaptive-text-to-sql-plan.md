@@ -676,6 +676,7 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 - [x] Phase 7-13 legacy view 대상 챗봇 질의 endpoint(`adaptive-chat-query-v1`; Ollama QueryIR 1회 → 기존 실행 경로 → 서버 고정 카드 field, SQL·물리 이름 비노출, `UNSUPPORTED`·`NOT_UNDERSTOOD`, 시간 filter 값 정규화; legacy DB·로컬 Ollama live 확인)
 - [x] Phase 7-14 `ChatPopup`의 DB별 경로 선택(legacy 기준선은 기존 경로 유지, postgres는 QueryIR, 그 밖의 합성 DB는 챗봇 미지원 안내), 부분 mapping catalog 409 구분, `dev:all` launcher의 legacy DSN·Ollama 재사용(browser 확인)
 - [x] Phase 7-15 같은 질문의 legacy 챗봇 대 QueryIR 경로 비교 보고(개발자 작성 30문항, ONTOLOGY 범위 수용 가능 legacy 17·QueryIR 11·서버 정책 변형 13/22, 미지원 field 거절 QueryIR 3/3·legacy 0/3; L1 전 잠정)
+- [x] Phase 7-16 챗봇 서버 정책 3종(limit 200 고정, 이름형 문자열 `contains`, profile 선언형 요일 정규화 `KOREAN_WEEKDAY`)과 PostgreSQL `contains` escape, 재비교(ONTOLOGY 수용 가능 QueryIR 11→14, legacy 17; L1 전 잠정)
 - [ ] 실제 CNU DB regression test
 - [ ] SQL dialect 차이 처리
 - [ ] 응답시간·GPU/메모리 사용량 기록
@@ -1793,6 +1794,27 @@ SQLite DB 입력
   - 정책 후보를 모델 재호출로 평가하면 모델 변동과 정책 효과가 섞인다.
 - 한계: 질문·기준은 개발자 작성이라 L1 전 잠정치다. 상한 안의 우연한 일치는 여전히 부분집합으로 보일 수 있다.
 
+### ADR-072: 챗봇 표시 규칙은 서버가 정하고, DB별 값 표기 차이는 profile 선언형 변환으로 흡수한다
+
+- 날짜: 2026-09-29
+- 상태: 채택(사용자 결정, 7-15 비교 뒤)
+- 결정:
+  - QueryIR 챗봇 경로는 결과 limit을 서버 상한 200으로 고정한다.
+  - 과목명·학과명·교원명·이수구분의 `equals`를 `contains`로 바꾼다. 재작성은 원본 QueryIR의 구조 검증·미지원 판정·반사 guard 뒤에 하고, 결과는 기존 검증·compiler·AST policy·executor를 다시 거친다.
+  - 요일 표기는 DB마다 다르므로 전역 규칙으로 두지 않는다. 대신 profile이 선언하는 닫힌 목록 변환 `KOREAN_WEEKDAY`로 둔다.
+    - SQL은 identity이고, filter 값만 한 글자 요일로 정규화한다. 모르는 값은 거부한다.
+    - 변환별 허용 연산자를 둔다: 요일은 `equals`·`not_equals`·`contains`, 기존 변환은 비교 연산자만.
+  - PostgreSQL `contains`는 `\`·`%`·`_`를 escape한다(PostgreSQL LIKE 기본 escape 문자 사용).
+- 이유:
+  - 모델의 limit은 prompt 예시값(50)을 그대로 따랐다. 표시 행 수는 화면 규칙이다.
+  - 사용자는 학과명·과목명을 부분으로 입력한다(`수학과` → `자연과학대학 수학과`).
+  - 7-15의 같은 모델 출력 재실행으로 효과를 먼저 측정했고(11→13→14 추정), 적용 뒤 재비교가 추정과 일치했다(14).
+  - 요일 정규화를 profile 선언으로 두면, 다른 표기를 쓰는 DB에 잘못 적용되지 않는다.
+- 한계:
+  - "3개만" 같은 개수 요청은 반영하지 않는다.
+  - `contains` 완화로 `전공`이 `전공(핵심)`·`전공(기초)`를 모두 포함하는 것은 의도된 동작이다.
+  - SQLite 경로의 `contains` escape는 이번 범위 밖이다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -2035,3 +2057,4 @@ SQLite DB 입력
 - Phase 7-13 legacy view 대상 QueryIR 챗봇 질의 endpoint 완료. `api/chat_query.py`의 `POST /api/adaptive/v1/chat/query`(`adaptive-chat-query-v1`)를 prototype에 등록했다. 검증된 PostgreSQL context 전용이며, Ollama가 없으면 503이다. 모델 호출은 1회이고 처리는 다음과 같다: 구조 검증, 미지원 field는 실행 없이 `UNSUPPORTED`와 label, 반사 guard, 서버 고정 카드 projection, 기존 harness 실행. 응답은 카드 행과 이해한 filter(label·연산자·값)다. live 확인 중 시간 filter 값 `"14:00:00"`이 `HH:MM` 문자열 비교에서 어긋나는 결함을 발견했다. 그래서 `normalize_filter_value`를 변환 계약에 넣고 compiler·policy에 같게 적용했다. `gpt-6-luna` high review-only 지적 2건을 재현해 고쳤다. (1) understood 값에 물리 identifier·SQL 문자열이 되돌아갈 수 있는 문제: 단어 단위 identifier·질문 포함 반사 거부. (2) 초가 0이 아닌 시간 값의 정밀도 불일치: 표현 불가 값은 compiler·policy·챗봇 모두 거부. live 확인(legacy DB 읽기 전용, `text2sql_qwen:latest`·`alpaca-raw-no-system-v1`, 8개 질문, 상태·행 수만 기록) 결과는 다음과 같다. `SUCCEEDED` 6건 중 4건은 50행(모델 limit)이고, 2건은 0행이다: `김 교수님`을 `equals`로 넣은 경우, `오후`를 14:00~15:00으로 해석한 경우. 연도·학기 질문 2건은 `UNSUPPORTED`다. 모델 성능 주장이 아니다. 7-12 smoke도 계속 통과한다. 관련 테스트 152개(66 subtests), 전체 pytest 1233개·6 skip·610 subtests, compileall, diff check 통과. 문자열 `equals` 경향의 처리 방식은 7-15 비교 뒤 결정한다. legacy·frontend 변경 없음. ADR-069 추가
 - Phase 7-14 ChatPopup의 DB별 경로 선택과 `dev:all` 연결 완료. `src/adaptive-prototype/chatQuery.ts`에 경로 선택, `adaptive-chat-query-v1` strict parser·client, 카드 key 변환, 안내 문구를 추가했다. `ChatPopup`은 현재 경로를 표시한다. QueryIR 경로에서는 카드·시간표와 함께 SQL 대신 "이해한 조건"을 보이고, 수강 이력 제외를 비활성화한다. 합성·private SQLite DB는 legacy로 질의하지 않고 미지원을 안내한다. 부분 mapping PostgreSQL catalog는 409 `SYNTHETIC_CATALOG_UNSUPPORTED`로 구분하고, 화면은 이때만 챗봇 안내를 보인다. `backend/adaptive/api/dev_launcher.py`와 `dev:adaptive-prototype:legacy` script를 추가했고, `dev:all`이 이를 쓴다. launcher는 legacy `.env`의 세 key만 읽어 legacy-view DSN(프로세스 안)과 loopback Ollama를 켜며, 부분별로 독립 강등한다. `gpt-6-luna` high review-only 지적 6건 중 5건을 재현해 고쳤다. (1) launcher가 모델 실패를 DB 실패로 처리해 둘 다 끌 수 있던 문제: profile 로드·모델 구성·조립을 분리. (2) 완전 mapping PostgreSQL의 일시 catalog 오류도 챗봇 안내로 가리던 문제: 409 전용 code. (3) DB 전환 직후 이전 응답이 새 화면에 붙을 수 있던 경합: layout effect 무효화와 legacy 경로 대상 확인. (4) 결과 문자열 길이 제한 불일치: 서버 1,000자. (5) client 제어 문자 검증. 완전 mapping DB의 연도·학기 카드 상세 미표시는 legacy view에 해당 field가 없어 보류했다. browser 확인(`dev:all`)은 다음과 같다. launcher 상태 `legacy-view=enabled, ollama=enabled`. 합성 flat → 챗봇 미지원 표시. Legacy DB (QueryIR) → 목록 자리 안내(409)와 재시도 버튼 없음, `3학점 전공 과목 알려줘` 50건과 이해한 조건 `학점 = 3`, 연도 질문은 미지원 안내, SQL 패널 없음. Legacy 기준선 → 기존 SQL 경로·SQL 패널, 같은 질문 `교양 과목 중에 금요일 수업`에서 legacy 190행(119과목) 대 QueryIR 50행(모델 limit). 상위 카드 순서와 표시 형식은 같았다. 행 수 차이는 7-15의 limit 정책 항목이다. 관련 Python 테스트 125개, frontend 13개 파일 전체(7-14 신규 8개 포함), tsc·eslint(src 전체), 전체 pytest 1246개·6 skip·610 subtests, compileall, diff check 통과. legacy backend·DB 변경 없음. ADR-070 추가
 - Phase 7-15 같은 질문의 legacy 챗봇 대 QueryIR 경로 비교 완료. `backend/adaptive/evaluation/legacy_chat_compare.py`와 질문 세트 `data/legacy-chat-compare-v1.json`을 추가했다. 질문 세트는 개발자 작성 30문항이다(ONTOLOGY 22, OUTSIDE_SCOPE 5, UNSUPPORTED_FIELD 3, 결과 확인 전 고정). `gpt-6-luna` high review-only를 live 실행 전에 받아 지적 9건을 모두 재현해 고쳤다: 기준 SQL AST 형태 검증, redirect 차단, 상한 도달 확인 뒤에만 부분집합 수용, legacy 실제 LIMIT 기록, NULL 분반 보존, 요약 출력에서 질문 원문 제외, 배타적 파일 생성, DB 연결 timeout, 정책 재실행 테스트. live 실행(`dev:all`, 로컬 Ollama, 1회) 결과, ONTOLOGY 범위 수용 가능 문항은 legacy 17, QueryIR 11, `+limit200` 10, `+limit200+contains` 13이다. 요일 정규화를 더한 오프라인 추정은 14다. 미지원 field 거절은 QueryIR 3/3, legacy 0/3이다(legacy는 `2024년`을 4학년으로 조회한 경우 포함). legacy는 학점 형식 불일치(`credit_hours = '3'`)로 3문항이 0행이었다. QueryIR의 주된 실패는 없는 field 이름 생성(`Course.department` 등), 요일·이수구분 값 형식, 부분 학과명 `equals`, 조건 해석 오류다. ontology 밖 질문(학년·선수과목 등)은 legacy 4/5, QueryIR 0~1/5다. 결과는 `docs/phase7-15-legacy-vs-queryir-comparison-results-2026-09-29.md`에 두었다. limit·문자열 완화·코드값 정규화·field 별칭·ontology 확장은 사용자 결정 항목으로 남긴다. 비교 모듈 테스트 38개, 전체 pytest 1284개·6 skip·610 subtests, compileall, diff check 통과. 서버 정책·legacy 변경 없음. 모델 성능 확정 수치가 아니다(L1·L3 전). ADR-071 추가
+- Phase 7-16 챗봇 서버 정책 3종 적용과 재비교 완료(사용자 결정). `chat_query.py`에 `CHAT_ROW_LIMIT = 200`과 이름형 문자열 `contains` 완화(`CONTAINS_FIELDS`)를 넣었다. understood 표시는 실제 실행 조건과 같다. `mapping/transforms.py`에 `KOREAN_WEEKDAY`(identity SQL, 요일 값 정규화, 모르는 값 거부)와 변환별 허용 연산자 `transform_operators()`를 추가했다. legacy-view profile에 `Schedule.day`로 선언했고, private profile은 `--write --live --replace`로 갱신했다(fingerprint 불변, smoke 5/5). `gpt-6-luna` high review-only 지적 1건(PostgreSQL `contains`의 LIKE 와일드카드 미escape)을 재현해 고쳤다. compiler와 policy가 같은 `postgres_contains_pattern`을 쓰며, 실제 PostgreSQL에서 escape 동작을 확인했다. 재비교(`p716-run1`, 모델 출력과 legacy SQL은 7-15와 문항별로 동일) 결과, ONTOLOGY 수용 가능 문항은 QueryIR 11→14, legacy 17이다. 개선 문항은 q05·q19·q21·q22이고, limit 200으로 q02·q11·q14·q18이 `EXACT`가 되었다. q20·q24는 50행 상한이 가리던 오류가 드러났다. 둘 다 맞힌 문항 11, QueryIR만 3(학점 형식 2, legacy key 없는 조회 1), legacy만 6(없는 field 이름, 이수구분 값 형식, 조건 해석, 과도한 값 지정)이다. 결과는 `docs/phase7-16-chat-policies-recompare-results-2026-09-29.md`에 두었다. 관련 테스트 224개(77 subtests), frontend 13개 파일 전체, 전체 pytest 1302개·6 skip·610 subtests, compileall, diff check 통과. legacy·frontend 변경 없음. ADR-072 추가

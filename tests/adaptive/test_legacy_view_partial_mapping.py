@@ -280,6 +280,76 @@ def test_unrepresentable_time_values_are_rejected(raw: str) -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("raw", "bound"),
+    [("전공", "%전공%"), ("전공_핵심", "%전공\\_핵심%"), ("100%", "%100\\%%"), ("a\\b", "%a\\\\b%")],
+)
+def test_postgres_contains_escapes_like_wildcards(raw: str, bound: str) -> None:
+    context = make_context()
+    ir = query_ir(["Course.name"], [{"field": "Course.category", "operator": "contains", "value": raw}])
+    compiled = compile_and_validate(context, ir)
+    assert compiled.parameters == [bound, 50]
+    # The policy refuses an unescaped pattern for the same filter.
+    if bound != f"%{raw}%":
+        with pytest.raises(HarnessFailure):
+            context.policy().validate(
+                compiled.model_copy(update={"parameters": [f"%{raw}%", 50]}),
+                query_ir=ir,
+                mapping=context.harness_mapping(),
+            )
+
+
+def test_transform_operators_per_transform() -> None:
+    from backend.adaptive.mapping.transforms import TRANSFORM_OPERATORS, transform_operators
+    from backend.adaptive.ontology.contracts import Operator
+
+    assert transform_operators(FieldTransform.SLASH_FIRST_NUMERIC) == TRANSFORM_OPERATORS
+    assert transform_operators(FieldTransform.TIME_TO_HHMM) == TRANSFORM_OPERATORS
+    assert Operator.CONTAINS not in TRANSFORM_OPERATORS
+    assert transform_operators(FieldTransform.KOREAN_WEEKDAY) == {
+        Operator.EQUALS, Operator.NOT_EQUALS, Operator.CONTAINS,
+    }
+    assert render_postgres_transform(FieldTransform.KOREAN_WEEKDAY, '"t0"."c"') == '"t0"."c"'
+    assert transform_supports_data_type(FieldTransform.KOREAN_WEEKDAY, DataType.STRING)
+    assert column_type_supports(FieldTransform.KOREAN_WEEKDAY, "character varying(5)")
+    assert not column_type_supports(FieldTransform.KOREAN_WEEKDAY, "integer")
+
+
+@pytest.mark.parametrize("raw", ["주말", "", "월화", "1", "Mo"])
+def test_unknown_weekdays_are_rejected(raw: str) -> None:
+    with pytest.raises(ValueError):
+        normalize_filter_value(FieldTransform.KOREAN_WEEKDAY, raw)
+    context = make_context()
+    ir = query_ir(["Course.name"], [{"field": "Schedule.day", "operator": "equals", "value": raw}])
+    with pytest.raises(HarnessFailure) as caught:
+        context.compiler().compile(ir, context.harness_mapping())
+    assert caught.value.code is HarnessErrorCode.INVALID_VALUE_TYPE
+
+
+def test_weekday_identity_transform_is_checked_exactly() -> None:
+    context = make_context()
+    ir = query_ir(["Schedule.day"], [{"field": "Schedule.day", "operator": "equals", "value": "월요일"}])
+    compiled = compile_and_validate(context, ir)
+    assert compiled.parameters == ["월", 50]
+    assert '"t0"."day_of_week" AS "Schedule.day"' in compiled.sql
+    for sql, params in [
+        # another column in place of the weekday column
+        (f'SELECT "t0"."subject_name" AS "Schedule.day" FROM "{VIEW}" AS "t0" '
+         f'WHERE "t0"."day_of_week" = %s LIMIT %s', ["월", 50]),
+        # a function around the weekday column
+        (f'SELECT UPPER("t0"."day_of_week") AS "Schedule.day" FROM "{VIEW}" AS "t0" '
+         f'WHERE "t0"."day_of_week" = %s LIMIT %s', ["월", 50]),
+        # the raw model value instead of the normalized one
+        (compiled.sql, ["월요일", 50]),
+    ]:
+        with pytest.raises(HarnessFailure):
+            context.policy().validate(
+                CompiledQuery(sql=sql, parameters=params, expected_columns=ir.select),
+                query_ir=ir,
+                mapping=context.harness_mapping(),
+            )
+
+
 def test_policy_rejects_unnormalized_time_parameter() -> None:
     context = make_context()
     ir = query_ir(
