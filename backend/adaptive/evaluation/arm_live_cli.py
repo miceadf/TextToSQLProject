@@ -25,6 +25,7 @@ from ..ontology.loader import load_default_ontology
 from .arm_comparison import compare_arms
 from .direct_sql import run_direct_sql_evaluation
 from .direct_sql_ollama import OllamaDirectSqlModel
+from .ir_extract import IR_EXTRACT_NONE, IR_EXTRACT_RULES, IR_EXTRACT_SINGLE_FENCE, SingleFenceIrModel
 from .loader import load_evaluation_set
 from .ollama_request_format import (
     REQUEST_FORMAT_MODEL_TEMPLATE,
@@ -75,7 +76,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check", action=_FlagOnce)
     parser.add_argument("--live-synthetic", action=_FlagOnce, dest="live_synthetic")
     for name in (
-        "--ollama-model-tag", "--ollama-base-url", "--ollama-timeout", "--ollama-request-format",
+        "--ollama-model-tag", "--ollama-base-url", "--ollama-timeout", "--ollama-request-format", "--ir-extract",
         "--repository-root", "--output-name",
     ):
         parser.add_argument(name, action=_StoreOnce, default=None)
@@ -90,11 +91,12 @@ def _metric(value: Any) -> dict[str, int]:
     return {"count": value.count, "denominator": value.denominator}
 
 
-def _summary(ir: Any, sql: Any, comparison: Any, request_format: str) -> dict[str, Any]:
+def _summary(ir: Any, sql: Any, comparison: Any, request_format: str, ir_extract: str) -> dict[str, Any]:
     return {
         "status": "COMPLETED",
         "model_label": comparison.ir_model_label,
         "request_format": request_format,
+        "ir_extract": ir_extract,
         "gold_human_review_pending": comparison.gold_human_review_pending,
         "warnings": comparison.warnings,
         "ir_arm": {
@@ -113,6 +115,12 @@ def _summary(ir: Any, sql: Any, comparison: Any, request_format: str) -> dict[st
             name: counts.model_dump(mode="json") for name, counts in comparison.by_variant.items()
         },
     }
+
+
+def _ir_model(config: Any, ir_extract: str) -> Any:
+    """IR arm model; ``single-fence-v1`` mirrors the SQL arm's fence rule."""
+    model = build_startup_ollama_model(config)
+    return SingleFenceIrModel(model) if ir_extract == IR_EXTRACT_SINGLE_FENCE else model
 
 
 def _is_link(path: Path) -> bool:
@@ -163,6 +171,17 @@ def main(argv: list[str] | None = None) -> int:
             short = request_format_label(request_format)
             label = f"{label}.{short}"
             run_prefix = f"p520-{short}"
+        # None only means "not given"; an empty or unknown rule fails closed.
+        ir_extract = IR_EXTRACT_NONE if args.ir_extract is None else args.ir_extract
+        if ir_extract not in IR_EXTRACT_RULES:
+            raise ValueError(_FIXED_ERROR)
+        if ir_extract == IR_EXTRACT_SINGLE_FENCE:
+            label = f"{label}.fence"
+            run_prefix = "p522-" + (
+                f"{request_format_label(request_format)}-fence"
+                if request_format != REQUEST_FORMAT_MODEL_TEMPLATE
+                else "fence"
+            )
         ir_run_id, sql_run_id = f"{run_prefix}-ir-{label}", f"{run_prefix}-sql-{label}"
         if any(_RUN_ID.fullmatch(value) is None for value in (label, ir_run_id, sql_run_id)):
             raise ValueError(_FIXED_ERROR)
@@ -197,7 +216,7 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             ir_report = run_evaluation(
                 gold,
-                build_startup_ollama_model(config),
+                _ir_model(config, ir_extract),
                 ir_config,
                 bundle,
                 ontology=ontology,
@@ -215,7 +234,7 @@ def main(argv: list[str] | None = None) -> int:
             ("sql-report.json", sql_report),
             ("comparison.json", comparison),
         ))
-        _emit(_summary(ir_report, sql_report, comparison, request_format))
+        _emit(_summary(ir_report, sql_report, comparison, request_format, ir_extract))
         return 0
     except Exception:
         _emit(_RUN_ERROR)

@@ -469,9 +469,11 @@ def test_runtime_modules_do_not_import_direct_sql() -> None:
                     for name in names:
                         assert "direct_sql" not in name, path
                         assert "arm_comparison" not in name, path
+                        assert "ir_extract" not in name, path
                 if isinstance(node, ast.Import):
                     for alias in node.names:
-                        assert "direct_sql" not in alias.name, path
+                        for banned in ("direct_sql", "arm_comparison", "ir_extract"):
+                            assert banned not in alias.name, path
 
 
 def test_ollama_sql_provider_uses_patchable_transport_factory(monkeypatch: Any) -> None:

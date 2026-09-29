@@ -305,3 +305,63 @@ def test_empty_values_fail_closed(tmp_path: Path, monkeypatch: Any, capsys: Any,
         argv += ["--repository-root", str(tmp_path)]
     code, payload, _ = _run(argv, capsys)
     assert code == 2 and payload == {"status": "CONFIG_ERROR"}
+
+
+
+def _fencing(transport: Any) -> Any:
+    """Wrap the oracle transport so IR answers arrive inside a code fence."""
+
+    def call(url: str, payload: dict[str, Any], timeout: float) -> Any:
+        envelope = transport(url, payload, timeout)
+        if payload["prompt"].startswith("Prompt version:"):
+            envelope = {"response": "```json" + chr(10) + envelope["response"] + chr(10) + "```"}
+        return envelope
+
+    return call
+
+
+@pytest.mark.parametrize("rule,ir_correct", [(None, 0), ("single-fence-v1", 120)])
+def test_ir_extract_rule_controls_fenced_ir(
+    tmp_path: Path, monkeypatch: Any, capsys: Any, oracle_transport: Any, rule: Any, ir_correct: int
+) -> None:
+    monkeypatch.setattr(startup, "build_loopback_transport", lambda _config: _fencing(oracle_transport()))
+    name = "run-f0" if rule is None else "run-f1"
+    argv = ["--live-synthetic", "--ollama-model-tag", TAG, "--repository-root", str(tmp_path), "--output-name", name]
+    if rule:
+        argv += ["--ir-extract", rule]
+    code, payload, _ = _run(argv, capsys)
+    assert code == 0, payload
+    assert payload["ir_arm"]["semantic_correct"]["count"] == ir_correct
+    assert payload["sql_arm"]["execution_correct"]["count"] == 120
+    assert payload["ir_extract"] == (rule or "none")
+    comparison = json.loads((tmp_path / ".schema-adaptive" / "reports" / name / "comparison.json").read_text(encoding="utf-8"))
+    if rule:
+        assert payload["model_label"] == "synthetic-p519-latest.fence"
+        assert comparison["ir_model_run_id"] == "p522-fence-ir-synthetic-p519-latest.fence"
+    else:
+        assert payload["model_label"] == "synthetic-p519-latest"
+        assert comparison["ir_model_run_id"] == "p519-ir-synthetic-p519-latest"
+
+
+def test_ir_extract_with_no_system_prefix(tmp_path: Path, monkeypatch: Any, capsys: Any, oracle_transport: Any) -> None:
+    monkeypatch.setattr(startup, "build_loopback_transport", lambda _config: oracle_transport())
+    code, payload, _ = _run(
+        ["--live-synthetic", "--ollama-model-tag", TAG, "--ollama-request-format", "alpaca-raw-no-system-v1",
+         "--ir-extract", "single-fence-v1", "--repository-root", str(tmp_path), "--output-name", "run-nf"],
+        capsys,
+    )
+    assert code == 0
+    comparison = json.loads((tmp_path / ".schema-adaptive" / "reports" / "run-nf" / "comparison.json").read_text(encoding="utf-8"))
+    assert comparison["ir_model_run_id"] == "p522-nosys-fence-ir-synthetic-p519-latest.nosys.fence"
+
+
+@pytest.mark.parametrize("extra", [["--ir-extract", ""], ["--ir-extract", "strip"], ["--ir-extract", "none", "--ir-extract", "none"]])
+def test_ir_extract_invalid_values(tmp_path: Path, monkeypatch: Any, capsys: Any, extra: list[str]) -> None:
+    monkeypatch.setattr(startup, "build_loopback_transport", lambda _c: (_ for _ in ()).throw(AssertionError()))
+    argv = ["--live-synthetic", "--ollama-model-tag", TAG, "--repository-root", str(tmp_path), "--output-name", "run-i", *extra]
+    try:
+        code = cli.main(argv)
+    except SystemExit as exc:
+        code = exc.code
+    capsys.readouterr()
+    assert code == 2

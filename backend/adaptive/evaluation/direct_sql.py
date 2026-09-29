@@ -171,6 +171,11 @@ _FENCE = re.compile(r"```[A-Za-z0-9_-]*[ \t]*\r?\n?(.*?)```", re.DOTALL)
 _LABEL = re.compile(r"^sql\s*:", re.IGNORECASE)
 
 
+def find_code_fences(text: str) -> list[str]:
+    """Bodies of Markdown code fences; the one rule shared by both arms."""
+    return _FENCE.findall(text)
+
+
 def extract_sql(output: object) -> str:
     """Apply ``direct-sql-extract-v1`` without repairing the SQL itself."""
     if not isinstance(output, str):
@@ -178,7 +183,7 @@ def extract_sql(output: object) -> str:
     text = output.strip()
     if not text:
         raise DirectSqlRejected(DirectSqlOutcome.EMPTY_OUTPUT)
-    fences = _FENCE.findall(text)
+    fences = find_code_fences(text)
     if len(fences) > 1:
         raise DirectSqlRejected(DirectSqlOutcome.AMBIGUOUS_OUTPUT)
     if len(fences) == 1:
