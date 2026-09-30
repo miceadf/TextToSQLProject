@@ -12,6 +12,8 @@ export const POSTGRES_REGISTER_VERSION = 'private-postgres-registration-v1';
 const SOURCE_ID = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const SCHEMA_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,62}$/;
 const ERROR_CODE = /^[A-Z0-9_]{1,128}$/;
+// The PostgreSQL runtime's label rule (the same pattern the registry parser uses).
+export const POSTGRES_LABEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 _().-]{0,63}$/;
 
 export interface PostgresSourceOption {
   source_id: string;
@@ -129,6 +131,9 @@ export async function registerPostgresSchema(
   if (!isDatabaseId(input.databaseId) || !isValidUploadLabel(input.label)) {
     throw new PostgresRegistrationClientError('contract');
   }
+  if (!POSTGRES_LABEL_PATTERN.test(input.label)) {
+    throw new PostgresRegistrationClientError('server', 'POSTGRES_REGISTRATION_INVALID_LABEL');
+  }
   const payload = await request(fetchFn, POSTGRES_REGISTER_PATH, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -149,6 +154,8 @@ export async function registerPostgresSchema(
 
 const MESSAGES: Record<string, string> = {
   POSTGRES_REGISTRATION_INVALID_INPUT: '입력값을 확인해 주세요 (ID는 소문자·숫자·하이픈).',
+  POSTGRES_REGISTRATION_SOURCE_CHANGED: '서버 연결 설정이 등록 때와 다른 DB를 가리킵니다. 연결 설정을 되돌리거나 다시 등록하세요.',
+  POSTGRES_REGISTRATION_INVALID_LABEL: 'Label은 영문·숫자·공백·( ) _ . - 만 쓸 수 있습니다 (예: School PG).',
   POSTGRES_REGISTRATION_NOT_FOUND: '연결을 찾을 수 없습니다.',
   POSTGRES_REGISTRATION_REGISTRATION_CONFLICT: '이미 사용 중인 Database ID입니다.',
   POSTGRES_REGISTRATION_SOURCE_UNAVAILABLE: 'PostgreSQL 연결에 실패했습니다. 서버 설정을 확인해 주세요.',
@@ -323,6 +330,45 @@ export async function suggestAliases(
     ai: input.ai,
   });
   const parsed = parseCandidates(payload, input.databaseId, input.field);
+  if (parsed === null) throw new PostgresRegistrationClientError('contract');
+  return parsed;
+}
+
+// --- Phase 8-16: registered databases (reopen a review after a reload) ----------------------
+
+export const POSTGRES_REGISTRATIONS_VERSION = 'postgres-registrations-v1';
+
+export interface RegisteredPostgres {
+  database_id: string;
+  label: string;
+  source_id: string;
+  schema: string;
+  status: 'PENDING_REVIEW' | 'PUBLISHED';
+  mapping_version: number | null;
+}
+
+export function parseRegistrations(value: unknown): RegisteredPostgres[] | null {
+  if (!isPlainObject(value) || !hasExactKeys(value, ['version', 'registrations'])) return null;
+  if (value['version'] !== POSTGRES_REGISTRATIONS_VERSION || !Array.isArray(value['registrations'])) return null;
+  const out: RegisteredPostgres[] = [];
+  for (const item of value['registrations']) {
+    if (!isPlainObject(item)) return null;
+    if (!hasExactKeys(item, ['database_id', 'label', 'source_id', 'schema', 'status', 'mapping_version'])) return null;
+    const { database_id: databaseId, label, source_id: sourceId, schema, status, mapping_version: version } = item;
+    if (!isDatabaseId(databaseId) || typeof label !== 'string' || !POSTGRES_LABEL_PATTERN.test(label)) return null;
+    if (typeof sourceId !== 'string' || !SOURCE_ID.test(sourceId)) return null;
+    if (typeof schema !== 'string' || !SCHEMA_NAME.test(schema)) return null;
+    if (status !== 'PENDING_REVIEW' && status !== 'PUBLISHED') return null;
+    if (status === 'PUBLISHED' ? !(typeof version === 'number' && Number.isInteger(version) && version >= 1) : version !== null) {
+      return null;
+    }
+    out.push({ database_id: databaseId, label, source_id: sourceId, schema, status, mapping_version: version as number | null });
+  }
+  return out;
+}
+
+export async function fetchRegistrations(fetchFn: PgFetchLike, options?: { signal?: AbortSignal }) {
+  const parsed = parseRegistrations(await request(fetchFn, POSTGRES_REGISTER_PATH, { method: 'GET', signal: options?.signal }));
   if (parsed === null) throw new PostgresRegistrationClientError('contract');
   return parsed;
 }

@@ -1,6 +1,6 @@
 # 새 Codex 대화용 짧은 인수인계
 
-현재 기준: 2026-09-30, Phase 8-07 축소판 값 사전 편집까지 완료(8-15 PostgreSQL 등록, 8-14 챗봇 SQL 표시, 8-13 챗봇 값 힌트, 8-12 업로드 AI 제안, 8-10 AI 제안 v2, 8-09 AI 제안, 8-08 benchmark, 8-06 값 사전, 7-17 LEFT JOIN, 8-05까지의 관리자 기능 포함). 사용자 결정으로 benchmark 개선과 8-11은 프로토타입 이후로 미뤘다(ADR-078). 최신 상태는 항상 Git과 코드로 다시 확인한다. 설계와 로드맵의 원본은 [`schema-adaptive-text-to-sql-plan.md`](schema-adaptive-text-to-sql-plan.md), 독립 평가 세트 설계 기준은 [`independent-evaluation-set-design.md`](independent-evaluation-set-design.md), 안전한 잠정 비교는 [`phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md`](phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md)다.
+현재 기준: 2026-09-30, Phase 8-16 등록 목록·browser smoke·시연 절차까지 완료. 프로토타입 완성 단계(ADR-078) 종료. 시연은 [`demo-procedure.md`](demo-procedure.md) 참고(8-07 값 사전, 8-15 PostgreSQL 등록, 8-14 챗봇 SQL 표시, 8-13 챗봇 값 힌트, 8-12 업로드 AI 제안, 8-10 AI 제안 v2, 8-09 AI 제안, 8-08 benchmark, 8-06 값 사전, 7-17 LEFT JOIN, 8-05까지의 관리자 기능 포함). 사용자 결정으로 benchmark 개선과 8-11은 프로토타입 이후로 미뤘다(ADR-078). 최신 상태는 항상 Git과 코드로 다시 확인한다. 설계와 로드맵의 원본은 [`schema-adaptive-text-to-sql-plan.md`](schema-adaptive-text-to-sql-plan.md), 독립 평가 세트 설계 기준은 [`independent-evaluation-set-design.md`](independent-evaluation-set-design.md), 안전한 잠정 비교는 [`phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md`](phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md)다.
 
 ## 프로젝트와 현재 경계
 
@@ -127,7 +127,8 @@
   - 8-12: 업로드 흐름 AI 제안 연결 완료.
   - 8-13: 챗봇 값 힌트 완료(사용자 요청으로 8-07보다 먼저).
   - 8-07 축소판 완료(PostgreSQL 값 사전).
-  - 다음(ADR-078 프로토타입 우선): 처음부터 끝까지 browser smoke·시연 절차. 필요하면 대기 중 등록 목록(새로고침 뒤 검토 다시 열기)을 먼저 붙인다.
+  - 8-16 등록 목록·browser smoke·시연 절차 완료.
+  - 다음 후보(사용자 결정 필요): 업로드 SQLite DB 확장(QueryIR 챗봇·값 사전·부분 게시), PostgreSQL 버전 되돌리기·test query, 8-11 DB별 ontology 확장(이론·실습 시간), L1 질문 세트 확보 뒤 prompt·별칭, Phase 9.
   - 후속: 업로드 SQLite DB 확장, PostgreSQL 버전 되돌리기·test query, 공통 약어 묶음·사용 기록 제안.
     - 8-07 축소판 범위: 검토, 코드표→값 사전, test query 미리보기, 버전. 업로드 DB의 변환·값 사전·부분 게시(`unsupported`)도 포함한다.
     - 8-13 뒤 추가: 값 사전 별칭(약어) 입력. 업로드한 SQLite DB도 QueryIR 챗봇·값 힌트를 쓰도록 연결한다(지금은 PostgreSQL profile만).

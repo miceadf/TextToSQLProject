@@ -58,7 +58,8 @@ SAMPLE_LIMIT = 10
 TRANSFORM_SAMPLE_LIMIT = 50
 MAX_JSON_BYTES = 8 * 1024 * 1024
 WEEKDAYS = frozenset("월화수목금토일")
-_SLASH_VALUE = re.compile(r"^\d+(?:\.\d+)?(?:/\d+(?:\.\d+)?)+$")
+# Numbers may omit the leading zero ("1/.5/1" in the team's legacy data).
+_SLASH_VALUE = re.compile(r"^(?:\d+(?:\.\d+)?|\.\d+)(?:/(?:\d+(?:\.\d+)?|\.\d+))+$")
 _SYSTEM_SCHEMAS = ("pg_catalog", "information_schema", "pg_toast")
 
 
@@ -86,10 +87,41 @@ class PostgresSource:
     def config(self, schema: str) -> PostgresConnectionConfig:
         return PostgresConnectionConfig(self._dsn, schema=schema)
 
+    def identity(self) -> str:
+        """SHA-256 of host, port, database and user (no password): which database this is."""
+        return connection_identity(self._dsn)
+
     def __repr__(self) -> str:
         return f"PostgresSource(source_id='{self.source_id}')"
 
     __str__ = __repr__
+
+
+def connection_identity(dsn: str) -> str:
+    """Host, port, database and user of a DSN (URL or key=value form), hashed."""
+    from urllib.parse import unquote, urlsplit
+
+    text = dsn.strip()
+    if "://" in text:
+        split = urlsplit(text)
+        parts = {
+            "host": split.hostname or "",
+            "port": str(split.port or ""),
+            "dbname": unquote(split.path.lstrip("/")),
+            "user": unquote(split.username or ""),
+        }
+    else:
+        pairs = dict(token.partition("=")[::2] for token in text.split() if "=" in token)
+        parts = {
+            "host": pairs.get("host") or pairs.get("hostaddr") or "",
+            "port": pairs.get("port", ""),
+            "dbname": pairs.get("dbname", ""),
+            "user": pairs.get("user", ""),
+        }
+    parts = {key: value.strip("'\"") for key, value in parts.items()}
+    parts["host"] = parts["host"].lower()
+    canonical = "|".join(f"{key}={parts[key]}" for key in ("host", "port", "dbname", "user"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def sources_from_env(env: dict[str, str]) -> dict[str, PostgresSource]:
@@ -160,6 +192,8 @@ class PostgresRegistration(BaseModel):
     database_id: str = Field(min_length=1, max_length=64)
     label: str = Field(min_length=1, max_length=64)
     source_id: str = Field(min_length=1, max_length=32)
+    # Phase 8-16: which database the source pointed to when this was registered.
+    source_identity: str = Field(pattern=r"^[0-9a-f]{64}$")
     postgres_schema: str = Field(min_length=1, max_length=63)
     schema_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
     ontology_version: int = Field(ge=1)
@@ -341,6 +375,12 @@ def register_postgres_database(
         label = sqlite_storage.validate_label(label)
     except Exception:
         raise _fail("INVALID_INPUT") from None
+    from ..api.postgres_runtime import _valid_label as runtime_label_ok
+
+    if not runtime_label_ok(label):
+        # The PostgreSQL runtime's label rule (letters, digits, space, ()_.-);
+        # refusing here beats a registration that can never be published.
+        raise _fail("INVALID_LABEL")
     if not isinstance(schema, str) or SCHEMA_PATTERN.fullmatch(schema) is None or schema in _SYSTEM_SCHEMAS:
         raise _fail("INVALID_INPUT")
     root, target = _private_dir(repository_root, REGISTRATION_ROOT, database_id)
@@ -378,6 +418,7 @@ def register_postgres_database(
         database_id=database_id,
         label=label,
         source_id=source.source_id,
+        source_identity=source.identity(),
         postgres_schema=schema,
         schema_fingerprint=catalog.schema_fingerprint,
         ontology_version=ontology.version,
@@ -684,8 +725,8 @@ def publish_review(
     draft = load_draft(repository_root=repository_root, database_id=database_id)
     if draft is None:
         raise _fail("NOT_FOUND")
-    if loaded.manifest.source_id != source.source_id:
-        raise _fail("SOURCE_UNAVAILABLE")
+    if loaded.manifest.source_id != source.source_id or loaded.manifest.source_identity != source.identity():
+        raise _fail("SOURCE_CHANGED")  # the connection now points at another database
     previous = load_published(repository_root=repository_root, database_id=database_id)
     version = 1 if previous is None else previous.mapping_version + 1
     plan, blocking = plan_publish(
@@ -718,8 +759,42 @@ def publish_review(
     return context, []
 
 
-def published_registrations(repository_root: str | Path) -> list[tuple[str, str]]:
-    """(database_id, source_id) of every published registration, for startup."""
+def list_registrations(repository_root: str | Path) -> list[dict[str, Any]]:
+    """Phase 8-16: every readable registration, for reopening its review."""
+    try:
+        root = sqlite_storage._validate_repository(repository_root)  # noqa: SLF001
+    except Exception:
+        return []
+    base = root.joinpath(".schema-adaptive", *REGISTRATION_ROOT)
+    if not base.is_dir():
+        return []
+    found = []
+    for entry in sorted(base.iterdir()):
+        if entry.name.startswith(".") or not entry.is_dir():
+            continue
+        try:
+            loaded = load_postgres_registration(repository_root=root, database_id=entry.name)
+            load_draft(repository_root=root, database_id=entry.name)  # a damaged draft cannot reopen
+            published = load_published(repository_root=root, database_id=entry.name)
+        except Exception:
+            continue  # a damaged registration is left out, not fatal
+        from ..api.postgres_runtime import _valid_label as runtime_label_ok
+
+        if not runtime_label_ok(loaded.manifest.label):
+            continue  # could never be published
+        found.append({
+            "database_id": loaded.manifest.database_id,
+            "label": loaded.manifest.label,
+            "source_id": loaded.manifest.source_id,
+            "schema": loaded.manifest.postgres_schema,
+            "status": "PUBLISHED" if published is not None else "PENDING_REVIEW",
+            "mapping_version": None if published is None else published.mapping_version,
+        })
+    return found
+
+
+def published_registrations(repository_root: str | Path) -> list[tuple[str, str, str]]:
+    """(database_id, source_id, source identity) of every published registration, for startup."""
     try:
         root = sqlite_storage._validate_repository(repository_root)  # noqa: SLF001
     except Exception:
@@ -734,7 +809,7 @@ def published_registrations(repository_root: str | Path) -> list[tuple[str, str]
         try:
             loaded = load_postgres_registration(repository_root=root, database_id=entry.name)
             if load_published(repository_root=root, database_id=entry.name) is not None:
-                found.append((entry.name, loaded.manifest.source_id))
+                found.append((entry.name, loaded.manifest.source_id, loaded.manifest.source_identity))
         except Exception:
             continue
     return found

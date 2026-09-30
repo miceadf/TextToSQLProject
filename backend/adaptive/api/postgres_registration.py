@@ -32,16 +32,19 @@ DICTIONARIES_PATH = "/api/adaptive/v1/postgres/dictionaries"
 DICTIONARIES_VERSION = "postgres-dictionaries-v1"
 SOURCES_VERSION = "postgres-sources-v1"
 REGISTER_VERSION = "private-postgres-registration-v1"
+REGISTRATIONS_VERSION = "postgres-registrations-v1"
 _MAX_BODY_BYTES = 16 * 1024
 
 _STATUS = {
     "INVALID_INPUT": 400,
+    "INVALID_LABEL": 400,
     "NOT_FOUND": 404,
     "REGISTRATION_CONFLICT": 409,
     "SOURCE_UNAVAILABLE": 502,
     "INSPECTION_FAILED": 502,
     "LIMIT_REACHED": 409,
     "ALIAS_CONFLICT": 409,
+    "SOURCE_CHANGED": 409,
 }
 
 
@@ -131,6 +134,9 @@ class PostgresRegistrationService:
         if source is None:
             raise pg.PostgresRegistrationError("NOT_FOUND")
         return pg.list_schemas(source, connector=self._connector)
+
+    def registrations(self) -> dict[str, Any]:
+        return {"version": REGISTRATIONS_VERSION, "registrations": pg.list_registrations(self.repository_root)}
 
     def register(self, body: dict[str, Any]) -> dict[str, Any]:
         if set(body) != {"source_id", "schema", "database_id", "label"} or not all(
@@ -256,6 +262,7 @@ class PostgresRegistrationService:
                 return _publish_blocked_response([])
             code = {
                 "LIMIT_REACHED": MappingReviewErrorCode.CONFLICT,
+                "SOURCE_CHANGED": MappingReviewErrorCode.CONFLICT,
                 "INVALID_INPUT": MappingReviewErrorCode.INVALID_REQUEST,
                 "REVIEW_CONFLICT": MappingReviewErrorCode.CONFLICT,
                 "NOT_FOUND": MappingReviewErrorCode.NOT_FOUND,
@@ -573,6 +580,15 @@ def register_postgres_registration_routes(app: FastAPI, service: PostgresRegistr
             return _json(await run_in_threadpool(service.dictionary_action, body))
         except pg.PostgresRegistrationError as exc:
             return _error(exc.code)
+        except Exception:
+            return _error("INTERNAL_ERROR")
+
+    @app.get(REGISTER_PATH)
+    async def list_registrations(http_request: Request) -> JSONResponse:
+        try:
+            if dict(http_request.query_params):
+                return _error("INVALID_INPUT")
+            return _json(await run_in_threadpool(service.registrations))
         except Exception:
             return _error("INTERNAL_ERROR")
 

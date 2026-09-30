@@ -146,7 +146,7 @@ def _postgres_sources(env_values: dict[str, str]) -> dict[str, Any]:
     return sources_from_env(env_values)
 
 
-def _published_postgres(repository_root: Path) -> list[tuple[str, str]]:
+def _published_postgres(repository_root: Path) -> list[tuple[str, str, str]]:
     from ..registration.postgres_registrations import published_registrations
 
     return published_registrations(repository_root)
@@ -209,10 +209,13 @@ def main(argv: list[str] | None = None) -> int:
             os.environ[spec.dsn_env] = env_values["DATABASE_URL"]
     postgres_sources = _postgres_sources(env_values)
     status["pg_registration"] = f"enabled ({len(postgres_sources)} sources)"
-    for database_id, source_id in _published_postgres(repository_root):
+    for database_id, source_id, identity in _published_postgres(repository_root):
         source = postgres_sources.get(source_id)
         if source is None:
             status[database_id] = "disabled (SOURCE_MISSING)"
+            continue
+        if source.identity() != identity:
+            status[database_id] = "disabled (SOURCE_CHANGED)"
             continue
         # The source DSN, exported only inside this process for the loader.
         os.environ[_dsn_env_for(database_id)] = source._dsn  # noqa: SLF001

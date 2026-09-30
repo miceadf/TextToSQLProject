@@ -86,3 +86,20 @@ describe('phase8-15 client', () => {
     assert.deepEqual(bodies, [{ action: 'IGNORE', database_id: 'campus-pg', semantic_field: 'Department.code', reviewer: 'admin', reason: '없음' }]);
   });
 });
+
+describe('phase8-15 label rule', () => {
+  it('refuses labels the PostgreSQL runtime would refuse, before any request', async () => {
+    let called = false;
+    const fetchFn: PgFetchLike = async () => {
+      called = true;
+      return { ok: true, status: 200, json: async () => summary() };
+    };
+    try {
+      await registerPostgresSchema(fetchFn, { sourceId: 'default', schema: 'public', databaseId: 'campus-pg', label: '레거시 DB' });
+      assert.fail('should throw');
+    } catch (error) {
+      assert.match(toPostgresMessage(error), /영문/);
+    }
+    assert.equal(called, false);
+  });
+});

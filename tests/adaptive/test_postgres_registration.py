@@ -316,7 +316,7 @@ def test_launcher_reloads_published_registrations(
     (tmp_path / "backend" / ".env").write_text(
         f"DATABASE_URL={SECRET_DSN}\nPG_SOURCE_OTHER=postgresql://other\n", encoding="utf-8"
     )
-    monkeypatch.setattr(dev_launcher, "_published_postgres", lambda _root: [("campus-pg", "default"), ("gone-pg", "missing")])
+    monkeypatch.setattr(dev_launcher, "_published_postgres", lambda _root: [("campus-pg", "default", pg.connection_identity(SECRET_DSN)), ("gone-pg", "missing", "0" * 64), ("moved-pg", "other", "0" * 64)])
     requested: list[list[str]] = []
     seen_sources: list[Any] = []
 
@@ -341,7 +341,8 @@ def test_launcher_reloads_published_registrations(
     assert os.environ[pg.dsn_env_for("campus-pg")] == SECRET_DSN
     assert sorted(seen_sources[0]) == ["default", "other"]
     out = capsys.readouterr().out
-    assert "gone-pg=disabled (SOURCE_MISSING)" in out and "pg_registration=enabled (2 sources)" in out
+    assert "gone-pg=disabled (SOURCE_MISSING)" in out and "moved-pg=disabled (SOURCE_CHANGED)" in out
+    assert "pg_registration=enabled (2 sources)" in out
     assert "s3cret" not in out
     monkeypatch.delenv(pg.dsn_env_for("campus-pg"), raising=False)
 
@@ -423,3 +424,61 @@ def test_the_profile_pair_is_replaced_together(tmp_path: Path, monkeypatch: pyte
     with pytest.raises(pg.PostgresRegistrationError):
         pg._write_pair(fresh, {"mapping.json": b"new mapping", "profile.json": b"new profile"})
     assert list(fresh.iterdir()) == []
+
+
+# --- Phase 8-16: registration list ------------------------------------------------------------
+
+
+def test_registrations_are_listed_for_reopening(client_repo) -> None:
+    client, repo, _app, _executor = client_repo
+    assert client.get(REGISTER).json() == {"version": "postgres-registrations-v1", "registrations": []}
+    assert _register(client).status_code == 200
+    assert _register(client, "campus-pg-two").status_code == 200
+    _review_all(client)
+    assert _review(client, {"action": "PUBLISH", "database_id": DB_ID, "published_by": "admin"}).status_code == 200
+    # A damaged registration is left out instead of failing the list.
+    (repo / ".schema-adaptive" / "postgres-registrations" / "campus-pg-two" / "catalog.json").write_text("{}", encoding="utf-8")
+    listed = client.get(REGISTER)
+    assert listed.status_code == 200
+    assert listed.json()["registrations"] == [{
+        "database_id": DB_ID, "label": "Campus", "source_id": "campus", "schema": "campus",
+        "status": "PUBLISHED", "mapping_version": 1,
+    }]
+    assert "s3cret" not in listed.text
+    assert client.get(REGISTER, params={"x": "1"}).status_code == 400
+
+
+def test_a_label_the_runtime_would_refuse_is_refused_at_registration(client_repo) -> None:
+    client, repo, _app, _executor = client_repo
+    response = client.post(REGISTER, json={"source_id": "campus", "schema": "campus", "database_id": DB_ID, "label": "레거시 DB"})
+    assert response.status_code == 400
+    assert response.json() == {"error": {"code": "POSTGRES_REGISTRATION_INVALID_LABEL"}}
+    assert not (repo / ".schema-adaptive" / "postgres-registrations" / DB_ID).exists()
+
+
+def test_slash_values_may_omit_the_leading_zero() -> None:
+    assert pg.transform_fits(FieldTransform.SLASH_FIRST_NUMERIC, "character varying(20)", DataType.NUMBER, ["1/.5/1", "3/3/0"])
+    assert not pg.transform_fits(FieldTransform.SLASH_FIRST_NUMERIC, "character varying(20)", DataType.NUMBER, ["3//0"])
+
+
+def test_publishing_refuses_a_source_that_now_points_elsewhere(client_repo) -> None:
+    client, repo, app, _executor = client_repo
+    assert _register(client).status_code == 200
+    _review_all(client)
+    service = app.state.postgres_registration_service
+    service._sources = {"campus": pg.PostgresSource("campus", "Campus server", SECRET_DSN.replace("/campus", "/elsewhere"))}
+    changed = _review(client, {"action": "PUBLISH", "database_id": DB_ID, "published_by": "admin"})
+    assert changed.status_code == 409
+    assert not (repo / ".schema-adaptive" / "postgres-profiles" / DB_ID).exists()
+    # Only the password changed: still the same database.
+    service._sources = {"campus": pg.PostgresSource("campus", "Campus server", SECRET_DSN.replace("s3cret-815", "rotated"))}
+    assert _review(client, {"action": "PUBLISH", "database_id": DB_ID, "published_by": "admin"}).status_code == 200
+
+
+def test_the_list_skips_damaged_drafts(client_repo) -> None:
+    client, repo, _app, _executor = client_repo
+    assert _register(client).status_code == 200
+    _review(client, {"action": "INIT", "database_id": DB_ID, "reviewer": "admin"})
+    assert [item["database_id"] for item in client.get(REGISTER).json()["registrations"]] == [DB_ID]
+    (repo / ".schema-adaptive" / "postgres-registrations" / DB_ID / "draft.json").write_text("{", encoding="utf-8")
+    assert client.get(REGISTER).json()["registrations"] == []
