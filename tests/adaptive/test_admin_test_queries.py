@@ -44,6 +44,12 @@ def _publish_fixture(client: TestClient, raw: bytes, database_id: str, variant) 
             "table": table, "column": column, "reviewer": "tester", "reason": "synthetic fixture",
         })
         assert response.status_code == 200, response.text[:200]
+    # Phase 8-18: the fixtures store no target grade.
+    response = _action(client, {
+        "action": "IGNORE", "database_id": database_id, "semantic_field": "Course.target_grade",
+        "reviewer": "tester", "reason": "이 DB에 없음",
+    })
+    assert response.status_code == 200, response.text[:200]
     assert _action(client, {"action": "PUBLISH", "database_id": database_id, "published_by": "tester"}).status_code == 200
 
 

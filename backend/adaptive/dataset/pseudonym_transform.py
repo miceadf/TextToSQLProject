@@ -64,7 +64,7 @@ def pseudonymize_records(
     """Transform only fully verifiable records; failures contain no partial output."""
 
     source_records = list(records)
-    if profile.ontology_version != ontology.version:
+    if not ontology.accepts_version(profile.ontology_version):
         raise ValueError("pseudonymization profile ontology version mismatch")
     if not key or len(key) < 32:
         raise ValueError("pseudonymization key must contain at least 32 bytes")
@@ -153,7 +153,7 @@ def pseudonymize_records(
             reasons.add(PseudonymReasonCode.OUTPUT_VALIDATION_FAILED)
         if record_id_counts[record_id] > 1:
             reasons.add(PseudonymReasonCode.OUTPUT_VALIDATION_FAILED)
-        if record.ontology_version != ontology.version:
+        if not ontology.accepts_version(record.ontology_version):
             reasons.add(PseudonymReasonCode.ONTOLOGY_VERSION_MISMATCH)
         if not _unicode_ok(record.question) or not _unicode_ok(record.instruction):
             reasons.add(PseudonymReasonCode.OUTPUT_VALIDATION_FAILED)

@@ -283,7 +283,7 @@ class MultiSchemaFixtureTest(unittest.TestCase):
                     )
                     self.assertEqual(candidate.table, expected_table)
                     self.assertGreaterEqual(candidate.confidence, 0.9)
-                self.assertEqual(proposal.unmapped_fields, [])
+                self.assertEqual(proposal.unmapped_fields, ["Course.target_grade"])  # Phase 8-18: not stored
 
     def test_rebuild_is_repeatable(self) -> None:
         first_fingerprints = {

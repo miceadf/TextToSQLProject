@@ -9,6 +9,8 @@ import subprocess
 from pathlib import Path
 
 import pytest
+
+from backend.adaptive.ontology import load_default_ontology
 from fastapi.testclient import TestClient
 
 from backend.adaptive.api.clarification_http import START_PATH, SUBMIT_PATH
@@ -81,17 +83,30 @@ def _approve_all(client: TestClient, database_id: str, reviewer: str = "tester")
     detail = client.get(REVIEW_PATH, params={"database_id": database_id}).json()
     assert detail["version"] == REVIEW_VERSION
     for field in detail["review"]["fields"]:
+        if not field["candidates"] and field["semantic_field"] not in CANONICAL_SELECT:
+            # Phase 8-18: a newer optional field these fixtures do not store.
+            payload = {"action": "IGNORE", "reason": "이 DB에 없음"}
+        else:
+            payload = {"action": "APPROVE", "candidate_index": 0}
         response = _action(
             client,
             {
-                "action": "APPROVE",
+                **payload,
                 "database_id": database_id,
                 "semantic_field": field["semantic_field"],
-                "candidate_index": 0,
                 "reviewer": reviewer,
             },
         )
         assert response.status_code == 200, (field["semantic_field"], response.text[:300])
+
+
+def _ignore_newer(client: TestClient, database_id: str, reviewer: str = "tester") -> None:
+    """Phase 8-18: mark the fields these fixtures do not store (target grade) as absent."""
+    response = _action(client, {
+        "action": "IGNORE", "database_id": database_id, "semantic_field": "Course.target_grade",
+        "reviewer": reviewer, "reason": "이 DB에 없음",
+    })
+    assert response.status_code == 200, response.text[:300]
 
 
 def _publish_flow(client: TestClient, raw: bytes, database_id: str) -> None:
@@ -126,9 +141,9 @@ def test_round_trip_publish_activation(review_client) -> None:
     assert first.status_code == 200
     first_detail = first.json()
     assert first_detail["status"] == "PENDING_REVIEW"
-    assert first_detail["review"]["field_count"] == len(CANONICAL_SELECT)
+    assert first_detail["review"]["field_count"] == len(load_default_ontology().fields)
     assert {item["semantic_field"] for item in first_detail["review"]["fields"]} == set(
-        CANONICAL_SELECT
+        load_default_ontology().fields
     )
     assert all(item["decision"] == "PENDING" for item in first_detail["review"]["fields"])
 
@@ -424,7 +439,7 @@ def test_publish_blocked_lists_only_safe_field_ids(review_client) -> None:
     assert set(body) == {"error"}
     assert set(body["error"]) == {"code", "fields"}
     assert body["error"]["code"] == "MAPPING_REVIEW_PUBLISH_BLOCKED"
-    assert sorted(body["error"]["fields"]) == sorted(CANONICAL_SELECT)
+    assert sorted(body["error"]["fields"]) == sorted(load_default_ontology().fields)
     assert "Traceback" not in blocked.text
     assert "SELECT" not in blocked.text
 
@@ -494,7 +509,7 @@ def test_disconnected_join_blocked(review_client, tmp_path: Path) -> None:
             "CREATE TABLE t1 (c1 TEXT, c2 TEXT, c3 TEXT, c4 TEXT, c5 TEXT, c6 TEXT, c7 TEXT, c8 TEXT)"
         )
         connection.execute(
-            "CREATE TABLE t2 (d1 TEXT, d2 TEXT, d3 TEXT, d4 TEXT, d5 TEXT, d6 TEXT, d7 TEXT)"
+            "CREATE TABLE t2 (d1 TEXT, d2 TEXT, d3 TEXT, d4 TEXT, d5 TEXT, d6 TEXT, d7 TEXT, d8 TEXT)"
         )
         connection.commit()
     finally:
@@ -511,7 +526,7 @@ def test_disconnected_join_blocked(review_client, tmp_path: Path) -> None:
     )
     detail = client.get(REVIEW_PATH, params={"database_id": database_id}).json()
     fields = [item["semantic_field"] for item in detail["review"]["fields"]]
-    assert len(fields) == len(CANONICAL_SELECT)
+    assert len(fields) == len(load_default_ontology().fields)
     for position, semantic_field in enumerate(fields):
         if position < 8:
             response = _action(
@@ -754,3 +769,29 @@ def test_fixed_entries_regression(review_client) -> None:
     assert legacy.status_code == 200
     assert flat.json()["items"] == legacy.json()["items"]
     assert flat.json()["total"] == len(DEFAULT_SEED.offerings)
+
+
+def test_only_course_list_fields_must_be_mapped_for_an_sqlite_publish(review_client) -> None:
+    """Phase 8-18: an ignored newer field publishes; an ignored course-list field blocks."""
+    client, _repo, source = review_client
+    raw = source.read_bytes()
+    database_id = "grade-optional"
+    assert _upload(client, database_id, "Label", raw).status_code == 200
+    assert _action(client, {"action": "INIT", "database_id": database_id, "reviewer": "tester"}).status_code == 200
+    _approve_all(client, database_id)  # target grade: no candidate, ignored
+    ignored = _action(client, {
+        "action": "IGNORE", "database_id": database_id, "semantic_field": "Course.category",
+        "reviewer": "tester", "reason": "check",
+    })
+    assert ignored.status_code == 200
+    blocked = _action(client, {"action": "PUBLISH", "database_id": database_id, "published_by": "tester"})
+    assert blocked.status_code == 422
+    assert blocked.json()["error"]["fields"] == ["Course.category"]
+    approved = _action(client, {
+        "action": "APPROVE", "database_id": database_id, "semantic_field": "Course.category",
+        "candidate_index": 0, "reviewer": "tester",
+    })
+    assert approved.status_code == 200
+    published = _action(client, {"action": "PUBLISH", "database_id": database_id, "published_by": "tester"})
+    assert published.status_code == 200, published.text[:300]
+    assert client.get(CATALOG_PATH, params={"database_id": database_id}).status_code == 200

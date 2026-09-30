@@ -7,8 +7,9 @@ export const CHAT_QUERY_VERSION = 'adaptive-chat-query-v1';
 export const MAX_CHAT_QUESTION_LENGTH = 500;
 
 // Canonical course-card keys, in server order. Values never carry SQL or physical names.
+// Phase 8-18: 'target_grade' (대상 학년) appears when the database maps it.
 const CARD_KEYS = [
-  'course_code', 'course_name', 'credits', 'category', 'department_code', 'department_name',
+  'course_code', 'course_name', 'credits', 'category', 'target_grade', 'department_code', 'department_name',
   'instructor_name', 'year', 'semester', 'section', 'capacity', 'enrolled', 'day', 'start_time', 'end_time',
 ];
 const CARD_KEY_SET = new Set(CARD_KEYS);

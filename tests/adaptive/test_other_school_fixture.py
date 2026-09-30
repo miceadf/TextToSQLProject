@@ -61,7 +61,8 @@ def test_every_question_has_a_small_nonempty_gold_or_a_decline():
 
 
 def test_grade_compares_course_sets_and_declines():
-    first, decline = school.QUESTIONS[0], school.QUESTIONS[-1]
+    first = school.QUESTIONS[0]
+    decline = school.Question("qx", "강의실 정보 보여줘", None, "a decline")
     expected = sorted(school.gold(first))
     rows = [{"course_code": code} for code in expected + expected[:1]]  # duplicates are fine
     assert school.grade(first, {"status": "SUCCEEDED", "rows": rows})[0] is True

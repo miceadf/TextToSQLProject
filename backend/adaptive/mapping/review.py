@@ -168,10 +168,15 @@ class MappingReviewService:
             issues.append("draft and catalog database_id differ")
         if draft.schema_fingerprint != catalog.schema_fingerprint:
             issues.append("schema fingerprint changed; regenerate proposal")
-        if draft.ontology_version != ontology.version:
+        if not ontology.accepts_version(draft.ontology_version):
             issues.append("ontology version changed; regenerate proposal")
 
-        ontology_fields = ontology.fields
+        # Phase 8-18: a draft covers the fields of the version it was made under.
+        ontology_fields = (
+            ontology.fields_at(draft.ontology_version)
+            if ontology.accepts_version(draft.ontology_version)
+            else ontology.fields
+        )
         active_entities = {
             semantic_field.split(".", 1)[0]
             for semantic_field, entry in draft.fields.items()

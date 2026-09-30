@@ -206,7 +206,10 @@ QUESTIONS: tuple[Question, ...] = (
     Question("q10", "정원 60명 이상인 강의 보여줘", lambda r: r["capacity"] >= 60, "정원 비교"),
     Question("q11", "금요일 오전 수업 보여줘",
              lambda r: r["day"] == "FRI" and r["start"] < "1200", "영문 요일 + char(4) 시간"),
-    Question("q12", "1학년 대상 과목 보여줘", None, "ontology에 없는 대상 학년(함정 column)"),
+    # Phase 8-18: first fixed as a decline, because the ontology had no target
+    # grade; that premise was wrong (the legacy chatbot answered it), so the
+    # field was added and the gold is the first-year courses.
+    Question("q12", "1학년 대상 과목 보여줘", lambda r: r["grade"] == 1, "대상 학년"),
 )
 
 

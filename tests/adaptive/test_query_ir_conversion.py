@@ -74,7 +74,8 @@ class QueryIrConversionTest(unittest.TestCase):
         self.assertEqual(profile.dialect, "postgres")
         self.assertEqual(profile.table_allowlist, ["courses"])
         self.assertEqual(profile.root_entity, "CourseOffering")
-        self.assertEqual(profile.ontology_version, self.ontology.version)
+        self.assertEqual(profile.ontology_version, 1)  # Phase 8-18: still valid under version 2
+        self.assertTrue(self.ontology.accepts_version(profile.ontology_version))
         self.assertEqual(
             profile.mappings_by_physical[("courses", "subject_name")].semantic_field,
             "Course.name",

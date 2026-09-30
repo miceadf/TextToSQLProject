@@ -47,6 +47,9 @@ class OntologyField(BaseModel):
     physical_name_hints: list[str] = Field(default_factory=list)
     allowed_operators: set[Operator]
     required: bool = False
+    # Phase 8-18: the ontology version that added this field. Versions only
+    # add fields, so a record made under an older version stays valid.
+    since_version: int = Field(default=1, ge=1)
 
 
 class EntityDefinition(BaseModel):
@@ -87,6 +90,10 @@ class DomainOntology(BaseModel):
         relation_names = [relation.name for relation in self.relations]
         if len(relation_names) != len(set(relation_names)):
             raise ValueError("ontology relation names must be unique")
+        for entity in self.entities:
+            for field in entity.fields:
+                if field.since_version > self.version:
+                    raise ValueError(f"field '{field.name}' is newer than the ontology")
         known_entities = set(entity_names)
         for relation in self.relations:
             if relation.source_entity not in known_entities:
@@ -108,6 +115,34 @@ class DomainOntology(BaseModel):
             for entity in self.entities
             for field in entity.fields
         }
+
+    def accepts_version(self, version: object) -> bool:
+        """Whether a record made under ``version`` is valid under this ontology (Phase 8-18)."""
+        return (
+            isinstance(version, int)
+            and not isinstance(version, bool)
+            and 1 <= version <= self.version
+        )
+
+    def fields_at(self, version: int) -> dict[str, OntologyField]:
+        """The fields a record made under ``version`` knows about."""
+        if not self.accepts_version(version):
+            raise ValueError("ontology version is not accepted")
+        return {
+            name: field
+            for name, field in self.fields.items()
+            if field.since_version <= version
+        }
+
+    def at_version(self, version: int) -> "DomainOntology":
+        """This ontology as it stood at ``version`` (fields added later left out)."""
+        if not self.accepts_version(version):
+            raise ValueError("ontology version is not accepted")
+        entities = [
+            entity.model_copy(update={"fields": [f for f in entity.fields if f.since_version <= version]})
+            for entity in self.entities
+        ]
+        return self.model_copy(update={"version": version, "entities": entities})
 
     def entity_for_field(self, field_name: str) -> EntityDefinition:
         entity_name = field_name.split(".", 1)[0]

@@ -1,4 +1,4 @@
-version: 1
+version: 2
 domain: university-course
 entities:
   - name: Course
@@ -39,6 +39,15 @@ entities:
         physical_name_hints: [category, course_type, subject_type, isu_gb, completion_type]
         allowed_operators: [equals, contains]
         required: false
+      - name: Course.target_grade
+        label: 대상 학년
+        description: 과목을 듣도록 정한 학년(1학년, 2학년 …)
+        data_type: integer
+        aliases: [학년, 대상학년, 수강학년]
+        physical_name_hints: [target_grade, target_year, grade_level, class_year]
+        allowed_operators: [equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal]
+        required: false
+        since_version: 2
 
   - name: Department
     label: 학과

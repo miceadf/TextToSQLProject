@@ -65,6 +65,8 @@ BASE_REASON = (
 )
 # One result row per offering, like the view: the view's FROM table.
 BASE_ANCHOR_TABLE = "cnu_courses"
+# Phase 8-18: ontology version 2 adds Course.target_grade.
+ONTOLOGY_VERSION = 2
 
 # canonical field -> (view column, expected declared type prefix)
 VIEW_FIELDS: dict[str, tuple[str, str]] = {
@@ -72,6 +74,8 @@ VIEW_FIELDS: dict[str, tuple[str, str]] = {
     "Course.name": ("subject_name", "character varying"),
     "Course.credits": ("credit_hours", "character varying"),
     "Course.category": ("category", "character varying"),
+    # Phase 8-18: the legacy screen shows ``target_year`` as 대상학년.
+    "Course.target_grade": ("target_year", "integer"),
     "Department.name": ("dept_name", "character varying"),
     "Instructor.name": ("professor", "character varying"),
     "CourseOffering.section": ("section", "character varying"),
@@ -88,8 +92,9 @@ FIELD_TRANSFORMS: dict[str, FieldTransform] = {
     # Phase 7-16: the view stores one-character weekdays ("월").
     "Schedule.day": FieldTransform.KOREAN_WEEKDAY,
 }
-# The view has no department code, and its ``course_year`` is the target
-# grade (1-5), not the offering year; there is no semester column.
+# The view has no department code, and its ``course_year`` is a grade
+# (1-5), not the offering year; there is no semester column. The target
+# grade comes from ``target_year`` (Phase 8-18).
 UNSUPPORTED_FIELDS = ("CourseOffering.semester", "CourseOffering.year", "Department.code")
 
 # Phase 8-06: the category values of the team-built legacy DB, with the
@@ -144,6 +149,7 @@ BASE_FIELDS: dict[str, tuple[str, str, str]] = {
     "Course.name": ("subject", "subject_name", "character varying"),
     "Course.credits": ("subject", "credit_hours", "character varying"),
     "Course.category": ("subject", "category", "character varying"),
+    "Course.target_grade": ("subject", "target_year", "integer"),
     "Department.name": ("department", "dept_name", "character varying"),
     "Instructor.name": ("cnu_courses", "professor", "character varying"),
     "CourseOffering.section": ("cnu_courses", "section", "character varying"),
@@ -283,7 +289,7 @@ def build_documents(
         database_id=spec.database_id,
         version=1,
         schema_fingerprint=schema_fingerprint,
-        ontology_version=1,
+        ontology_version=ONTOLOGY_VERSION,
         published_by=REVIEWER,
         published_at=published_at,
         fields={
@@ -653,7 +659,7 @@ def main(argv: list[str] | None = None, *, environ: dict[str, str] | None = None
                 executors_by_id={
                     database_id: PostgresReadOnlyExecutor({database_id: profile.connection_config})
                 },
-                expected_ontology_version=1,
+                expected_ontology_version=ONTOLOGY_VERSION,
             )
         except Exception:
             raise LegacyViewProfileError("RUNTIME_INVALID") from None

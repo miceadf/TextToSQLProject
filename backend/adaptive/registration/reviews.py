@@ -586,7 +586,12 @@ def _load_manifest_strict(review_dir: Path) -> ActivationManifest:
 def _check_canonical_full_coverage(profile: PublishedMappingProfile) -> bool:
     from ..api.synthetic_registry import CANONICAL_SELECT
 
-    return set(profile.fields.keys()) == set(CANONICAL_SELECT)
+    # Phase 8-18: every course-list field, plus any other ontology field.
+    ontology = load_default_ontology()
+    if not ontology.accepts_version(profile.ontology_version):
+        return False
+    known = set(ontology.fields_at(profile.ontology_version))
+    return set(CANONICAL_SELECT) <= set(profile.fields) <= known
 
 
 def _validate_canonical_executable(catalog: Any, profile: PublishedMappingProfile) -> None:
@@ -597,7 +602,7 @@ def _validate_canonical_executable(catalog: Any, profile: PublishedMappingProfil
     from ..policy.harness import SchemaAdaptiveAstPolicy
     from ..relations.physical import build_physical_relation_graph
 
-    if set(profile.fields.keys()) != set(CANONICAL_SELECT):
+    if not _check_canonical_full_coverage(profile):
         raise _fail(ReviewErrorCode.PUBLISH_BLOCKED)
     try:
         graph = build_physical_relation_graph(catalog)
@@ -887,8 +892,9 @@ def ignore_field(
 ) -> MappingDraft:
     """Phase 8-15: mark a field as absent from this database (reason required).
 
-    SQLite publishing still needs every canonical field, so an ignored field
-    blocks an SQLite publish until it is approved or remapped.
+    SQLite publishing still needs every course-list field, so ignoring one of
+    those blocks an SQLite publish until it is approved or remapped; other
+    fields (Phase 8-18) may stay ignored.
     """
     reason = validate_reason(reason)
     return _mutate_draft(
@@ -966,7 +972,7 @@ def publish_review(
             or draft.ontology_version != loaded.manifest.ontology_version
         ):
             raise _fail(ReviewErrorCode.REVIEW_CONFLICT)
-        if draft.ontology_version != ontology.version:
+        if not ontology.accepts_version(draft.ontology_version):
             raise _fail(ReviewErrorCode.PUBLISH_BLOCKED)
         service = MappingReviewService()
         try:
@@ -1128,7 +1134,7 @@ def _check_activatable(
         or profile.version != version
         or profile.status != "PUBLISHED"
         or profile.schema_fingerprint != loaded.manifest.schema_fingerprint
-        or profile.ontology_version != ontology.version
+        or not ontology.accepts_version(profile.ontology_version)
         or profile.ontology_version != loaded.manifest.ontology_version
     ):
         raise _fail(ReviewErrorCode.PUBLISH_BLOCKED)
@@ -1423,7 +1429,7 @@ def load_activation(*, repository_root: str | Path, database_id: str) -> LoadedA
         raise _fail(ReviewErrorCode.ARTIFACT_MISMATCH)
     if profile.schema_fingerprint != loaded.manifest.schema_fingerprint:
         raise _fail(ReviewErrorCode.ARTIFACT_MISMATCH)
-    if profile.ontology_version != ontology.version:
+    if not ontology.accepts_version(profile.ontology_version):
         raise _fail(ReviewErrorCode.ARTIFACT_MISMATCH)
     if profile.ontology_version != loaded.manifest.ontology_version:
         raise _fail(ReviewErrorCode.ARTIFACT_MISMATCH)
@@ -1495,12 +1501,19 @@ def incomplete_field_ids(*, repository_root: str | Path, database_id: str) -> li
         draft = _load_draft_strict(review_dir)
     except Exception:
         return []
+    from ..api.synthetic_registry import CANONICAL_SELECT
     from ..mapping import ReviewDecision
 
+    # Phase 8-18: an unreviewed field, or a course-list field left unmapped;
+    # other fields may be absent from an SQLite upload.
     pending = sorted(
         name
         for name, entry in draft.fields.items()
-        if entry.decision not in {ReviewDecision.APPROVED, ReviewDecision.REMAPPED}
+        if entry.decision is ReviewDecision.PENDING
+        or (
+            name in CANONICAL_SELECT
+            and entry.decision not in {ReviewDecision.APPROVED, ReviewDecision.REMAPPED}
+        )
     )
     return pending[:64]
 
@@ -1549,7 +1562,9 @@ def compare_registrations(
     diff = compare_catalogs(base.catalog, candidate.catalog)
     mapped = {name: (entry.table, entry.column) for name, entry in base.profile.fields.items()}
     impacts = mapping_impact(mapped, base.catalog, candidate.catalog)
-    ontology_match = base.ontology_version == candidate.manifest.ontology_version
+    # Phase 8-18: versions only add fields, so an older base carries over; the
+    # fields it never had are recorded as NOT_IN_BASE.
+    ontology_match = 1 <= base.ontology_version <= candidate.manifest.ontology_version
     executable = False
     if ontology_match and all(
         item.status in (FieldImpactStatus.UNCHANGED, FieldImpactStatus.TYPE_CHANGED)
@@ -1584,7 +1599,9 @@ class StaleField(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
 
     semantic_field: str = Field(min_length=1, max_length=MAX_NAME_LENGTH)
-    status: str = Field(pattern=r"^(TYPE_CHANGED|COLUMN_MISSING|TABLE_MISSING)$")
+    # Phase 8-18: NOT_IN_BASE is a field the base mapping never had (a newer
+    # ontology field, or one the base left out); it waits for review.
+    status: str = Field(pattern=r"^(TYPE_CHANGED|COLUMN_MISSING|TABLE_MISSING|NOT_IN_BASE)$")
 
 
 class MappingSuccession(BaseModel):
@@ -1744,6 +1761,11 @@ def carry_over_review(
             )
     except Exception:
         raise _fail(ReviewErrorCode.REVIEW_CONFLICT) from None
+    classified = set(carried) | {item.semantic_field for item in stale}
+    stale = sorted(
+        [*stale, *(StaleField(semantic_field=name, status="NOT_IN_BASE") for name in set(planned.fields) - classified)],
+        key=lambda item: item.semantic_field,
+    )
     if (
         planned.database_id != database_id
         or planned.schema_fingerprint != loaded.manifest.schema_fingerprint

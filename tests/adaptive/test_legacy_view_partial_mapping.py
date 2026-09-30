@@ -67,6 +67,7 @@ VIEW_COLUMNS = {
     "subject_name": "character varying(200)",
     "category": "character varying(50)",
     "credit_hours": "character varying(20)",
+    "target_year": "integer",
     "professor": "character varying(100)",
     "capacity": "integer",
     "enrolled": "integer",
@@ -111,7 +112,7 @@ def make_published(fields: dict[str, str] | None = None) -> PublishedMappingProf
         database_id=DATABASE_ID,
         version=1,
         schema_fingerprint=FINGERPRINT,
-        ontology_version=1,
+        ontology_version=lvp.ONTOLOGY_VERSION,
         published_by="synthetic-test",
         published_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
         fields={
@@ -164,7 +165,7 @@ def make_context(profile: PostgresRuntimeProfile | None = None, *, executor: Any
         [profile or make_profile()],
         adapters_by_id={DATABASE_ID: FakeAdapter(catalog)},
         executors_by_id={DATABASE_ID: executor or FakeExecutor()},
-        expected_ontology_version=1,
+        expected_ontology_version=lvp.ONTOLOGY_VERSION,
     )[DATABASE_ID]
 
 

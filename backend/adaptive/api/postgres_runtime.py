@@ -455,10 +455,15 @@ class ValidatedPostgresContext:
         return self._redacted()
 
 
-def _canonical_select() -> tuple[str, ...]:
-    from .synthetic_registry import CANONICAL_SELECT
+def _fields_for(mapping_version: int, expected_version: int) -> tuple[set[str], set[str]]:
+    """(fields a mapping of ``mapping_version`` must cover, fields added after it)."""
+    from ..ontology import load_default_ontology
 
-    return tuple(CANONICAL_SELECT)
+    ontology = load_default_ontology()
+    if not ontology.accepts_version(expected_version) or not 1 <= mapping_version <= expected_version:
+        raise PostgresRuntimeError()
+    covered = set(ontology.fields_at(mapping_version))
+    return covered, set(ontology.fields_at(expected_version)) - covered
 
 
 def _validate_one(
@@ -502,16 +507,17 @@ def _validate_one(
             raise PostgresRuntimeError()
         if fingerprint != str(published.schema_fingerprint):
             raise PostgresRuntimeError()
-        if int(published.ontology_version) != int(expected_ontology_version):
-            raise PostgresRuntimeError()
-        canonical = set(_canonical_select())
+        # Phase 8-18: ontology versions only add fields, so a mapping made
+        # under an older version is valid; fields added since are unsupported.
+        canonical, newer = _fields_for(int(published.ontology_version), int(expected_ontology_version))
         transforms = profile.field_transforms
         unsupported = set(profile.unsupported_fields)
         mapped = set(published.fields.keys())
         # Partial mapping only through an explicit unsupported list: the two
-        # sets are disjoint and together cover the canonical fields exactly.
+        # sets are disjoint and together cover the mapping version's fields exactly.
         if mapped & unsupported or mapped | unsupported != canonical or not mapped:
             raise PostgresRuntimeError()
+        unsupported |= newer
         if not set(transforms).issubset(mapped):
             raise PostgresRuntimeError()
         dictionaries = profile.value_dictionaries

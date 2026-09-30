@@ -83,7 +83,7 @@ class GoldValidationTests(unittest.TestCase):
         )
 
     def test_seed_and_ontology_drift(self) -> None:
-        for property_name, value in (("seed_version", 2), ("seed_fingerprint", "0" * 64), ("ontology_version", 2), ("ontology_fingerprint", "0" * 64), ("query_ir_fingerprint", "0" * 64)):
+        for property_name, value in (("seed_version", 2), ("seed_fingerprint", "0" * 64), ("ontology_version", ONTOLOGY.version + 1), ("ontology_version", 1), ("ontology_fingerprint", "0" * 64), ("query_ir_fingerprint", "0" * 64)):
             with self.subTest(property_name=property_name):
                 raw = _gold_document()
                 raw[property_name] = value

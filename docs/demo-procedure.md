@@ -39,6 +39,7 @@
 | 8 | DB 목록에서 `Legacy DB (screen)` 선택 → **적용** → 챗봇 열기 | 목록에 바로 추가됐다. |
 | 9 | "컴융 전공 과목 보여줘" | 82건. 이해한 조건은 `학과명 = 공과대학 컴퓨터융합학부, 이수 구분에 "전공" 포함`. SQL 패널에 `dept_name = '공과대학 컴퓨터융합학부' AND category LIKE '%전공%'`. |
 | 10 | "학과공통 과목 보여줘", "월요일 오전 수업 보여줘" | 약어 없이도 DB 값 조각(`학과공통`)과 요일·시간을 이해한다. |
+| 11 | (개발자 profile `Legacy DB (QueryIR)`에서) "컴융 3학년 전공 과목 보여줘" | 대상 학년(8-18)으로 33건. 화면 등록한 DB에서는 검토에서 대상 학년을 `subject.target_year`에 연결하면 같다. |
 
 단계 9~10은 smoke에서 확인한 결과다. 모델 출력은 매번 같다고 보장할 수 없다(temperature 0이어도 환경에 따라 달라질 수 있음).
 
@@ -56,10 +57,10 @@
 | 단계 | 화면 조작 | 말할 요점 |
 |---|---|---|
 | 1 | 연결 `other-school`, schema `other_school`, ID `other-school`, Label `Other School` → **등록** | 이름이 `hg_nm`, `gm_nm`처럼 전혀 다르고, 요일은 `MON`, 시간은 `0900`이다. |
-| 2 | 검토: 13개 승인, 학기 → `gangjwa.hakgi_cd`, 교수명 → `gyosu.gs_nm` remap | AI가 처음 보는 이름에서도 대부분 맞게 골랐다. 대상 학년 `suggang_hangnyeon`은 쓰지 않는다. |
+| 2 | 검토: 13개 승인, 학기 → `gangjwa.hakgi_cd`, 교수명 → `gyosu.gs_nm`, 대상 학년 → `gyogwamok.suggang_hangnyeon` remap | AI가 처음 보는 이름에서도 대부분 맞게 골랐다. 대상 학년은 AI가 학기 코드로 잘못 골라 사람이 고친다(8-18). |
 | 3 | 값 사전: 학과 `소웨`·`전전`·`기공`, 학기 `10=1학기`·`20=2학기`, 요일 `MON=월요일` … | 약어와 코드의 뜻은 그 학교 관리자가 넣는다. |
 | 4 | **사전 적용해 게시** → DB 선택 | 강의 목록에서 주 2회 수업이 한 줄에 두 시간으로 보인다. |
-| 5 | "소웨 전공필수 과목 보여줘", "금요일 오전 수업 보여줘" | SQL 패널에 이 학교의 table 이름이 보인다. 시간은 `HH:MM`으로 바꿔 비교한다. |
+| 5 | "소웨 전공필수 과목 보여줘", "금요일 오전 수업 보여줘", "소웨 1학년 과목 보여줘" | SQL 패널에 이 학교의 table 이름이 보인다. 시간은 `HH:MM`으로 바꿔 비교한다. 대상 학년이 카드 상세에 보인다. |
 
 지우기: `python -m backend.adaptive.fixtures.other_school drop`, 그리고 `.schema-adaptive/postgres-registrations/other-school`·`.schema-adaptive/postgres-profiles/other-school`.
 

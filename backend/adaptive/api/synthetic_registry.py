@@ -78,6 +78,18 @@ CANONICAL_SELECT = (
     _SCHEDULE_END_REF,
 )
 
+# Phase 8-18: chat cards show every mapped field in ontology order; the
+# course list (``CANONICAL_SELECT``) keeps its fifteen.
+_TARGET_GRADE_REF = "Course.target_grade"
+CARD_FIELDS = (
+    _COURSE_CODE_REF,
+    _COURSE_NAME_REF,
+    _COURSE_CREDITS_REF,
+    _COURSE_CATEGORY_REF,
+    _TARGET_GRADE_REF,
+    *CANONICAL_SELECT[4:],
+)
+
 # semantic ref -> canonical DTO key (single centralized mapping).
 _REF_TO_DTO_KEY = {
     _COURSE_CODE_REF: "course_code",
@@ -95,6 +107,7 @@ _REF_TO_DTO_KEY = {
     _SCHEDULE_DAY_REF: "day",
     _SCHEDULE_START_REF: "start_time",
     _SCHEDULE_END_REF: "end_time",
+    _TARGET_GRADE_REF: "target_grade",
 }
 
 _FLAT_COLUMNS = {
@@ -509,7 +522,9 @@ def register_synthetic_database_routes(
             postgres_context = frozen_postgres.get(database_id) if isinstance(database_id, str) else None
             if postgres_context is not None:
                 try:
-                    partial = bool(postgres_context.unsupported_fields())
+                    # Phase 8-18: only the course-list fields decide; a newer
+                    # ontology field may be absent without hiding the list.
+                    partial = bool(set(postgres_context.unsupported_fields()) & set(CANONICAL_SELECT))
                 except Exception:
                     return _error_response(SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value)
                 if partial:
@@ -529,7 +544,7 @@ def register_synthetic_database_routes(
                     if (
                         pg_mapping.database_id != database_id
                         or pg_mapping.status is not _PgMappingStatus.PUBLISHED
-                        or set(pg_mapping.fields) != set(CANONICAL_SELECT)
+                        or not set(CANONICAL_SELECT) <= set(pg_mapping.fields)
                     ):
                         return _error_response(SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value)
                     pg_query_ir = _PgQueryIR.model_validate(
@@ -613,7 +628,7 @@ def register_synthetic_database_routes(
                     if (
                         mapping.database_id != database_id
                         or mapping.status is not MappingStatus.PUBLISHED
-                        or set(mapping.fields) != set(CANONICAL_SELECT)
+                        or not set(CANONICAL_SELECT) <= set(mapping.fields)
                     ):
                         return _error_response(SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value)
                 except Exception:
@@ -626,7 +641,7 @@ def register_synthetic_database_routes(
                     mapping = to_harness_mapping(private_activation.profile)
                     if (
                         mapping.database_id != database_id
-                        or set(mapping.fields) != set(CANONICAL_SELECT)
+                        or not set(CANONICAL_SELECT) <= set(mapping.fields)
                     ):
                         return _error_response(SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value)
                     graph = build_physical_relation_graph(private_activation.catalog)

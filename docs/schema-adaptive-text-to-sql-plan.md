@@ -696,6 +696,7 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 - [x] Phase 8-09 AI mapping 제안(`ai-mapping-v1.1`: 로컬 `qwen2.5-coder:7b-instruct`, schema 제한 출력, runtime 규칙 검증기, 분반 table anchor 규칙)과 규칙 기반 비교(질문 AI 223/240, 규칙 205, 규칙+anchor 206; 값 사전 0/3·의미 함정 0/2는 미해결; 합성·L1/L3 전)
 - [x] Phase 8-10 AI mapping 제안 v2(저장 값 일치 검사, 값 사전 전용 단계, 관리자 column 설명 `admin-notes-v1`·코드표 직접 사전, 보류 변형 6개·사전 등록 hash; 기존 세트 223→232→235/240, 보류 세트 104→116/120; 자연어 설명은 의미 함정 미해결)
 - [ ] Phase 8-11 DB별 ontology 확장 field와 매개변수형 변환(공통 ontology는 팀 관리, DB별 확장은 관리자가 데이터로 선언, 변환은 닫힌 목록을 매개변수형으로 확장; 첫 사례 이론·실습 시간; 챗봇 응답·화면의 field 목록 일반화) — 프로토타입 이후로 보류(ADR-078)
+- [x] Phase 8-18 공통 항목 대상 학년(ontology 버전 2, 추가형 호환), 챗봇 카드 항목 일반화, SQLite 게시 필수 항목을 강의 목록 15개로, carry-over `NOT_IN_BASE`, 레거시 profile `target_year`(ADR-085)
 - [x] Phase 8-17 다른 학교 합성 DB 화면 검증(`other_school`, 고정 질문 11/12), planner의 ontology 관계 우선, `HHMM_TEXT_TO_HHMM`, 여러 시간표 행 강의 목록, 약어 길이·게시 차단 안내(ADR-084)
 - [x] Phase 8-16 등록 목록(다시 열기)·연결 신원 고정·등록 시 이름 규칙·학점 형식(`1/.5/1`), 처음부터 끝까지 browser smoke(레거시 DB 화면 등록 → 검토 → 약어 → 게시 → 챗봇 82건), 시연 절차 `docs/demo-procedure.md`(ADR-083)
 - [x] Phase 8-07 축소판 값 사전 편집(코드표·약어, 규칙/AI 약어 후보, 충돌 막음·경고, 큰 column 정확 일치 확인, 게시 시 저장 값 재확인·변환 제외, 챗봇 select 와일드카드 제거; live `weekday-english` 0→2건·브라우저 확인; ADR-082)
@@ -729,6 +730,7 @@ Phase 8 분할 계획(상세는 [`docs/prompts/phase8-01-mapping-version-rollbac
 4g. 8-07 축소판 값 사전 편집(완료, ADR-082).
 4h. 8-16 등록 목록·browser smoke·시연 절차(완료, ADR-083). 프로토타입 완성 단계(ADR-078) 종료.
 4i. 8-17 다른 학교 합성 DB로 화면 흐름 검증(완료, ADR-084).
+4j. 8-18 공통 항목 대상 학년·항목 목록 일반화(완료, ADR-085). 다음: 8-19 DB별 확장 항목(8-11, 예: 강의실), 8-20 모르는 조건 처리.
 5a. 8-07 축소판에 약어 입력·규칙/AI 약어 후보·충돌 검사·관리자 승인과 업로드 DB의 QueryIR 챗봇 연결을 포함한다(ADR-080).
 5. 8-07 관리자 화면 통합 축소판(검토·코드표→값 사전·test query 미리보기·버전; 업로드 DB 변환·값 사전·부분 게시 포함)과 처음부터 끝까지 browser smoke·시연 절차.
 6. prompt·field 별칭 개선은 L1 질문 세트 확보 뒤.
@@ -2120,6 +2122,28 @@ SQLite DB 입력
   - AI 첫 후보는 15개 중 13개가 맞았다.
   - 고정 질문은 11/12를 맞혔다. 남은 1개는 ontology에 없는 조건이다.
 
+### ADR-085: 공통 ontology는 버전을 올려 항목을 더하기만 하고, 옛 버전 기록은 그대로 유효하다
+
+- 날짜: 2026-10-01
+- 상태: 채택(사용자 결정: 대상 학년 추가 → DB별 확장 → 모르는 조건 처리 순서로 진행)
+- 결정:
+  - 공통 ontology 버전 2에 `Course.target_grade`(대상 학년)를 추가한다. 항목에는 `since_version`을 단다.
+  - 버전 1로 만든 dataset, 평가 세트, draft, 게시 mapping은 유효하다(`accepts_version`, `fields_at`, `at_version`).
+  - 옛 mapping은 자기 버전의 항목 집합으로 검사한다. 그 뒤에 생긴 항목은 "이 DB에 없음"으로 본다(챗봇 `UNSUPPORTED`).
+  - 서버보다 새 버전의 mapping은 거부한다.
+  - 강의 목록은 15개 항목 계약을 유지한다. 챗봇 카드는 ontology 순서로 매핑된 항목을 보인다.
+  - SQLite 업로드 게시는 강의 목록 15개만 필수다.
+  - carry-over는 기준에 없던 항목을 `NOT_IN_BASE`로 기록하고, 기준 버전 ≤ 새 등록 버전이면 허용한다.
+  - 레거시 개발자 profile은 대상 학년을 `target_year`에 연결한다.
+- 이유:
+  - "1학년 과목"은 흔한 질문이고 레거시 챗봇도 답했다.
+  - 레거시와 8-17 가상 학교 모두 이 정보가 있다.
+  - 버전을 올릴 때 옛 기록이 모두 무효가 되면 항목 하나 추가도 큰 이전 작업이 된다.
+- 결과: 레거시 "컴융 3학년 전공 과목" 33건, 가상 학교 고정 질문 12/12.
+- 한계와 팀 공유:
+  - 이미 화면 등록한 PostgreSQL DB의 draft 올리기는 만들지 않았다. 새 ID로 다시 등록한다.
+  - 공통 ontology 추가는 팀 논의 때 공유할 항목이다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -2379,3 +2403,4 @@ SQLite DB 입력
 - 2026-09-30 Phase 8-07 축소판 값 사전 편집 완료(ADR-082). 새 모듈 `backend/adaptive/registration/postgres_dictionaries.py`(저장·편집 대상·규칙/AI 후보·충돌 검사)와 `/api/adaptive/v1/postgres/dictionaries`(GET, POST SET/REMOVE/SUGGEST)를 추가했다. 게시가 사전을 적용하고 저장 값을 다시 확인한다. reader에 정확 일치 확인 `present`를 더했다. 화면에 `ValueDictionaryPanel`을 추가했다: field·저장 값 선택, 뜻·약어 입력, 규칙/규칙+AI 후보, 저장 전 게시 차단, 새로고침. 챗봇 보정에 select 와일드카드 제거를 더했다. live(`weekday-english` 임시 schema): "월요일 수업" 사전 없이 0건 → 코드표 게시 후 2건. 브라우저에서 레거시 `public` 등록 → 학과명 승인 → `컴융` 저장·규칙 후보까지 확인했다. 임시 파일은 지웠다. `gpt-6-luna` high review-only 지적 6건을 재현·수정했다: 큰 column 존재 확인, 큰 column 충돌, 편집 대상에서 빠진 항목 삭제, 후보 field 기억, 저장 전 게시 차단, 검토자 길이. 결과는 `docs/phase8-07-value-dictionary-editor-results-2026-09-30.md`에 두었다. 값 사전 테스트 24개, frontend Node 103개·ESLint·tsc·vite build, 전체 pytest 1691개·6 skip·610 subtests, compileall, diff check 통과. legacy DB는 읽기만 했다. ADR-082 추가
 - 2026-09-30 Phase 8-16 등록 목록·browser smoke·시연 절차 완료(ADR-083). `GET /api/adaptive/v1/postgres/registrations`와 화면 "등록된 PostgreSQL DB"(열기)를 추가했다. 등록 기록에 연결 신원을 넣어 게시·재시작 때 대조한다(`SOURCE_CHANGED`). PostgreSQL 이름은 runtime 규칙을 등록 때 적용한다(`INVALID_LABEL`). 학점 형식은 앞 0 생략(`1/.5/1`)을 허용한다. browser smoke(새 코드를 8124·5174 포트에 띄움)에서 레거시 `public`을 등록 → 13개 승인·2개 무시(학년 `course_year`, 수강 기록 `enrollment.semester`) → `컴융` 약어 → 게시 v1 → 새로고침 뒤 다시 열기 → DB 선택 → "컴융 전공 과목" 82건·SQL 확인 → "학과공통"·"월요일 오전" 확인까지 진행했다. 끝나고 파일을 지웠다. smoke에서 이름 규칙 불일치와 학점 형식 결함을 찾아 고쳤다. `gpt-6-luna` high review-only 지적 4건(연결 바꿔치기, 손상 draft 목록, 목록 이름 규칙, 연결 없음 시 목록 숨김)을 재현·수정했다. 시연 절차는 `docs/demo-procedure.md`, 결과는 `docs/phase8-16-registration-list-and-smoke-results-2026-09-30.md`에 두었다. 관련 테스트(PostgreSQL 등록·값 사전 54개), frontend Node 107개·ESLint·tsc·vite build, 전체 pytest 1696개·6 skip·610 subtests, compileall, diff check 통과. legacy DB는 읽기만 했다. ADR-083 추가
 - 2026-09-30 Phase 8-17 다른 학교 합성 DB 화면 검증 완료(ADR-084). `backend/adaptive/fixtures/other_school.py`로 로컬 합성 DB에 schema `other_school`을 만들었다(강좌 102개, 시간표 143행; 로마자 약어 이름, 이수 구분 코드 table, 학기 코드, `MON` 요일, `char(4)` 시간, 분리된 학점, 교수 소속 학과, 주 2회 수업). 확인용 서버(8124·5174)에서 화면으로 등록 → AI 첫 후보 13/15 → 학기·교수명 remap → 약어 `소웨`·`전전`·`기공`과 학기·요일 코드 이름 → 게시 → 강의 목록·챗봇을 확인했다. 결함 4건을 고쳤다. 첫째, 교수→학과 FK 때문에 모호해 게시가 막혔다. planner가 길이가 같을 때 ontology 직접 관계만으로 된 유일한 계획을 고르게 했다. 둘째, `0900` 시간을 글자로 비교했다. `HHMM_TEXT_TO_HHMM` 변환을 추가했다. 셋째, 주 2회 수업이 있으면 강의 목록이 계약 위반이었다. 같은 강좌 행을 합치게 했고, 한국어 요일도 시간표에 놓는다. 넷째, 약어 길이와 runtime 게시 차단 안내가 원인과 달랐다. 실행 전에 고정한 질문 12개를 11/12 맞혔다. 실패한 "1학년 대상"은 ontology에 없는 조건을 이수 구분에 넣은 것이며, 한계로 기록했다. `gpt-6-luna` high review-only 지적 2건 중 fixture의 `DROP SCHEMA ... CASCADE`를 자기 table만 지우는 방식으로 고쳤고 합성 DB에서 재현했다. AI mapping 평가 prompt의 변환 목록은 hash로 고정한 것이라 그대로 두었다. 결과는 `docs/phase8-17-other-school-results-2026-09-30.md`에 두었다. 관련 테스트(합성 학교·planner·변환·값 사전), frontend Node 113개·ESLint(변경 파일)·tsc·vite build, 전체 pytest 1719개·6 skip·610 subtests(fixture drop 수정 뒤 해당 테스트 8개 재실행), compileall, diff check 통과. legacy DB는 읽지 않았다. 합성 schema는 시연용으로 남겼다. ADR-084 추가
+- 2026-10-01 Phase 8-18 공통 항목 대상 학년·항목 목록 일반화 완료(ADR-085). 공통 ontology를 버전 2로 올려 `Course.target_grade`를 추가했다. 버전 1 기록은 모두 유효하다(`since_version`, `accepts_version`, `fields_at`, `at_version`). runtime은 옛 mapping을 자기 버전 항목으로 검사하고, 새 항목은 unsupported로 둔다. 챗봇 카드는 `CARD_FIELDS`(ontology 순서)를 쓰고, 강의 목록은 15개를 유지한다. SQLite 게시는 강의 목록 15개만 필수로 하고, 차단 목록도 이 기준으로 보인다. carry-over는 `NOT_IN_BASE`를 기록하고 옛 버전 기준을 허용한다. 레거시 profile(view `target_year`, base `subject.target_year`)을 다시 만들었다(legacy DB 읽기만, smoke 통과). 확인용 서버에서 레거시 "1학년 과목"·"컴융 3학년 전공 과목"(33건)·"2학년 교양 과목"(14건)을 확인했다. 8-17 가상 학교를 다시 등록해 고정 질문 12/12를 맞혔다. q12 정답은 잘못된 전제(대상 학년 없음)로 정했던 것이라 1학년 과목으로 바꿨다. AI는 대상 학년을 학기 코드로 잘못 제안했다. `gpt-6-luna` high review-only 지적 4건 중 3건을 고쳤다(평가 세트 fingerprint, dataset profile 새 항목, carry-over 버전). 기존 PostgreSQL 등록의 draft 올리기는 범위에서 빼고 한계로 기록했다. 결과는 `docs/phase8-18-target-grade-results-2026-10-01.md`에 두었다. 전체 pytest 1730개 통과·4개 실패(버전 1을 고정한 테스트 2개) → 고친 뒤 해당 파일 19개 재실행 통과, 6 skip·606 subtests. frontend Node 115개·ESLint·tsc·vite build, compileall, diff check 통과. legacy DB는 읽기만 했다. ADR-085 추가

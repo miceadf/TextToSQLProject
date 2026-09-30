@@ -40,6 +40,7 @@ const STALE_LABELS: Record<string, string> = {
   TYPE_CHANGED: '타입 변경',
   COLUMN_MISSING: '컬럼 없음',
   TABLE_MISSING: '테이블 없음',
+  NOT_IN_BASE: '기준에 없던 항목',
 };
 
 function isBusy(status: MappingReviewStatus): boolean {

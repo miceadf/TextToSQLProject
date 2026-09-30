@@ -87,7 +87,7 @@ export interface ReviewMappingVersion {
   activatable: boolean;
 }
 
-export type StaleFieldStatus = 'TYPE_CHANGED' | 'COLUMN_MISSING' | 'TABLE_MISSING';
+export type StaleFieldStatus = 'TYPE_CHANGED' | 'COLUMN_MISSING' | 'TABLE_MISSING' | 'NOT_IN_BASE';
 
 export interface ReviewSuccession {
   base_database_id: string;
@@ -279,7 +279,7 @@ function parseVersionHistory(
   return versions;
 }
 
-const STALE_STATUSES: readonly string[] = ['TYPE_CHANGED', 'COLUMN_MISSING', 'TABLE_MISSING'];
+const STALE_STATUSES: readonly string[] = ['TYPE_CHANGED', 'COLUMN_MISSING', 'TABLE_MISSING', 'NOT_IN_BASE'];
 
 function parseSuccession(value: unknown, fieldNames: Set<string>, ownId: string): ReviewSuccession | null {
   if (!isPlainObject(value)) return null;

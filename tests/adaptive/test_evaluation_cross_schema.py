@@ -117,7 +117,7 @@ class EvaluationCrossSchemaTests(unittest.TestCase):
         self.assertEqual(first.gold_set_fingerprint, evaluation_set_fingerprint(self.gold))
         self.assertGreaterEqual(first.case_count, 30)
         self.assertLessEqual(first.case_count, 50)
-        self.assertEqual(set(first.field_case_counts), set(self.ontology.fields))
+        self.assertEqual(set(first.field_case_counts), set(self.ontology.fields_at(self.gold.ontology_version)))
         self.assertGreater(first.cardinality_bucket_counts.get("zero", 0), 0)
         self.assertGreater(first.cardinality_bucket_counts.get("one", 0), 0)
         self.assertGreater(first.cardinality_bucket_counts.get("multiple", 0), 0)

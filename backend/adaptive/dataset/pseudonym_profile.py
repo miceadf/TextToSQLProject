@@ -30,7 +30,7 @@ def load_pseudonymization_profile(
         profile = PseudonymizationProfile.model_validate(raw)
     except Exception:
         raise ValueError("invalid pseudonymization profile") from None
-    if profile.ontology_version != ontology.version:
+    if not ontology.accepts_version(profile.ontology_version):
         raise ValueError("pseudonymization profile ontology version mismatch")
 
     known_fields = ontology.fields

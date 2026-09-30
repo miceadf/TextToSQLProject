@@ -43,6 +43,9 @@ def ontology_fingerprint(ontology: DomainOntology) -> str:
     for entity in payload["entities"]:
         for field in entity["fields"]:
             field["allowed_operators"] = sorted(field["allowed_operators"])
+            # Phase 8-18: bookkeeping only; leaving it out keeps version-1
+            # fingerprints unchanged (compare with ``ontology.at_version``).
+            field.pop("since_version", None)
     canonical = json.dumps(
         payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
     ).encode("utf-8")

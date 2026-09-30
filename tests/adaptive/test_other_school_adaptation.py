@@ -139,7 +139,7 @@ def profile(transforms: dict[str, FieldTransform] | None = None) -> PostgresRunt
 def _all_fields() -> set[str]:
     from backend.adaptive.ontology import load_default_ontology
 
-    return set(load_default_ontology().fields)
+    return set(load_default_ontology().fields_at(1))  # the mapping below is ontology version 1
 
 
 def test_the_runtime_now_accepts_two_department_routes() -> None:

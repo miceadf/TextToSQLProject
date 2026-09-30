@@ -203,7 +203,7 @@ def _run_pseudonymize(args: argparse.Namespace) -> int:
             raise ValueError("dataset id does not match private artifact")
         ontology = load_ontology(args.ontology)
         profile = load_pseudonymization_profile(args.profile, ontology)
-        if loaded.metadata.ontology_version != ontology.version:
+        if not ontology.accepts_version(loaded.metadata.ontology_version):
             raise ValueError("ontology version does not match private artifact")
         key = read_secret_key(args.key_file, repository_root)
         run = pseudonymize_records(

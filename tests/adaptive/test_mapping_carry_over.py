@@ -18,7 +18,7 @@ from backend.adaptive.fixtures.flat import build_flat_database
 from backend.adaptive.fixtures.hybrid import build_hybrid_database
 from backend.adaptive.fixtures.seed import DEFAULT_SEED
 from backend.adaptive.registration import reviews as review_storage
-from tests.adaptive.test_private_mapping_publish import _action, _make_repo, _publish_flow, _upload
+from tests.adaptive.test_private_mapping_publish import _action, _ignore_newer, _make_repo, _publish_flow, _upload
 from tests.adaptive.test_schema_compare import _derived
 
 BASE = "carry-base"
@@ -66,11 +66,13 @@ def test_same_schema_carries_every_field_and_publishes(client_repo, tmp_path: Pa
     assert detail["succession"]["base_database_id"] == BASE
     assert detail["succession"]["base_mapping_version"] == 1
     assert len(detail["succession"]["carried_fields"]) == 15
-    assert detail["succession"]["stale_fields"] == []
-    assert {item["decision"] for item in detail["review"]["fields"]} == {"REMAPPED"}
+    assert detail["succession"]["stale_fields"] == [{"semantic_field": "Course.target_grade", "status": "NOT_IN_BASE"}]
+    # Phase 8-18: a field the base never mapped (target grade) waits for review.
+    assert {item["decision"] for item in detail["review"]["fields"] if item["semantic_field"] != "Course.target_grade"} == {"REMAPPED"}
     # Carry-over grants nothing: the target is not executable until published.
     assert TARGET not in {entry["database_id"] for entry in client.get(DATABASES_PATH).json()["databases"]}
     assert client.get(CATALOG_PATH, params={"database_id": TARGET}).status_code == 404
+    _ignore_newer(client, TARGET, "admin")
     published = _action(client, {"action": "PUBLISH", "database_id": TARGET, "published_by": "admin"})
     assert published.status_code == 200, published.text[:300]
     base_profile = review_storage.load_activation(repository_root=repo, database_id=BASE).profile
@@ -86,10 +88,15 @@ def test_renamed_column_leaves_only_that_field_stale(client_repo, tmp_path: Path
     renamed = _derived(tmp_path, "renamed", ["ALTER TABLE course_offerings RENAME COLUMN course_name TO title"])
     assert _upload(client, TARGET, "Next", renamed.read_bytes()).status_code == 200
     detail = _carry(client).json()
-    assert detail["succession"]["stale_fields"] == [{"semantic_field": "Course.name", "status": "COLUMN_MISSING"}]
+    assert detail["succession"]["stale_fields"] == [
+        {"semantic_field": "Course.name", "status": "COLUMN_MISSING"},
+        # Phase 8-18: the base never mapped the newer target-grade field.
+        {"semantic_field": "Course.target_grade", "status": "NOT_IN_BASE"},
+    ]
     fields = _fields(detail)
     assert fields["Course.name"]["decision"] == "PENDING"
     assert sum(item["decision"] == "REMAPPED" for item in fields.values()) == 14
+    _ignore_newer(client, TARGET, "admin")
     blocked = _action(client, {"action": "PUBLISH", "database_id": TARGET, "published_by": "admin"})
     assert blocked.status_code == 422
     assert blocked.json()["error"]["fields"] == ["Course.name"]
@@ -98,6 +105,7 @@ def test_renamed_column_leaves_only_that_field_stale(client_repo, tmp_path: Path
         "table": "course_offerings", "column": "title", "reviewer": "admin", "reason": "renamed column",
     })
     assert remapped.status_code == 200
+    _ignore_newer(client, TARGET, "admin")
     assert _action(client, {"action": "PUBLISH", "database_id": TARGET, "published_by": "admin"}).status_code == 200
 
 
@@ -107,8 +115,8 @@ def test_structure_change_marks_every_field_stale(client_repo, tmp_path: Path) -
     assert _upload(client, TARGET, "Next", hybrid.read_bytes()).status_code == 200
     detail = _carry(client).json()
     assert detail["succession"]["carried_fields"] == []
-    assert {item["status"] for item in detail["succession"]["stale_fields"]} == {"TABLE_MISSING"}
-    assert len(detail["succession"]["stale_fields"]) == 15
+    assert {item["status"] for item in detail["succession"]["stale_fields"]} == {"TABLE_MISSING", "NOT_IN_BASE"}
+    assert len(detail["succession"]["stale_fields"]) == 16
 
 
 def test_retry_is_idempotent_and_keeps_later_edits(client_repo, tmp_path: Path) -> None:
@@ -199,6 +207,7 @@ def test_damaged_record_is_hidden_and_does_not_affect_execution(client_repo, tmp
     same = _derived(tmp_path, "same", ["UPDATE course_offerings SET enrolled = enrolled"])
     assert _upload(client, TARGET, "Next", same.read_bytes()).status_code == 200
     assert _carry(client).status_code == 200
+    _ignore_newer(client, TARGET, "admin")
     assert _action(client, {"action": "PUBLISH", "database_id": TARGET, "published_by": "admin"}).status_code == 200
     path = _review_dir(repo) / "succession.json"
     payload = json.loads(path.read_text(encoding="utf-8"))
@@ -266,3 +275,37 @@ def test_failed_record_write_leaves_no_partial_file(client_repo, tmp_path: Path,
     assert names == ["draft.json"]
     assert _carry(client).status_code == 200
     assert (_review_dir(repo) / "succession.json").exists()
+
+
+def test_a_version_one_base_carries_over_to_a_version_two_target(tmp_path: Path, monkeypatch) -> None:
+    """Phase 8-18: an older base carries its fields; the newer field is NOT_IN_BASE."""
+    from backend.adaptive.ontology import load_default_ontology
+    from backend.adaptive.registration import storage as registration_storage
+
+    repo = _make_repo(tmp_path, "repo-v1")
+    app = create_synthetic_clarification_prototype()
+    app.state.sqlite_upload_repository_root = str(repo)
+    app.state.mapping_review_repository_root = str(repo)
+    set_private_repository_root_for_tests(repo)
+    client = TestClient(app, raise_server_exceptions=False)
+    try:
+        version_one = load_default_ontology().at_version(1)
+        with monkeypatch.context() as patch:
+            patch.setattr(registration_storage, "load_default_ontology", lambda: version_one)
+            raw = build_flat_database(tmp_path / "base.sqlite3", seed=DEFAULT_SEED).read_bytes()
+            _publish_flow(client, raw, BASE)
+        base = review_storage.load_activation(repository_root=repo, database_id=BASE)
+        assert base.ontology_version == 1 and "Course.target_grade" not in base.profile.fields
+        same = _derived(tmp_path, "same", ["UPDATE course_offerings SET enrolled = enrolled"])
+        assert _upload(client, TARGET, "Next", same.read_bytes()).status_code == 200
+        detail = _carry(client).json()
+        assert len(detail["succession"]["carried_fields"]) == 15
+        assert detail["succession"]["stale_fields"] == [
+            {"semantic_field": "Course.target_grade", "status": "NOT_IN_BASE"}
+        ]
+        _ignore_newer(client, TARGET, "admin")
+        published = _action(client, {"action": "PUBLISH", "database_id": TARGET, "published_by": "admin"})
+        assert published.status_code == 200, published.text[:300]
+    finally:
+        client.close()
+        set_private_repository_root_for_tests(None)

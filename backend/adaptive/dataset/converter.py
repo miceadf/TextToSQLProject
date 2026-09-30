@@ -194,7 +194,7 @@ def _convert_candidate(
     reasons: set[ConversionReasonCode] = set()
     if not 1 <= default_limit <= 200:
         reasons.add(ConversionReasonCode.INVALID_SOURCE_LIMIT)
-    if profile.ontology_version != ontology.version or profile.root_entity not in {
+    if not ontology.accepts_version(profile.ontology_version) or profile.root_entity not in {
         entity.name for entity in ontology.entities
     }:
         reasons.add(ConversionReasonCode.SOURCE_PROFILE_MISMATCH)

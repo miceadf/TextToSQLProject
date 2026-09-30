@@ -117,6 +117,7 @@ function readDetails(row: QueryRow): CourseDetail[] {
     ['category', '이수구분'],
     ['credit_hours', '학점'],
     ['target_year', '대상학년'],
+    ['target_grade', '대상학년'],
     ['professor', '교수'],
     ['capacity', '정원'],
     ['enrolled', '수강인원'],

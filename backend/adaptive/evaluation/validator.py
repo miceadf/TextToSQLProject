@@ -126,9 +126,11 @@ def validate_evaluation_set(
     """Reject stale or self-inconsistent gold before cross-schema execution."""
     if evaluation_set.seed_version != seed.version or evaluation_set.seed_fingerprint != seed_fingerprint(seed):
         raise ValueError("evaluation seed version or fingerprint drift")
-    if evaluation_set.ontology_version != ontology.version:
+    if not ontology.accepts_version(evaluation_set.ontology_version):
         raise ValueError("evaluation ontology version drift")
-    if evaluation_set.ontology_fingerprint != ontology_fingerprint(ontology):
+    if evaluation_set.ontology_fingerprint != ontology_fingerprint(
+        ontology.at_version(evaluation_set.ontology_version)
+    ):
         raise ValueError("evaluation ontology fingerprint drift")
     if evaluation_set.query_ir_fingerprint != query_ir_fingerprint():
         raise ValueError("evaluation QueryIR fingerprint drift")

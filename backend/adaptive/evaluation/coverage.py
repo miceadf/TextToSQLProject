@@ -75,13 +75,15 @@ def build_coverage_report(
 ) -> CoverageReport:
     """Count semantics and FK-backed JOIN difficulty from approved fixture mapping."""
 
-    if evaluation_set.ontology_version != ontology.version:
+    if not ontology.accepts_version(evaluation_set.ontology_version):
         raise ValueError("evaluation ontology version mismatch")
-    if evaluation_set.ontology_fingerprint != ontology_fingerprint(ontology):
+    if evaluation_set.ontology_fingerprint != ontology_fingerprint(
+        ontology.at_version(evaluation_set.ontology_version)
+    ):
         raise ValueError("evaluation ontology fingerprint mismatch")
     if evaluation_set.query_ir_fingerprint != query_ir_fingerprint():
         raise ValueError("evaluation QueryIR fingerprint mismatch")
-    if normalized_mapping.ontology_version != ontology.version:
+    if not ontology.accepts_version(normalized_mapping.ontology_version):
         raise ValueError("normalized mapping ontology version mismatch")
     field_counts: Counter[str] = Counter()
     operator_counts: Counter[str] = Counter()
@@ -128,7 +130,8 @@ def build_coverage_report(
             review_status=case.review_status,
         ))
 
-    missing_fields = sorted(set(ontology.fields) - set(field_counts))
+    # Phase 8-18: the fields the evaluation set's ontology version had.
+    missing_fields = sorted(set(ontology.fields_at(evaluation_set.ontology_version)) - set(field_counts))
     gaps = [f"unused semantic fields: {', '.join(missing_fields)}"] if missing_fields else []
     if not any(case.normalized_join_steps >= 2 for case in cases):
         gaps.append("no multi-step normalized JOIN case")

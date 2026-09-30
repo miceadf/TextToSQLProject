@@ -40,7 +40,7 @@ from ..ontology.loader import load_default_ontology
 from .postgres_runtime import DatabaseRoutingExecutor, is_postgres_context_current
 from .value_hints import ChatValueIndexes, repair_output
 from .review_publish import _parse_strict_body, _read_limited_body
-from .synthetic_registry import _REF_TO_DTO_KEY, CANONICAL_SELECT, is_valid_database_id
+from .synthetic_registry import _REF_TO_DTO_KEY, CARD_FIELDS, is_valid_database_id
 
 CHAT_QUERY_PATH = "/api/adaptive/v1/chat/query"
 CHAT_QUERY_VERSION = "adaptive-chat-query-v1"
@@ -327,7 +327,7 @@ def answer_chat_query(
             _domain_ontology(),
             index=index,
             hints=hints,
-            available_fields=[field for field in CANONICAL_SELECT if field in mapping.fields],
+            available_fields=[field for field in CARD_FIELDS if field in mapping.fields],
         )
     except Exception:
         pass  # repairs are optional; validation below decides
@@ -383,7 +383,7 @@ def answer_chat_query(
         except ValueError:
             return _not_understood(database_id, "INVALID_VALUE_TYPE")
 
-    card_fields = [field for field in CANONICAL_SELECT if field in mapping.fields]
+    card_fields = [field for field in CARD_FIELDS if field in mapping.fields]
     rewritten = query_ir.model_dump(mode="json")
     rewritten["select"] = card_fields
     rewritten["limit"] = CHAT_ROW_LIMIT

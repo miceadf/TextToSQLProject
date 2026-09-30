@@ -122,7 +122,7 @@ def _validate_profile_against_ontology(
             f"source profile dialect '{profile.dialect}' does not match "
             f"expected dialect '{expected_dialect}'"
         )
-    if profile.ontology_version != ontology.version:
+    if not ontology.accepts_version(profile.ontology_version):
         raise ValueError(
             f"source profile ontology version {profile.ontology_version} does "
             f"not match ontology version {ontology.version}"
@@ -134,7 +134,8 @@ def _validate_profile_against_ontology(
             f"source profile has unknown root entity '{profile.root_entity}'"
         )
 
-    ontology_fields = ontology.fields
+    # Phase 8-18: only the fields the profile's ontology version had.
+    ontology_fields = ontology.fields_at(profile.ontology_version)
     for mapping in profile.mappings:
         ontology_field = ontology_fields.get(mapping.semantic_field)
         if ontology_field is None:

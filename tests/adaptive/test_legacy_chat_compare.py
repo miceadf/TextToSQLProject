@@ -232,7 +232,8 @@ def test_policy_variants_replay_the_same_filters_without_a_model_call() -> None:
 
     row = {
         "Course.code": "0001", "Course.name": "자료구조", "Course.credits": Decimal("3"),
-        "Course.category": "전공", "Department.name": "컴퓨터학과", "Instructor.name": "홍길동",
+        "Course.category": "전공", "Course.target_grade": 2, "Department.name": "컴퓨터학과",
+        "Instructor.name": "홍길동",
         "CourseOffering.section": "01", "CourseOffering.capacity": 40, "CourseOffering.enrolled": 1,
         "Schedule.day": "월", "Schedule.start_time": "13:00", "Schedule.end_time": "14:00",
     }

@@ -125,6 +125,9 @@ class FakeModel:
         self.schemas.append(schema)
         if self.error is not None:
             raise self.error
+        if isinstance(self.answer, dict) and "Course.target_grade" in schema.get("required", []):
+            # Phase 8-18: the fixtures store no target grade; the model answers NONE.
+            return {"Course.target_grade": NONE, **self.answer}
         return self.answer
 
 
@@ -159,7 +162,7 @@ def test_ai_choice_is_first_with_rule_score_and_ai_evidence(tmp_path: Path) -> N
         assert (first.table, first.column) not in {(c.table, c.column) for c in rest}
         assert all(not is_ai_candidate(c) for c in rest)
         assert len(proposal.candidates[field]) <= 4
-    assert proposal.unmapped_fields == []
+    assert proposal.unmapped_fields == ["Course.target_grade"]  # Phase 8-18: not stored
 
 
 def test_none_and_reused_columns_keep_the_rule_candidates(tmp_path: Path) -> None:
@@ -337,6 +340,14 @@ def test_ai_proposal_upload_review_publish_and_catalog(make_client) -> None:
     assert initiated.status_code == 200, initiated.text[:300]
     for field in initiated.json()["review"]["fields"]:
         sources = [candidate["source"] for candidate in field["candidates"]]
+        if not sources:
+            assert field["semantic_field"] == "Course.target_grade"  # Phase 8-18: not stored
+            ignored = _action(client, {
+                "action": "IGNORE", "database_id": "ai-upload", "semantic_field": "Course.target_grade",
+                "reviewer": "tester", "reason": "이 DB에 없음",
+            })
+            assert ignored.status_code == 200, ignored.text[:300]
+            continue
         assert sources[0] == "AI" and set(sources[1:]) <= {"RULES"}
         approved = _action(
             client,

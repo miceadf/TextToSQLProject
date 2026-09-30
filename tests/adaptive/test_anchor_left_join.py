@@ -143,7 +143,7 @@ def make_published() -> PublishedMappingProfile:
         database_id=DATABASE_ID,
         version=1,
         schema_fingerprint=FINGERPRINT,
-        ontology_version=1,
+        ontology_version=lvp.ONTOLOGY_VERSION,
         published_by="synthetic-test",
         published_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
         fields={
@@ -188,7 +188,7 @@ def make_context(profile: PostgresRuntimeProfile | None = None, *, executor: Any
         [profile or make_profile()],
         adapters_by_id={DATABASE_ID: FakeAdapter(catalog)},
         executors_by_id={DATABASE_ID: executor or FakeExecutor()},
-        expected_ontology_version=1,
+        expected_ontology_version=lvp.ONTOLOGY_VERSION,
     )[DATABASE_ID]
 
 

@@ -28,7 +28,7 @@ from backend.adaptive.fixtures import FixtureVariant
 from backend.adaptive.fixtures.flat import build_flat_database
 from backend.adaptive.fixtures.hybrid import build_hybrid_database
 from backend.adaptive.fixtures.seed import DEFAULT_SEED
-from tests.adaptive.test_private_mapping_publish import _action, _make_repo, _publish_flow, _upload
+from tests.adaptive.test_private_mapping_publish import _action, _ignore_newer, _make_repo, _publish_flow, _upload
 
 
 def _catalog(path: Path, database_id: str = "probe"):
@@ -217,6 +217,7 @@ def _publish_hybrid(client: TestClient, raw: bytes, database_id: str) -> None:
             "table": table, "column": column, "reviewer": "tester", "reason": "synthetic hybrid",
         })
         assert response.status_code == 200, (semantic_field, response.text[:200])
+    _ignore_newer(client, database_id)
     published = _action(client, {"action": "PUBLISH", "database_id": database_id, "published_by": "tester"})
     assert published.status_code == 200, published.text[:300]
 
