@@ -1,6 +1,6 @@
 # 새 Codex 대화용 짧은 인수인계
 
-현재 기준: 2026-09-30, Phase 8-14 챗봇 실행 SQL 표시까지 완료(8-13 챗봇 값 힌트, 8-12 업로드 AI 제안, 8-10 AI 제안 v2, 8-09 AI 제안, 8-08 benchmark, 8-06 값 사전, 7-17 LEFT JOIN, 8-05까지의 관리자 기능 포함). 사용자 결정으로 benchmark 개선과 8-11은 프로토타입 이후로 미뤘다(ADR-078). 최신 상태는 항상 Git과 코드로 다시 확인한다. 설계와 로드맵의 원본은 [`schema-adaptive-text-to-sql-plan.md`](schema-adaptive-text-to-sql-plan.md), 독립 평가 세트 설계 기준은 [`independent-evaluation-set-design.md`](independent-evaluation-set-design.md), 안전한 잠정 비교는 [`phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md`](phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md)다.
+현재 기준: 2026-09-30, Phase 8-15 화면에서 PostgreSQL 등록까지 완료(8-14 챗봇 SQL 표시, 8-13 챗봇 값 힌트, 8-12 업로드 AI 제안, 8-10 AI 제안 v2, 8-09 AI 제안, 8-08 benchmark, 8-06 값 사전, 7-17 LEFT JOIN, 8-05까지의 관리자 기능 포함). 사용자 결정으로 benchmark 개선과 8-11은 프로토타입 이후로 미뤘다(ADR-078). 최신 상태는 항상 Git과 코드로 다시 확인한다. 설계와 로드맵의 원본은 [`schema-adaptive-text-to-sql-plan.md`](schema-adaptive-text-to-sql-plan.md), 독립 평가 세트 설계 기준은 [`independent-evaluation-set-design.md`](independent-evaluation-set-design.md), 안전한 잠정 비교는 [`phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md`](phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md)다.
 
 ## 프로젝트와 현재 경계
 
@@ -86,6 +86,11 @@
   - 결과: 기존 235/240, 보류 116/120(v2+설명).
   - 의미 함정은 미해결이다.
 
+- Phase 8-15:
+  - "DB 변경" 창에서 PostgreSQL 연결·schema를 골라 등록하고, 같은 검토 화면에서 검토·게시하면 재시작 없이 목록·챗봇에 추가된다.
+  - 연결은 `backend/.env`의 `DATABASE_URL`(기본)과 `PG_SOURCE_<이름>=<DSN>`이다.
+  - 저장 위치: `.schema-adaptive/postgres-registrations/<id>`(등록·draft·게시 기록), `.schema-adaptive/postgres-profiles/<id>`(profile 쌍).
+  - 없는 정보는 "이 DB에 없음"(IGNORE)으로 빼고 게시한다. 변환·기준 table은 서버가 정한다.
 - Phase 8-14:
   - 챗봇 화면의 SQL 패널에 QueryIR 경로의 실행 SQL(값을 채운 보기용)이 나온다.
   - `dev:all`은 기본으로 켜져 있고 `backend/.env`의 `SHOW_SQL=0`으로 끈다. 직접 실행할 때는 `--show-sql`을 붙인다.
@@ -117,7 +122,7 @@
   - 8-10: AI 제안 v2·관리자 설명·보류 변형 완료.
   - 8-12: 업로드 흐름 AI 제안 연결 완료.
   - 8-13: 챗봇 값 힌트 완료(사용자 요청으로 8-07보다 먼저).
-  - 승인된 다음 순서(ADR-078, 프로토타입 우선): 8-07 축소판 관리자 화면 → 처음부터 끝까지 browser smoke·시연 절차.
+  - 승인된 다음 순서(ADR-078, 프로토타입 우선): 8-07 축소판 관리자 화면(SQLite·PostgreSQL 공통) → 처음부터 끝까지 browser smoke·시연 절차.
     - 8-07 축소판 범위: 검토, 코드표→값 사전, test query 미리보기, 버전. 업로드 DB의 변환·값 사전·부분 게시(`unsupported`)도 포함한다.
     - 8-13 뒤 추가: 값 사전 별칭(약어) 입력. 업로드한 SQLite DB도 QueryIR 챗봇·값 힌트를 쓰도록 연결한다(지금은 PostgreSQL profile만).
     - 약어 입력에는 규칙 후보(단어별 첫 글자)·로컬 AI 후보·충돌 검사·관리자 승인을 붙인다(ADR-080). 공통 약어 묶음과 사용 기록 기반 제안은 후속이다.

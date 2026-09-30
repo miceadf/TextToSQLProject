@@ -215,7 +215,9 @@ class _PrototypeContextLoader:
 
     def __init__(self, schema_is_current: Any, pg_contexts: Any = None) -> None:
         self._schema_is_current = schema_is_current
-        self._pg_contexts = dict(pg_contexts) if isinstance(pg_contexts, dict) else {}
+        from .postgres_runtime import shared_or_copy
+
+        self._pg_contexts = shared_or_copy(pg_contexts) if isinstance(pg_contexts, dict) else {}
 
     def load(self, database_id: str) -> tuple[Any, Any, Any]:
         pg_context = self._pg_contexts.get(database_id) if isinstance(database_id, str) else None
@@ -402,6 +404,8 @@ def create_synthetic_clarification_prototype(
     mapping_model: Any | None = None,
     postgres_value_reader: Any | None = None,
     show_chat_sql: bool = False,
+    postgres_sources: dict[str, Any] | None = None,
+    postgres_registration_options: dict[str, Any] | None = None,
 ) -> FastAPI:
     """Assemble the synthetic clarification prototype app.
 
@@ -414,6 +418,11 @@ def create_synthetic_clarification_prototype(
 
     ``show_chat_sql`` (Phase 8-14, development option) adds the executed SQL
     to successful chat answers. Off by default.
+
+    ``postgres_sources`` (Phase 8-15) enables registering PostgreSQL schemas
+    from these server-owned connections; published ones join the running
+    server. ``postgres_registration_options`` injects test doubles
+    (``adapter_factory``, ``executor_factory``, ``connector``).
     """
     tmp: Any = None
     try:
@@ -521,6 +530,13 @@ def create_synthetic_clarification_prototype(
                 return False
             return actual == expected
 
+        if postgres_sources is not None:
+            from .postgres_runtime import LivePostgresContexts
+
+            # Phase 8-15: one live set shared by every router (the
+            # clarification loader included), so a schema published from the
+            # admin screen is served without a restart.
+            pg_contexts = LivePostgresContexts(pg_contexts)
         loader = _PrototypeContextLoader(schema_is_current, pg_contexts)
         if ollama_model is None:
             provider = _FixedConstraintProvider()
@@ -541,7 +557,7 @@ def create_synthetic_clarification_prototype(
         compiler = _PrivateActivationGuardCompiler(SingleTableSQLiteCompiler())
         sql_policy = ConservativeSqlPolicy()
         coordinator = ClarificationSessionCoordinator()
-        if pg_contexts:
+        if pg_contexts or postgres_sources is not None:
             wired_compiler: Any = DatabaseRoutingCompiler(compiler, pg_contexts)
             wired_policy: Any = DatabaseRoutingPolicy(sql_policy, pg_contexts)
             wired_executor: Any = DatabaseRoutingExecutor(guarded_executor, pg_contexts)
@@ -605,25 +621,54 @@ def create_synthetic_clarification_prototype(
             )
         except Exception:
             raise RuntimeError(_PROTOTYPE_CREATION_FAILURE) from None
+        value_reader = postgres_value_reader
+        if value_reader is None:
+            reader_configs = {
+                _profile.database_id: _profile.connection_config
+                for _profile in ordered_pg_profiles
+                if _profile.database_id not in pg_executor_overrides
+            }
+            if reader_configs or postgres_sources is not None:
+                from ..harness.postgres_values import PostgresDistinctValueReader
+
+                options = postgres_registration_options or {}
+                value_reader = PostgresDistinctValueReader(
+                    reader_configs, connector=options.get("connector")
+                )
+        postgres_service = None
+        if postgres_sources is not None:
+            try:
+                from .postgres_registration import (
+                    PostgresRegistrationService,
+                    register_postgres_registration_routes,
+                )
+                from .registration_upload import _discover_repository_root
+
+                options = postgres_registration_options or {}
+                postgres_service = PostgresRegistrationService(
+                    repository_root=options.get("repository_root") or _discover_repository_root(),
+                    sources=postgres_sources,
+                    live_contexts=pg_contexts,
+                    reserved_ids=frozenset(fixed_ids),
+                    max_databases=int(MAX_DATABASES),
+                    expected_ontology_version=_expected_ontology_version,
+                    value_reader=value_reader,
+                    mapping_proposer=None if mapping_model is None else _upload_proposer(mapping_model),
+                    adapter_factory=options.get("adapter_factory"),
+                    executor_factory=options.get("executor_factory"),
+                    connector=options.get("connector"),
+                )
+                register_postgres_registration_routes(app, postgres_service)
+            except Exception:
+                raise RuntimeError(_PROTOTYPE_CREATION_FAILURE) from None
         try:
-            register_mapping_review_routes(app)
+            register_mapping_review_routes(app, postgres_service=postgres_service)
             register_admin_test_query_routes(app)
         except Exception:
             raise RuntimeError(_PROTOTYPE_CREATION_FAILURE) from None
         try:
             # Phase 7-13: one-shot QueryIR chat over PostgreSQL profiles only;
             # without an Ollama model the route answers 503.
-            value_reader = postgres_value_reader
-            if value_reader is None:
-                reader_configs = {
-                    _profile.database_id: _profile.connection_config
-                    for _profile in ordered_pg_profiles
-                    if _profile.database_id not in pg_executor_overrides
-                }
-                if reader_configs:
-                    from ..harness.postgres_values import PostgresDistinctValueReader
-
-                    value_reader = PostgresDistinctValueReader(reader_configs)
             register_chat_query_routes(
                 app,
                 pg_contexts=pg_contexts,
@@ -695,6 +740,7 @@ def create_synthetic_clarification_prototype(
         app.state.synthetic_prototype_tmpdir = tmp.name
         app.state.synthetic_prototype_cleanup = _cleanup
         app.state.synthetic_postgres_database_ids = tuple(sorted(pg_contexts))
+        app.state.synthetic_postgres_contexts = pg_contexts
         app.state.synthetic_prototype_chat_sql_shown = show_chat_sql is True
         app.state.synthetic_prototype_mapping_proposer_kind = (
             "rules" if mapping_model is None else "ai"

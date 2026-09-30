@@ -14,7 +14,10 @@ chatbot see the same database and model:
 - upload mapping proposals (Phase 8-12) use the same loopback base URL (or the
   default one) with ``MAPPING_MODEL`` or the benchmarked default tag;
 - the chat shows the executed SQL like the legacy chatbot (Phase 8-14, a
-  development aid for checking answers); ``SHOW_SQL=0`` turns it off.
+  development aid for checking answers); ``SHOW_SQL=0`` turns it off;
+- PostgreSQL schemas can be registered from the admin screen (Phase 8-15)
+  through server-owned connections: ``DATABASE_URL`` and ``PG_SOURCE_<NAME>``.
+  Registrations published earlier are loaded again at startup.
 
 Each optional part degrades on its own: a missing profile, an unreachable or
 drifted database, or an invalid Ollama setting starts the prototype without
@@ -59,7 +62,7 @@ def read_env_file(path: Path) -> dict[str, str]:
         key = key.strip()
         if key.startswith("export "):
             key = key[len("export "):].strip()
-        if key in _ENV_KEYS:
+        if key in _ENV_KEYS or key.startswith("PG_SOURCE_"):
             values[key] = value.strip().strip('"').strip("'")
     return values
 
@@ -137,15 +140,36 @@ def _build_model(ollama: dict[str, str]) -> Any:
     )
 
 
+def _postgres_sources(env_values: dict[str, str]) -> dict[str, Any]:
+    from ..registration.postgres_registrations import sources_from_env
+
+    return sources_from_env(env_values)
+
+
+def _published_postgres(repository_root: Path) -> list[tuple[str, str]]:
+    from ..registration.postgres_registrations import published_registrations
+
+    return published_registrations(repository_root)
+
+
+def _dsn_env_for(database_id: str) -> str:
+    from ..registration.postgres_registrations import dsn_env_for
+
+    return dsn_env_for(database_id)
+
+
 def _create_app(
     profiles: list[Any] | None,
     model: Any | None,
     mapping_model: Any | None = None,
     show_sql: bool = False,
+    postgres_sources: dict[str, Any] | None = None,
 ) -> Any:
     from .synthetic_prototype import create_synthetic_clarification_prototype
 
     kwargs: dict[str, Any] = {}
+    if postgres_sources is not None:
+        kwargs["postgres_sources"] = postgres_sources
     if show_sql:
         kwargs["show_chat_sql"] = True
     if profiles:
@@ -183,6 +207,17 @@ def main(argv: list[str] | None = None) -> int:
         if spec.database_id in profile_ids and not os.environ.get(spec.dsn_env):
             # Same DSN as the legacy backend; exported only inside this process.
             os.environ[spec.dsn_env] = env_values["DATABASE_URL"]
+    postgres_sources = _postgres_sources(env_values)
+    status["pg_registration"] = f"enabled ({len(postgres_sources)} sources)"
+    for database_id, source_id in _published_postgres(repository_root):
+        source = postgres_sources.get(source_id)
+        if source is None:
+            status[database_id] = "disabled (SOURCE_MISSING)"
+            continue
+        # The source DSN, exported only inside this process for the loader.
+        os.environ[_dsn_env_for(database_id)] = source._dsn  # noqa: SLF001
+        profile_ids.append(database_id)
+        status[database_id] = "enabled"
 
     # Each optional part is prepared on its own, so one failing never
     # disables another.
@@ -213,8 +248,10 @@ def main(argv: list[str] | None = None) -> int:
     def create(profiles: list[Any] | None, with_model: Any | None) -> Any:
         try:
             if show_sql:
-                return _create_app(profiles, with_model, mapping_model, True)
-            return _create_app(profiles, with_model, mapping_model)
+                return _create_app(
+                    profiles, with_model, mapping_model, True, postgres_sources=postgres_sources
+                )
+            return _create_app(profiles, with_model, mapping_model, postgres_sources=postgres_sources)
         except Exception:
             return None
 

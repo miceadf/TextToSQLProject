@@ -453,7 +453,9 @@ def register_synthetic_database_routes(
     else:
         if not isinstance(postgres_contexts, dict):
             raise SyntheticCatalogConfigError()
-        frozen_postgres = dict(postgres_contexts)
+        from .postgres_runtime import shared_or_copy
+
+        frozen_postgres = shared_or_copy(postgres_contexts)
     registered_schemas = {
         entry["database_id"]: entry["schema"] for entry in registry.snapshot()
     }
@@ -471,9 +473,16 @@ def register_synthetic_database_routes(
         try:
             fixed = registry.snapshot()
             private = _discover_private_activations(app, fixed_ids=fixed_ids)
+            # Phase 8-15: PostgreSQL databases published while the server runs.
+            current_pg = dict(frozen_postgres)  # one snapshot; publishing may add meanwhile
+            published_pg = [
+                {"database_id": database_id, "label": current_pg[database_id].label, "schema": "postgres"}
+                for database_id in sorted(current_pg)
+                if database_id not in fixed_ids
+            ]
             payload = {
                 "version": SYNTHETIC_REGISTRY_VERSION,
-                "databases": [*fixed, *private],
+                "databases": [*fixed, *private, *published_pg],
             }
             text = json.dumps(payload, ensure_ascii=False, sort_keys=True)
             return JSONResponse(status_code=200, content=json.loads(text))

@@ -784,6 +784,12 @@ def _mutate_draft(
                     reviewer=reviewer,
                     candidate_index=candidate_index,
                 )
+            elif kind == "IGNORE":
+                if reason is None:
+                    raise _fail(ReviewErrorCode.INVALID_INPUT)
+                new_draft = service.ignore(
+                    draft, semantic_field, reviewer=reviewer, reason=reason
+                )
             elif kind == "REMAP":
                 if table is None or column is None or reason is None:
                     raise _fail(ReviewErrorCode.INVALID_INPUT)
@@ -867,6 +873,30 @@ def remap_field(
         semantic_field=semantic_field,
         table=table,
         column=column,
+        reason=reason,
+    )
+
+
+def ignore_field(
+    *,
+    repository_root: str | Path,
+    database_id: str,
+    semantic_field: str,
+    reviewer: str,
+    reason: str,
+) -> MappingDraft:
+    """Phase 8-15: mark a field as absent from this database (reason required).
+
+    SQLite publishing still needs every canonical field, so an ignored field
+    blocks an SQLite publish until it is approved or remapped.
+    """
+    reason = validate_reason(reason)
+    return _mutate_draft(
+        repository_root=repository_root,
+        database_id=database_id,
+        reviewer=reviewer,
+        kind="IGNORE",
+        semantic_field=semantic_field,
         reason=reason,
     )
 

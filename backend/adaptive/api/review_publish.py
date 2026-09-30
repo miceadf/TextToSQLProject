@@ -27,6 +27,7 @@ from urllib.parse import unquote_plus
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..mapping.ai_proposal import is_ai_candidate
@@ -119,6 +120,18 @@ class _RemapBody(BaseModel):
     semantic_field: str = Field(min_length=1, max_length=200)
     table: str = Field(min_length=1, max_length=200)
     column: str = Field(min_length=1, max_length=200)
+    reviewer: str = Field(min_length=1, max_length=64)
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class _IgnoreBody(BaseModel):
+    """Phase 8-15: the database does not hold this field (reason required)."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+    action: Literal["IGNORE"] = "IGNORE"
+    database_id: str = Field(min_length=1, max_length=64)
+    semantic_field: str = Field(min_length=1, max_length=200)
     reviewer: str = Field(min_length=1, max_length=64)
     reason: str = Field(min_length=1, max_length=500)
 
@@ -443,6 +456,7 @@ def register_mapping_review_routes(
     app: FastAPI,
     *,
     repository_root: str | Path | None = None,
+    postgres_service: Any | None = None,
 ) -> None:
     if repository_root is None:
         resolved_root = _discover_repository_root()
@@ -468,6 +482,8 @@ def register_mapping_review_routes(
                 root = Path(str(http_request.app.state.mapping_review_repository_root))
             except Exception:
                 return _error_response(MappingReviewErrorCode.INTERNAL_ERROR.value)
+            if postgres_service is not None and postgres_service.handles(root, database_id):
+                return postgres_service.review_detail(root, database_id)
             try:
                 from ..registration.storage import load_registration as _load_registration
 
@@ -550,12 +566,16 @@ def register_mapping_review_routes(
             if payload is None:
                 return _error_response(MappingReviewErrorCode.INVALID_REQUEST.value)
             action = payload.get("action")
-            if action not in ("INIT", "APPROVE", "REMAP", "PUBLISH", "ACTIVATE", "CARRY_OVER"):
+            if action not in ("INIT", "APPROVE", "REMAP", "IGNORE", "PUBLISH", "ACTIVATE", "CARRY_OVER"):
                 return _error_response(MappingReviewErrorCode.INVALID_REQUEST.value)
             try:
                 root = Path(str(http_request.app.state.mapping_review_repository_root))
             except Exception:
                 return _error_response(MappingReviewErrorCode.INTERNAL_ERROR.value)
+            if postgres_service is not None and postgres_service.handles(root, payload.get("database_id")):
+                if action in ("ACTIVATE", "CARRY_OVER"):
+                    return _error_response(MappingReviewErrorCode.INVALID_REQUEST.value)
+                return await run_in_threadpool(postgres_service.review_action, root, payload)
             try:
                 if action == "INIT":
                     body = _InitBody.model_validate(payload)
@@ -589,6 +609,18 @@ def register_mapping_review_routes(
                         semantic_field=body.semantic_field,
                         table=body.table,
                         column=body.column,
+                        reviewer=body.reviewer,
+                        reason=body.reason,
+                    )
+                    database_id = body.database_id
+                elif action == "IGNORE":
+                    body = _IgnoreBody.model_validate(payload)
+                    if payload != body.model_dump(mode="json"):
+                        return _error_response(MappingReviewErrorCode.INVALID_REQUEST.value)
+                    review_storage.ignore_field(
+                        repository_root=root,
+                        database_id=body.database_id,
+                        semantic_field=body.semantic_field,
                         reviewer=body.reviewer,
                         reason=body.reason,
                     )

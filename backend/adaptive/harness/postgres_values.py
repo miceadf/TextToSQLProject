@@ -55,6 +55,12 @@ class PostgresDistinctValueReader:
         self._configs = dict(configs)
         self._connector = connector or _production_connector
 
+    def register(self, database_id: str, config: PostgresConnectionConfig) -> None:
+        """Phase 8-15: a database published while the server runs."""
+        if not isinstance(database_id, str) or not isinstance(config, PostgresConnectionConfig):
+            raise ValueError("invalid reader configuration")
+        self._configs = {**self._configs, database_id: config}
+
     def read(self, database_id: str, table: str, column: str, limit: int) -> Any:
         config = self._configs.get(database_id)
         if config is None or not isinstance(limit, int) or not 1 <= limit <= 5000:

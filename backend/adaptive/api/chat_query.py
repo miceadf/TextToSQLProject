@@ -475,7 +475,9 @@ def register_chat_query_routes(
 ) -> None:
     if not isinstance(pg_contexts, dict):
         raise ValueError("pg_contexts must be a dict")
-    contexts = dict(pg_contexts)
+    from .postgres_runtime import shared_or_copy
+
+    contexts = shared_or_copy(pg_contexts)
     # Phase 8-13: value hints only with a server-owned distinct-value reader.
     value_indexes = (
         None if value_reader is None else ChatValueIndexes(value_reader, load_default_ontology())

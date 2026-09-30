@@ -35,6 +35,7 @@ import {
   type SqliteUploadSuccess,
 } from '../adaptive-prototype/sqliteUpload.ts'
 import MappingReviewPanel from '../adaptive-prototype/MappingReviewPanel.tsx'
+import PostgresRegistrationPanel from '../adaptive-prototype/PostgresRegistrationPanel.tsx'
 import { chatTargetFor } from '../adaptive-prototype/chatQuery.ts'
 import SchemaComparePanel from '../adaptive-prototype/SchemaComparePanel.tsx'
 import { coursesApi } from '../services/api'
@@ -612,7 +613,7 @@ export default function MainPage({
       {dbModalOpen ? (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/35 px-4">
           <div
-            className="w-full max-w-sm rounded-xl border border-slate-200 bg-white p-5 shadow-2xl"
+            className="max-h-[calc(100vh-2rem)] w-full max-w-sm overflow-y-auto rounded-xl border border-slate-200 bg-white p-5 shadow-2xl"
             role="dialog"
             aria-modal="true"
             aria-labelledby="database-select-title"
@@ -777,6 +778,7 @@ export default function MainPage({
                 </div>
               ) : null}
             </fieldset>
+            <PostgresRegistrationPanel onPublished={() => setRegistryRetry((value) => value + 1)} />
           </div>
         </div>
       ) : null}

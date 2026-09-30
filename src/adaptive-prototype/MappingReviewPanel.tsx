@@ -4,6 +4,7 @@ import {
   approveReviewField,
   carryOverReview,
   fetchReviewDetail,
+  ignoreReviewField,
   initReview,
   publishReview,
   remapReviewField,
@@ -54,6 +55,7 @@ function FieldRow({
   carried,
   onApprove,
   onRemap,
+  onIgnore,
 }: {
   field: ReviewField;
   staleStatus: string | null;
@@ -63,6 +65,7 @@ function FieldRow({
   disabled: boolean;
   onApprove: (semanticField: string, candidateIndex: number, reviewer: string) => void;
   onRemap: (semanticField: string, table: string, column: string, reviewer: string, reason: string) => void;
+  onIgnore: (semanticField: string, reviewer: string, reason: string) => void;
 }) {
   const [candidateIndex, setCandidateIndex] = useState(0);
   const [tableName, setTableName] = useState(allowedTables[0]?.name ?? '');
@@ -158,6 +161,14 @@ function FieldRow({
           onClick={() => onRemap(field.semantic_field, effectiveTable, effectiveColumn, reviewer, reason)}
         >
           Remap
+        </button>
+        <button
+          type="button"
+          title="이 DB에 이 정보가 없으면 사유를 적고 누릅니다(PostgreSQL 등록은 없는 정보를 빼고 게시할 수 있음)."
+          disabled={disabled || reviewer.trim() === '' || reason.trim() === ''}
+          onClick={() => onIgnore(field.semantic_field, reviewer, reason)}
+        >
+          이 DB에 없음
         </button>
       </div>
     </div>
@@ -567,6 +578,11 @@ export default function MappingReviewPanel({ databaseId, fetchFn, onPublished, b
               onRemap={(semanticField, table, column, activeReviewer, reason) =>
                 void runDetailAction((signal) =>
                   remapReviewField(caller, databaseId, semanticField, table, column, activeReviewer, reason, { signal }),
+                )
+              }
+              onIgnore={(semanticField, activeReviewer, reason) =>
+                void runDetailAction((signal) =>
+                  ignoreReviewField(caller, databaseId, semanticField, activeReviewer, reason, { signal }),
                 )
               }
             />

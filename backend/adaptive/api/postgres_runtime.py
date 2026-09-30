@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import copy
 import re
+import threading
 from typing import Any
 
 from ..catalog.postgres import PostgresConnectionConfig
@@ -674,6 +675,53 @@ def build_validated_contexts(
     return contexts
 
 
+class LivePostgresContexts(dict):  # type: ignore[type-arg]
+    """Validated contexts that may grow while the server runs (Phase 8-15).
+
+    Routers keep a reference to this one object instead of a copy, so a
+    database published from the admin screen is served without a restart.
+    Entries change only through ``add``; plain item assignment is refused.
+    """
+
+    def __init__(self, initial: dict[str, ValidatedPostgresContext] | None = None) -> None:
+        super().__init__()
+        self._lock = threading.Lock()
+        for context in (initial or {}).values():
+            self.add(context)
+
+    def add(self, context: ValidatedPostgresContext) -> None:
+        if not isinstance(context, ValidatedPostgresContext):
+            raise PostgresRuntimeError()
+        with self._lock:
+            dict.__setitem__(self, context.database_id, context)
+
+    def __setitem__(self, key: Any, value: Any) -> None:
+        raise PostgresRuntimeError()
+
+    def __delitem__(self, key: Any) -> None:
+        raise PostgresRuntimeError()
+
+    def pop(self, *_args: Any) -> Any:
+        raise PostgresRuntimeError()
+
+    def popitem(self) -> Any:
+        raise PostgresRuntimeError()
+
+    def clear(self) -> None:
+        raise PostgresRuntimeError()
+
+    def update(self, *_args: Any, **_kwargs: Any) -> None:
+        raise PostgresRuntimeError()
+
+    def setdefault(self, *_args: Any) -> Any:
+        raise PostgresRuntimeError()
+
+
+def shared_or_copy(pg_contexts: dict[str, Any]) -> dict[str, Any]:
+    """A live set is shared by reference; any other mapping is copied (frozen)."""
+    return pg_contexts if isinstance(pg_contexts, LivePostgresContexts) else dict(pg_contexts)
+
+
 def is_postgres_context_current(context: ValidatedPostgresContext) -> bool:
     """Re-inspect sample-less and compare fingerprints; never leaks details."""
     try:
@@ -712,7 +760,7 @@ class DatabaseRoutingCompiler:
         if not isinstance(pg_contexts, dict):
             raise PostgresRuntimeError()
         object.__setattr__(self, "_sqlite_compiler", sqlite_compiler)
-        object.__setattr__(self, "_pg_contexts", dict(pg_contexts))
+        object.__setattr__(self, "_pg_contexts", shared_or_copy(pg_contexts))
 
     def __setattr__(self, name: str, value: Any) -> None:
         raise PostgresRuntimeError()
@@ -750,7 +798,7 @@ class DatabaseRoutingPolicy:
         if not isinstance(pg_contexts, dict):
             raise PostgresRuntimeError()
         object.__setattr__(self, "_sqlite_policy", sqlite_policy)
-        object.__setattr__(self, "_pg_contexts", dict(pg_contexts))
+        object.__setattr__(self, "_pg_contexts", shared_or_copy(pg_contexts))
 
     def __setattr__(self, name: str, value: Any) -> None:
         raise PostgresRuntimeError()
@@ -796,7 +844,7 @@ class DatabaseRoutingExecutor:
         if not isinstance(pg_contexts, dict):
             raise PostgresRuntimeError()
         object.__setattr__(self, "_sqlite_executor", sqlite_executor)
-        object.__setattr__(self, "_pg_contexts", dict(pg_contexts))
+        object.__setattr__(self, "_pg_contexts", shared_or_copy(pg_contexts))
 
     def __setattr__(self, name: str, value: Any) -> None:
         raise PostgresRuntimeError()

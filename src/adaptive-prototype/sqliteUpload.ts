@@ -300,7 +300,11 @@ function parseMapping(value: unknown): MappingSummary | null {
   };
 }
 
-export function parseUploadResponse(value: unknown): SqliteUploadSuccess | null {
+/** Also parses the PostgreSQL registration answer (same shape, own version). */
+export function parseUploadResponse(
+  value: unknown,
+  expectedVersion: string = SQLITE_UPLOAD_VERSION,
+): SqliteUploadSuccess | null {
   if (!isPlainObject(value)) return null;
   if (
     !hasOnlyKeys(value, [
@@ -315,7 +319,7 @@ export function parseUploadResponse(value: unknown): SqliteUploadSuccess | null 
   ) {
     return null;
   }
-  if (value['version'] !== SQLITE_UPLOAD_VERSION) return null;
+  if (value['version'] !== expectedVersion) return null;
   if (!isDatabaseId(value['database_id'])) return null;
   if (!isValidUploadLabel(value['label'])) return null;
   if (value['status'] !== SQLITE_UPLOAD_STATUS) return null;

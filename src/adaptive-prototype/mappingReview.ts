@@ -595,6 +595,31 @@ export async function remapReviewField(
   return parsed;
 }
 
+/** Phase 8-15: the database does not hold this field (reason required). */
+export async function ignoreReviewField(
+  fetchFn: ReviewFetchLike,
+  databaseId: string,
+  semanticField: string,
+  reviewer: string,
+  reason: string,
+  options?: { signal?: AbortSignal },
+): Promise<ReviewDetail> {
+  if (!isDatabaseId(databaseId)) throw new MappingReviewClientError('contract');
+  if (!isNonEmptyString(semanticField, MAX_TEXT_LENGTH)) throw new MappingReviewClientError('contract');
+  if (!isValidReviewer(reviewer)) throw new MappingReviewClientError('contract');
+  if (!isValidReason(reason)) throw new MappingReviewClientError('contract');
+  const payload = await postAction(
+    fetchFn,
+    { action: 'IGNORE', database_id: databaseId, semantic_field: semanticField, reviewer, reason },
+    options,
+  );
+  const parsed = parseReviewDetail(payload);
+  if (parsed === null || parsed.database_id !== databaseId) {
+    throw new MappingReviewClientError('contract');
+  }
+  return parsed;
+}
+
 export async function publishReview(
   fetchFn: ReviewFetchLike,
   databaseId: string,

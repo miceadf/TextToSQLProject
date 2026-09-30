@@ -84,7 +84,9 @@ def test_launcher_shows_sql_unless_turned_off(
     (tmp_path / "backend" / ".env").write_text(env, encoding="utf-8")
     seen: list[bool] = []
 
-    def fake_create(profiles: Any, model: Any, mapping_model: Any = None, show_sql: bool = False) -> Any:
+    def fake_create(
+        profiles: Any, model: Any, mapping_model: Any = None, show_sql: bool = False, postgres_sources: Any = None
+    ) -> Any:
         seen.append(show_sql)
         return _App()
 
