@@ -693,7 +693,7 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 - [x] 영향받은 mapping을 `STALE` 처리(Phase 8-03: 새 등록 검토를 기준 활성 mapping 승계로 시작, 영향 field만 `STALE`·재검토; 합성 SQLite만 검증)
 - [x] Phase 8-06 코드값·값 사전(`ValueDictionary`, profile v4 `value_dictionaries`, compiler·policy 공통 `bind_filter_value`, 결과 표시 이름, 챗봇 인식 값 완화 제외, 등록 시 저장 값 존재 확인; legacy 이수구분 사전으로 ONTOLOGY QueryIR 14→15)
 - [x] Phase 8-08 합성 변형 benchmark(형식·코드값·의미·구조 12개 변형, `VariantMappingAnswer`, field·실행 점수, oracle 만점 검증)와 규칙 기반 mapping 기준선(field 163/180, 기준 table 1/12, 질문 205/240; oracle 180/180·240/240)
-- [ ] AI mapping 제안(닫힌 목록 안의 column·변환·값 사전 제안, 관리자 검토 유지)과 규칙 기반 비교
+- [x] Phase 8-09 AI mapping 제안(`ai-mapping-v1.1`: 로컬 `qwen2.5-coder:7b-instruct`, schema 제한 출력, runtime 규칙 검증기, 분반 table anchor 규칙)과 규칙 기반 비교(질문 AI 223/240, 규칙 205, 규칙+anchor 206; 값 사전 0/3·의미 함정 0/2는 미해결; 합성·L1/L3 전)
 - [x] verified query 자동 회귀 테스트(Phase 8-05: 서버 계산 결과 hash를 verified 기준선으로 기록, publish·재활성화 직후와 재활성화 전 비활성 버전에서 고정 query 회귀 비교; 경고만, 자동 차단 없음; 합성 SQLite만 검증)
 - [x] Phase 8-01 mapping 버전 이력과 이전 버전 재활성화(`ACTIVATE`; activation만 교체, publish와 같은 실행 가능성 재검증, 최신 내용 재publish 시 최신 버전 재활성화, 활성 기록 `activated_by`·`activated_at`, frontend 2단계 확인; 합성 입력만)
 - [x] Phase 8-02 등록 간 schema 비교와 활성 mapping 영향 분석(`catalog-diff-v1`·`registration-compare-v1`; table·column·FK 변화, field별 `UNCHANGED`/`TYPE_CHANGED`/`COLUMN_MISSING`/`TABLE_MISSING`, 그대로 옮긴 mapping의 compile·AST 검사 통과 여부; 파일 쓰기·실행 권한 변경·candidate SQL 실행 없음)
@@ -708,7 +708,7 @@ Phase 8 분할 계획(상세는 [`docs/prompts/phase8-01-mapping-version-rollbac
 1. 7-17 기준 table 보존 LEFT JOIN과 기본 table 매핑.
 2. 8-06 코드값·값 사전 설계와 구현(완료, ADR-074).
 3. 합성 변형 benchmark(형식·코드값·의미·구조)와 규칙 기반 기준선 측정(완료, Phase 8-08·ADR-075).
-4. AI mapping 제안과 규칙 기반 비교(닫힌 목록 제안, 관리자 검토 유지).
+4. AI mapping 제안과 규칙 기반 비교(닫힌 목록 제안, 관리자 검토 유지)(완료, Phase 8-09·ADR-076).
 5. 8-07 관리자 화면 통합과 browser smoke.
 6. prompt·field 별칭 개선은 L1 질문 세트 확보 뒤.
 7. Phase 9 최종 평가는 L1/L3 뒤.
@@ -1906,6 +1906,33 @@ SQLite DB 입력
   - 규칙은 sample 값을 쓰지 않는다.
   - 자연어 이해는 평가하지 않는다.
 
+### ADR-076: AI mapping 제안은 모델 제안 → runtime 규칙 검증기 → 고정 anchor 규칙으로 만들고, 파이프라인은 실행 전에 버전으로 고정한다
+
+- 날짜: 2026-09-30
+- 상태: 채택(개발 순서 4번)
+- 결정:
+  - 모델: 로컬 `qwen2.5-coder:7b-instruct`, loopback transport, temperature 0, JSON schema 제한 출력.
+  - 호출 구성: column 선택을 변형당 1회, 값 처리(닫힌 목록 변환, 표준 값 목록이 있는 field의 값 사전)를 매핑된 field마다 1회 부른다.
+  - 검증기: 출력은 schema를 만족해야 한다. 변환·사전은 runtime과 같은 규칙과 같은 사전 모델로 확인하고, 통과하지 못한 부분만 버린다.
+  - 호출 실패나 schema 위반이 하나라도 있는 제안은 채점하지 않고 다시 실행한다.
+  - 기준 table: 분반 table 규칙. 같은 규칙을 붙인 `rules+anchor`와 비교해 기여를 나눈다.
+  - 표준 값 목록 `canonical-values-v1`은 제안기 입력으로만 둔다. ontology는 고치지 않는다.
+  - 파이프라인은 실행 전에 버전으로 고정한다. 결과를 보고 바꾸면 새 버전으로, 보류 변형과 함께 평가한다.
+- 이유:
+  - 7B 모델이 한 번에 전부를 내면 형식 오류가 쌓인다. 단계를 나누고 schema enum으로 선택지를 실제 column·닫힌 목록·표본 값으로 제한하면, 모델은 판단만 하고 형식은 보장된다.
+  - 검증기가 runtime 규칙을 미리 적용해야 한 field의 오류가 변형 전체의 profile 거부로 번지지 않는다.
+  - 같은 benchmark로 파이프라인을 반복 튜닝하면 benchmark에 맞춘 결과가 된다.
+- 결과(v1·v1.1 같은 답안):
+  - 질문 정답: AI 223/240, 규칙 205, 규칙+anchor 206, oracle 240.
+  - AI는 형식(40/40)·약어 이름·legacy-like에서 나아졌다.
+  - 값 사전은 0/3(빈 사전)이다.
+  - 영어 요일에 `KOREAN_WEEKDAY`를 골랐다.
+  - 의미 함정 두 개(학년·강의실 정원)는 하나도 피하지 못했다.
+- 한계:
+  - 모델 하나, 한 번 실행.
+  - AI는 저장 값 예시와 표준 값 목록을 받고 규칙은 받지 않는다.
+  - 합성 benchmark다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -2153,3 +2180,4 @@ SQLite DB 입력
 - Phase 7-17 기준 table 보존 LEFT JOIN 완료(ADR-073). `plan_join_path(anchor_table=)`, compiler `LEFT JOIN`, AST policy anchor 모드(수식어 없는 `LEFT JOIN`만), profile v3 `anchor_table`, 시작 시 매핑 table 전체 부분집합 경로 유일성 검사를 추가했다. `legacy_view_profile.py`를 spec 구조(`--target view|base`)로 일반화하고 legacy 기본 table 4개에 `legacy-base` private profile을 등록했다(smoke 5/5). view와 같은 12 field·변환 4·미지원 3이며, 학과 코드는 JOIN 차이만 보려고 미지원으로 유지했다. anchor 없이는 과목+학과 경로가 모호하다(개설강좌 경유 대 필수과목 table 경유). 실제 DB 동등성 검증 결과다. 카드 전체 관계는 view와 multiset이 같다(6,846행, 시간표 없는 632행 포함). 7-16 답변 22문항을 상한 없이 재실행해도 22/22 같다. INNER JOIN 반례에서는 6,214행으로 줄고 6문항의 답이 달라진다. 같은 30문항 live 비교(`p717-base-run1`)에서는 모델 출력·legacy SQL·판정·key 집합이 모두 30/30 같았다. ONTOLOGY 수용 가능 QueryIR 14, legacy 17이다. `dev:all` launcher는 legacy profile별로 degrade한다. 비교 도구에는 `--queryir-database`를 추가했다. `gpt-6-luna` high review-only 지적 3건을 확인했다. 비교 도구의 기준 SQL이 선택 대상과 다른 DSN 변수를 읽던 문제와, 등록 시 시간 변환 column에 `timestamp`가 통과하던 문제는 재현해 고쳤고 회귀 테스트를 추가했다. 계획 문서의 7-12 전제 갱신 누락은 ADR-068에 해결 표시를 달아 반영했다. 결과는 `docs/phase7-17-anchor-left-join-results-2026-09-29.md`에 두었다. 관련 테스트 208개, 전체 pytest 1339개·6 skip·610 subtests, compileall, diff check 통과. legacy·frontend 변경 없음. ADR-073 추가
 - 2026-09-30 Phase 8-06 코드값·값 사전 완료(ADR-074). `mapping/values.py`에 `ValueDictionary`·`bind_filter_value`를 추가했다. compiler와 AST policy가 같은 bind 값을 쓰고, runtime은 결과 저장 값을 표시 이름으로 바꾼다. 챗봇은 표시 이름으로 이해 조건을 보여주고, 인식된 값에는 `contains` 완화를 하지 않으며, `reject` 사전 밖 값은 `NOT_UNDERSTOOD`로 답한다. private profile v4(nullable `anchor_table` + `value_dictionaries`)와 시작 검증을 추가했다. 등록 CLI는 저장 값 존재를 읽기 전용으로 확인한다(`VALUE_MISSING`). legacy 두 profile을 v4로 다시 등록했다(이수구분 9개 값 확인, fingerprint 불변, smoke 5/5). 같은 30문항 live 비교(`p806-base-run1`)에서 모델 응답 상태와 legacy SQL은 7-17과 같았다. q06만 `EMPTY`→`CORRECT_SUBSET`으로 바뀌어 ONTOLOGY 수용 가능이 QueryIR 14→15, legacy 17이 되었다. 남은 격차 5문항은 field 이름·조건 해석·과도한 값 지정으로, prompt·별칭 단계(L1 뒤)의 대상이다. `gpt-6-luna` high review-only 지적 3건을 모두 재현해 고쳤고 회귀 테스트를 추가했다. 문자열 column 타입을 접두사로 판정하던 것은 내장 타입 이름 정확 일치로 바꿨다. 식별 field(과목 코드·분반·학과 코드)의 사전은 결과 key를 바꾸므로 금지했다. 양방향 서식 문자는 거부한다. 결과는 `docs/phase8-06-value-dictionary-results-2026-09-30.md`에 두었다. 관련 테스트 261개, 전체 pytest 1392개·6 skip·610 subtests, compileall, diff check 통과. legacy·frontend 변경 없음. ADR-074 추가
 - 2026-09-30 Phase 8-08 합성 변형 benchmark와 규칙 기반 기준선 완료(ADR-075). 사용자 승인으로 로컬 PostgreSQL에 전용 DB `schema_adaptive_synthetic`을 만들었다. 실행마다 무작위 schema를 쓰고 지운다. `evaluation/variant_specs.py`(seed, 12개 변형, 정답 자동 생성, spec catalog)와 `evaluation/variant_benchmark.py`(답안 형식, field 점수, seed 참조 평가, 규칙 기준선, live 실행, CLI `--check`·`--live-synthetic`)를 추가했다. live 실행(`vb-run1`) 결과는 다음과 같다. inspect catalog는 12개 변형 모두 spec catalog와 같았다. oracle은 field 180/180·질문 240/240, 규칙은 field 163/180·기준 table 1/12·질문 205/240이다. 축별 질문은 구조 59/60, 형식 34/40, 코드값 51/60, 의미 50/60, 복합 11/20이다. `gpt-6-luna` high review-only 지적 4건을 모두 재현해 고쳤고 회귀 테스트를 추가했다. 정리 실패와 oracle 미만점은 실행 실패로 처리하고, DB·inspect 오류는 답안 거부와 구분한다. limit에 잘리는 질문은 참조 평가가 거부한다. 결과는 `docs/phase8-08-variant-benchmark-results-2026-09-30.md`에 두었다. benchmark 테스트 48개, 전체 pytest 1440개·6 skip·610 subtests, compileall, diff check 통과. legacy·frontend·runtime 변경 없음. ADR-075 추가
+- 2026-09-30 Phase 8-09 AI mapping 제안과 규칙 기반 비교 완료(ADR-076). `evaluation/ai_mapping.py`(column 선택 1회 + field별 값 처리, JSON schema 제한, runtime 규칙 검증기, 분반 table anchor, 저장 제안 재사용)를 추가했다. `variant_benchmark.py`에는 `rules+anchor` 비교군, `--ai-proposals`, 일반화된 집계를 더했다. v1 실행 결과는 질문 AI 223/240, 규칙 205, 규칙+anchor 206, oracle 240이다. 축별로는 형식 40/40, 코드값 51/60(규칙과 같음), 의미 56/60, 복합 16/20이다. AI는 값 사전을 하나도 내지 않았고, 영어 요일에 `KOREAN_WEEKDAY`를 골랐으며, 의미 함정 두 개를 모두 틀렸다. `gpt-6-luna` high review-only 지적 4건을 모두 재현해 고쳤고, `ai-mapping-v1.1`로 올렸다. 고친 것: 변환 설명의 예시가 benchmark 값과 같던 누설, 모델 출력 schema 미검사, 실패 호출의 채점, runtime 사전 모델과의 불일치. v1.1 재실행 답안은 12개 모두 v1과 같았다. v2 후보(저장 값 일치 검사, 값 사전 전용 단계)는 보류 변형과 함께 평가해야 하므로 아직 실행하지 않았다. 결과는 `docs/phase8-09-ai-mapping-results-2026-09-30.md`에 두었다. AI·benchmark 테스트 93개, 전체 pytest 1485개·6 skip·610 subtests, compileall, diff check 통과. legacy·frontend·runtime 변경 없음. ADR-076 추가

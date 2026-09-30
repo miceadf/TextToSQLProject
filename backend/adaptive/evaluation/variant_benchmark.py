@@ -448,7 +448,18 @@ def execute_answer(
     return {"profile": "ACCEPTED", "outcomes": outcomes}
 
 
-def run_live(dsn: str, *, token_hex: Callable[[int], str] | None = None) -> dict[str, Any]:
+def with_section_anchor(answer: VariantMappingAnswer) -> VariantMappingAnswer:
+    """Anchor rule shared by proposers: the table of the offering section."""
+    return answer.model_copy(update={"anchor_table": answer.fields["CourseOffering.section"].table})
+
+
+def run_live(
+    dsn: str,
+    *,
+    token_hex: Callable[[int], str] | None = None,
+    extra_answers: dict[str, dict[str, VariantMappingAnswer]] | None = None,
+) -> dict[str, Any]:
+    """``extra_answers``: proposer name -> variant name -> stored answer."""
     import psycopg2  # type: ignore[import-not-found]
 
     from ..catalog.postgres import PostgresAdapter, PostgresConnectionConfig
@@ -474,7 +485,13 @@ def run_live(dsn: str, *, token_hex: Callable[[int], str] | None = None) -> dict
                 live_rules = rule_based_answer(catalog, ontology, spec.name)
                 if live_rules != offline_rules:
                     raise RuntimeError("RULES_NONDETERMINISTIC")
-                answers = {"oracle": gold_answer(spec), "rules": live_rules}
+                answers = {
+                    "oracle": gold_answer(spec),
+                    "rules": live_rules,
+                    "rules+anchor": with_section_anchor(live_rules),
+                }
+                for proposer, by_variant in (extra_answers or {}).items():
+                    answers[proposer] = by_variant[spec.name]
                 record: dict[str, Any] = {"axis": spec.axis, "fingerprint": catalog.schema_fingerprint}
                 for proposer, answer in answers.items():
                     record[proposer] = {
@@ -528,6 +545,10 @@ def offline_scores() -> dict[str, Any]:
     return scores
 
 
+def proposers(record: dict[str, Any]) -> list[str]:
+    return [key for key, value in record.items() if isinstance(value, dict) and "fields" in value]
+
+
 def run_problems(run: dict[str, Any]) -> dict[str, str]:
     """Variants that make a run invalid: errors, leftover schemas, or an
     oracle below full marks (the benchmark would then be wrong, not the
@@ -560,7 +581,7 @@ def summarize(run: dict[str, Any]) -> dict[str, Any]:
     for record in run["variants"].values():
         if "error" in record:
             continue
-        for proposer in ("oracle", "rules"):
+        for proposer in proposers(record):
             item = record[proposer]
             for scope in ("ALL", record["axis"]):
                 bucket = totals.setdefault(proposer, {}).setdefault(scope, Counter())
@@ -594,6 +615,7 @@ def main(argv: list[str] | None = None, *, environ: dict[str, str] | None = None
     mode.add_argument("--check", action="store_true", help="Offline field scores only.")
     mode.add_argument("--live-synthetic", action="store_true", help="Build variants and execute.")
     parser.add_argument("--label", default=None)
+    parser.add_argument("--ai-proposals", default=None, help="Stored ai_mapping proposals to execute.")
     parser.add_argument("--repository-root", default=str(Path.cwd()))
     args = parser.parse_args(argv)
     env = os.environ if environ is None else environ
@@ -625,7 +647,12 @@ def main(argv: list[str] | None = None, *, environ: dict[str, str] | None = None
         print(json.dumps({"status": "FAILED", "code": "LABEL_EXISTS"}), flush=True)
         return 2
     try:
-        run = run_live(dsn)
+        extra = None
+        if args.ai_proposals:
+            from .ai_mapping import load_answers
+
+            extra = {"ai": load_answers(args.ai_proposals)}
+        run = run_live(dsn, extra_answers=extra)
     except Exception:
         print(json.dumps({"status": "FAILED", "code": "LIVE_FAILED"}), flush=True)
         return 2
