@@ -107,7 +107,37 @@ def _finite_float(value: str) -> float:
     return parsed
 
 
-def _prompt(question: str, ontology: Ontology, mapping: MappingProfile, prompt_version: str) -> str:
+VALUE_HINTS_LABEL = "Value hints (text in the question and the field/value it refers to): "
+MAX_VALUE_HINTS = 8
+_HINT_KEYS = frozenset({"text", "field", "value"})
+
+
+def _hint_line(value_hints: object, available: list[str]) -> str:
+    """Phase 8-13: optional grounded values, one line between Context and Question."""
+    if value_hints is None:
+        return ""
+    if not isinstance(value_hints, list) or len(value_hints) > MAX_VALUE_HINTS:
+        raise ValueError("INVALID_VALUE_HINTS")
+    for hint in value_hints:
+        if (
+            not isinstance(hint, dict)
+            or set(hint) != _HINT_KEYS
+            or not all(isinstance(hint[key], str) and 0 < len(hint[key]) <= 200 for key in _HINT_KEYS)
+            or hint["field"] not in available
+        ):
+            raise ValueError("INVALID_VALUE_HINTS")
+    if not value_hints:
+        return ""
+    return "\n" + VALUE_HINTS_LABEL + json.dumps(value_hints, ensure_ascii=False)
+
+
+def _prompt(
+    question: str,
+    ontology: Ontology,
+    mapping: MappingProfile,
+    prompt_version: str,
+    value_hints: object = None,
+) -> str:
     # Never serialize MappingProfile: it contains physical table and column names.
     semantic_fields = sorted(set(ontology.fields).intersection(mapping.fields))
     context = {
@@ -125,9 +155,10 @@ def _prompt(question: str, ontology: Ontology, mapping: MappingProfile, prompt_v
     encoded_context = json.dumps(
         context, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     )
+    hint_line = _hint_line(value_hints, semantic_fields)
     prefix, _, remainder = _versioned_template(prompt_version).partition("{context}")
     between, _, suffix = remainder.partition("{question}")
-    return prefix + encoded_context + between + question + suffix
+    return prefix + encoded_context + hint_line + between + question + suffix
 
 
 class OllamaQueryModel:
@@ -225,19 +256,31 @@ class OllamaQueryModel:
         )
 
     def generate_ir(
-        self, request: HarnessRequest, ontology: Ontology, mapping: MappingProfile
+        self,
+        request: HarnessRequest,
+        ontology: Ontology,
+        mapping: MappingProfile,
+        *,
+        value_hints: object = None,
     ) -> object:
-        return self.generate_observed(request, ontology, mapping).value
+        return self.generate_observed(request, ontology, mapping, value_hints=value_hints).value
 
     def generate_observed(
-        self, request: HarnessRequest, ontology: Ontology, mapping: MappingProfile
+        self,
+        request: HarnessRequest,
+        ontology: Ontology,
+        mapping: MappingProfile,
+        *,
+        value_hints: object = None,
     ) -> OllamaGeneration:
         """Invoke once and expose parse status for private, in-memory diagnostics."""
         if mapping.status is not MappingStatus.PUBLISHED or mapping.database_id != request.database_id:
             raise RecordingProviderError(RecordedFailureCode.PROVIDER_ERROR)
         payload: dict[str, object] = {
             "model": self._model_tag,
-            "prompt": _prompt(request.question, ontology, mapping, self.prompt_version),
+            "prompt": _prompt(
+                request.question, ontology, mapping, self.prompt_version, value_hints
+            ),
             "stream": False,
             "options": dict(GENERATION_OPTIONS),
         }

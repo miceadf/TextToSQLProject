@@ -38,6 +38,7 @@ from ..mapping.values import ValueDictionary, bind_filter_value
 from ..ontology.contracts import Operator
 from ..ontology.loader import load_default_ontology
 from .postgres_runtime import DatabaseRoutingExecutor, is_postgres_context_current
+from .value_hints import ChatValueIndexes, repair_output
 from .review_publish import _parse_strict_body, _read_limited_body
 from .synthetic_registry import _REF_TO_DTO_KEY, CANONICAL_SELECT, is_valid_database_id
 
@@ -93,6 +94,10 @@ def _error_response(exc: ChatQueryError) -> JSONResponse:
     if exc.failure_code is not None:
         error["failure_code"] = exc.failure_code
     return JSONResponse(status_code=_STATUS_BY_CODE[exc.code], content={"error": error})
+
+
+def _domain_ontology() -> Any:
+    return load_default_ontology()
 
 
 def _runtime_ontology() -> tuple[Ontology, dict[str, str]]:
@@ -201,8 +206,14 @@ def answer_chat_query(
     question: str,
     pg_contexts: dict[str, Any],
     model: Any,
+    value_indexes: Any | None = None,
 ) -> dict[str, Any]:
-    """Answer one question; raises ``ChatQueryError`` for non-answers."""
+    """Answer one question; raises ``ChatQueryError`` for non-answers.
+
+    ``value_indexes`` (Phase 8-13) grounds the question in the database's own
+    values: hints go into the one model call and closed rules repair the
+    output before the unchanged validation and execution path.
+    """
     context = pg_contexts.get(database_id)
     if context is None:
         raise ChatQueryError(ChatQueryErrorCode.CONTEXT_UNAVAILABLE)
@@ -224,9 +235,24 @@ def answer_chat_query(
     except Exception:
         raise ChatQueryError(ChatQueryErrorCode.EXECUTION_FAILED, "CONTEXT_ERROR") from None
 
+    index = None
+    hints: list[Any] = []
+    if value_indexes is not None:
+        try:
+            index = value_indexes.get(context)
+            if index is not None:
+                hints = index.find(question, allowed_fields=set(mapping.fields))
+        except Exception:
+            index, hints = None, []  # hints are optional help, never a failure
+
     # The single model call. Provider failures carry only a fixed code.
     try:
-        output = model.generate_ir(request, ontology, mapping)
+        if hints:
+            output = model.generate_ir(
+                request, ontology, mapping, value_hints=[hint.payload() for hint in hints]
+            )
+        else:
+            output = model.generate_ir(request, ontology, mapping)
     except Exception as exc:
         failure = getattr(exc, "failure_code", None)
         raise ChatQueryError(
@@ -234,6 +260,10 @@ def answer_chat_query(
             failure.value if isinstance(failure, RecordedFailureCode) else "PROVIDER_ERROR",
         ) from None
 
+    try:
+        output = repair_output(output, _domain_ontology(), index=index, hints=hints)
+    except Exception:
+        pass  # repairs are optional; validation below decides
     try:
         query_ir = QueryIR.model_validate(output)
     except Exception:
@@ -370,10 +400,15 @@ def register_chat_query_routes(
     *,
     pg_contexts: dict[str, Any],
     model: Any | None,
+    value_reader: Any | None = None,
 ) -> None:
     if not isinstance(pg_contexts, dict):
         raise ValueError("pg_contexts must be a dict")
     contexts = dict(pg_contexts)
+    # Phase 8-13: value hints only with a server-owned distinct-value reader.
+    value_indexes = (
+        None if value_reader is None else ChatValueIndexes(value_reader, load_default_ontology())
+    )
 
     @app.post(CHAT_QUERY_PATH)
     async def chat_query(http_request: Request) -> JSONResponse:
@@ -388,6 +423,7 @@ def register_chat_query_routes(
                 question=question,
                 pg_contexts=contexts,
                 model=model,
+                value_indexes=value_indexes,
             )
             text = json.dumps(answer, ensure_ascii=False, sort_keys=True, allow_nan=False)
             return JSONResponse(status_code=200, content=json.loads(text))

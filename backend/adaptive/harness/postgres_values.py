@@ -1,0 +1,98 @@
+"""Bounded distinct text values of one mapped PostgreSQL column (Phase 8-13).
+
+A server-internal read used only to build chat value hints. It is not part
+of the QueryIR execution path: the SQL has one fixed shape, the identifiers
+come from a published mapping that startup already matched against the
+catalog, and the connection is read-only with the configured statement
+timeout. Failures return ``None`` and never carry details. Identifiers are
+quoted here, so importing this module never imports the database driver.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from typing import Any
+
+from ..catalog.postgres import PostgresConnectionConfig
+from .postgres import _production_connector
+
+MAX_VALUE_LENGTH = 200
+
+
+def _quote(identifier: str) -> str:
+    """PostgreSQL quoted identifier (the driver is imported only to connect)."""
+    if not isinstance(identifier, str) or not identifier or "\x00" in identifier:
+        raise ValueError("invalid identifier")
+    return '"' + identifier.replace('"', '""') + '"'
+
+
+class _OverLimit:
+    def __repr__(self) -> str:
+        return "OVER_LIMIT"
+
+
+# The column has more distinct values than asked for: a stable answer, unlike
+# ``None`` (unavailable now; worth asking again later).
+OVER_LIMIT: Any = _OverLimit()
+
+
+class PostgresDistinctValueReader:
+    """``read(database_id, table, column, limit)`` → sorted values, ``OVER_LIMIT``, or ``None``.
+
+    ``None`` means the values could not be read (retry later).
+    """
+
+    def __init__(
+        self,
+        configs: dict[str, PostgresConnectionConfig],
+        *,
+        connector: Callable[[PostgresConnectionConfig], Any] | None = None,
+    ) -> None:
+        if not isinstance(configs, dict) or not all(
+            isinstance(config, PostgresConnectionConfig) for config in configs.values()
+        ):
+            raise ValueError("invalid reader configuration")
+        self._configs = dict(configs)
+        self._connector = connector or _production_connector
+
+    def read(self, database_id: str, table: str, column: str, limit: int) -> Any:
+        config = self._configs.get(database_id)
+        if config is None or not isinstance(limit, int) or not 1 <= limit <= 5000:
+            return None
+        connection = None
+        try:
+            quoted = _quote(column)
+            query = (
+                f"SELECT DISTINCT {quoted} FROM {_quote(config.schema)}.{_quote(table)} "
+                f"WHERE {quoted} IS NOT NULL LIMIT %s"
+            )
+            connection = self._connector(config)
+            set_encoding = getattr(connection, "set_client_encoding", None)
+            if callable(set_encoding):
+                set_encoding("UTF8")
+            cursor = connection.cursor()
+            cursor.execute(query, (limit + 1,))
+            rows = cursor.fetchall()
+        except Exception:
+            return None
+        finally:
+            if connection is not None:
+                try:
+                    connection.rollback()
+                except Exception:
+                    pass
+                try:
+                    connection.close()
+                except Exception:
+                    pass
+        if len(rows) > limit:
+            return OVER_LIMIT
+        values = {
+            row[0]
+            for row in rows
+            if isinstance(row, (tuple, list))
+            and len(row) == 1
+            and isinstance(row[0], str)
+            and 0 < len(row[0]) <= MAX_VALUE_LENGTH
+        }
+        return sorted(values)

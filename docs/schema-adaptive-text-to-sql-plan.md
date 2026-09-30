@@ -696,6 +696,7 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 - [x] Phase 8-09 AI mapping 제안(`ai-mapping-v1.1`: 로컬 `qwen2.5-coder:7b-instruct`, schema 제한 출력, runtime 규칙 검증기, 분반 table anchor 규칙)과 규칙 기반 비교(질문 AI 223/240, 규칙 205, 규칙+anchor 206; 값 사전 0/3·의미 함정 0/2는 미해결; 합성·L1/L3 전)
 - [x] Phase 8-10 AI mapping 제안 v2(저장 값 일치 검사, 값 사전 전용 단계, 관리자 column 설명 `admin-notes-v1`·코드표 직접 사전, 보류 변형 6개·사전 등록 hash; 기존 세트 223→232→235/240, 보류 세트 104→116/120; 자연어 설명은 의미 함정 미해결)
 - [ ] Phase 8-11 DB별 ontology 확장 field와 매개변수형 변환(공통 ontology는 팀 관리, DB별 확장은 관리자가 데이터로 선언, 변환은 닫힌 목록을 매개변수형으로 확장; 첫 사례 이론·실습 시간; 챗봇 응답·화면의 field 목록 일반화) — 프로토타입 이후로 보류(ADR-078)
+- [x] Phase 8-13 챗봇 값 힌트(DB별 값 목록 ≤500·단어 조각·별칭·조사·붙여 쓰기·fuzzy 힌트를 모델 호출 1회에 추가, ontology 기반 없는 field 이름 보정과 힌트 기반 field 이동, 약어는 DB별 값 사전 데이터; 새 질문 3→12/12, 7-15 해석 범위 15→19·레거시 17; ADR-079)
 - [x] Phase 8-12 업로드 흐름에 AI mapping 제안 연결(`ai-mapping-v2` column 단계를 제품 모듈 `mapping/ai_proposal.py`로 이동·benchmark와 공유, AI 첫 후보 + 규칙 후보, `AI_PROPOSAL` 근거, 실패 시 규칙 대체, upload v2 `proposer`·review v2 `source`, 등록 threadpool 실행, `--mapping-model-tag`·launcher `MAPPING_MODEL`; 이름 변경 합성 DB live smoke AI 15/15·규칙 1/15)
 - [x] verified query 자동 회귀 테스트(Phase 8-05: 서버 계산 결과 hash를 verified 기준선으로 기록, publish·재활성화 직후와 재활성화 전 비활성 버전에서 고정 query 회귀 비교; 경고만, 자동 차단 없음; 합성 SQLite만 검증)
 - [x] Phase 8-01 mapping 버전 이력과 이전 버전 재활성화(`ACTIVATE`; activation만 교체, publish와 같은 실행 가능성 재검증, 최신 내용 재publish 시 최신 버전 재활성화, 활성 기록 `activated_by`·`activated_at`, frontend 2단계 확인; 합성 입력만)
@@ -715,6 +716,7 @@ Phase 8 분할 계획(상세는 [`docs/prompts/phase8-01-mapping-version-rollbac
 4a. 8-10 AI 제안 v2와 관리자 column 설명(완료, ADR-077).
 4b. 8-11 DB별 ontology 확장 field와 매개변수형 변환(2026-09-30 프로토타입 이후로 보류, ADR-078).
 4c. 8-12 업로드 흐름에 AI mapping 제안 연결(완료, ADR-078).
+4d. 8-13 챗봇 값 힌트(완료, ADR-079; 사용자 요청으로 8-07보다 먼저).
 5. 8-07 관리자 화면 통합 축소판(검토·코드표→값 사전·test query 미리보기·버전; 업로드 DB 변환·값 사전·부분 게시 포함)과 처음부터 끝까지 browser smoke·시연 절차.
 6. prompt·field 별칭 개선은 L1 질문 세트 확보 뒤.
 7. Phase 9 최종 평가는 L1/L3 뒤.
@@ -1998,6 +2000,37 @@ SQLite DB 입력
   - live smoke는 개발자가 만든 DB 1개, 1회 실행이며 성능 주장이 아니다.
   - 모델이 고른 column이 변환(예: `3/3/0`)이 필요한 경우에도 업로드 경로는 column만 게시하므로 관리자가 걸러야 한다.
 
+### ADR-079: 챗봇은 등록된 DB의 실제 값으로 질문을 해석하도록 돕되, 방식은 공통 코드로·약어는 DB별 데이터로 둔다
+
+- 날짜: 2026-09-30
+- 상태: 채택
+- 사용자 결정:
+  - 기능하게 만드는 것이 먼저다. 실제 학교 데이터 노출 방지는 당분간 고려 대상에서 뺀다.
+  - 모델을 특정 DB에 묶지 않는 원칙은 유지한다.
+- 배경:
+  - 레거시 DB 챗봇이 "컴융 전공", "학과공통" 같은 질문을 풀지 못했다.
+  - 모델 prompt에는 field 이름만 있고 DB 값이 없었다. 모델은 레거시 fine-tuning 기억으로 없는 field(`Course.department`)를 지어냈다.
+  - 레거시 시스템은 NER + 코드에 박힌 약어 표 + DB 값 fuzzy 매칭으로 이를 처리했다.
+- 결정:
+  - 등록된 DB에서 값이 500개 이하인 text field의 값을 읽는다(읽기 전용, 고정 SQL 한 모양, 첫 질문 때, fingerprint별 캐시).
+  - 질문을 저장 값·단어 조각·별칭·조사 제거·붙여 쓰기 분리·긴 단어 fuzzy로 검사해 `표현 → field·값` 힌트를 만들고, 한 번의 모델 호출에 넣는다.
+  - 모델 출력은 두 가지 닫힌 규칙으로만 고친다. 조건은 새로 만들지 않는다.
+    - ontology 이름 힌트로 하나로 정해지는 없는 field 이름을 고친다.
+    - 힌트로 하나로 정해지는 값의 field를 옮긴다.
+  - 보정 뒤에도 기존 검증 경로를 모두 거친다.
+  - 약어·별칭은 DB별 값 사전(ADR-074) 데이터로만 둔다. 레거시 약어 표는 레거시 profile로 옮겼다. 공통 모듈에 DB 값이 없음을 테스트로 고정한다.
+  - 값 읽기에 실패하면 별칭 힌트만 남기고, 60초 뒤 다시 읽는다.
+- 이유:
+  - 약어는 규칙으로 알아낼 수 없고, DB마다 다르다. 코드나 모델 재학습에 넣으면 그 DB에 묶인다.
+  - 실행 시점 데이터로 주면 DB가 바뀌어도 코드·모델이 그대로다.
+- 결과(개발자 질문, 잠정):
+  - 새 질문 12개: 도입 전 3 → 보정만 6 → 힌트+보정 12. 약어 데이터를 빼면 7.
+  - 7-15 비교 30문항: 해석 범위 수용 가능 15 → 19(레거시 17). 해석 범위 질문의 퇴보는 없다.
+- 영향과 한계:
+  - 저장 값이 로컬 모델 prompt에 들어간다. 실제 CNU 자료에 쓰기 전 E3 판단이 필요하다(기록만 하고 막지 않는다).
+  - DB 값 속 지시문이 모델에 영향을 줄 수 있다. 출력 검증은 모양만 막는다.
+  - 새 DB의 약어는 관리자 입력(8-07)이 필요하다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -2250,3 +2283,5 @@ SQLite DB 입력
 - 2026-09-30 Phase 8-10 AI 제안 v2 완료(ADR-077). `variant_specs.py`에 관리자 설명 `Note`(사유·코드표), 기존 세트 설명 28개, 보류 변형 6개(`HOLDOUT_VARIANTS`, 설명 11개)를 추가했다. `ai_mapping.py` v2에는 저장 값 일치 검사, 값 사전 전용 단계, 설명 입력, 코드표 직접 사전을 넣었고, v1.1은 버전 인자로 재현한다. `variant_benchmark.py`에는 `--suite`, 반복 `--ai-proposals`, 거절 수 집계를 더했다. 모델 실행 전에 세 파일 hash를 기록했다(2026-09-30T04:53:49Z). 결과: 기존 세트 규칙 205, v1.1 223, v2 232, v2+설명 235/240. 보류 세트 규칙 0, v1.1 104, v2 116, v2+설명 116/120. oracle은 두 세트 모두 만점이다. 코드값 축은 두 세트 모두 만점이다. 자연어 설명은 의미 함정 column 선택을 고치지 못했고, 효과는 코드표 직접 사전뿐이다. `gpt-6-luna` high review-only 지적 6건을 재현·반영했다. 반영한 것: 코드표 완전성·중복, 예시 없음, 코드 길이, 답안·trace 일치, 설명 사유 선언, 거절 수 보고. 규칙 밖 설명 1개를 제거한 뒤 해당 조건을 다시 실행했고, 답안은 같았다. 결과는 `docs/phase8-10-ai-mapping-v2-results-2026-09-30.md`에 두었다. AI·benchmark 테스트 169개, 전체 pytest 1561개·6 skip·610 subtests, compileall, diff check 통과. legacy·frontend·runtime 변경 없음. ADR-077 추가
 - 2026-09-30 범위 조정(사용자 결정, ADR-078): 합성 benchmark가 원래 table에 과적합되고 있다는 지적을 받아 benchmark 개선과 8-11 일반화 설계를 프로토타입 이후로 미뤘다. 이론·실습 시간은 넣지 않는다. 프로토타입 순서는 8-12 → 8-07 축소판 → browser smoke·시연 절차다. 8-10 함정 가운데 `capacity`(강의실 좌석)와 `credit_hours`(세트마다 다른 뜻)가 비현실적이었다는 점을 결과 문서에 적었다.
 - 2026-09-30 Phase 8-12 업로드 흐름 AI mapping 제안 연결 완료(ADR-078). `OllamaJsonModel`·`schema_conforms`·column prompt 조립을 `backend/adaptive/mapping/ai_proposal.py`로 옮겼다. benchmark는 이를 가져다 쓰며 prompt 문자열은 옮기기 전과 같다(전 변형·버전 hash 비교, 테스트 고정). `register_database(mapping_proposer=)`는 메모리 sample로 모델을 한 번 부르고, 계약 검사를 통과한 제안만 저장하며, 실패하면 규칙 제안을 쓴다. 업로드 응답은 `private-sqlite-upload-v2`(`mapping.proposer`: `AI`/`RULES`/`AI_UNAVAILABLE`), 검토 응답은 `private-mapping-review-v2`(후보 `source`)다. 등록은 threadpool에서 실행한다. CLI `--mapping-model-tag`, dev launcher는 loopback이면 기본 켬(`MAPPING_MODEL`로 tag 변경, 상태 `mapping_ai`). 화면에는 제안 출처와 후보별 AI 표시를 넣었다. `gpt-6-luna` high review-only 지적 1건(검토 후보 `review_status`를 아무 문자열이나 받음, 6-19부터)을 재현해 알려진 상태만 받도록 고쳤다. live smoke(이름 변경 합성 DB 1개): AI 첫 후보 15/15, 규칙 1/15, 13초. 결과는 `docs/phase8-12-ai-proposal-upload-results-2026-09-30.md`에 두었다. 관련 backend 204개와 신규 33개, frontend Node 93개·ESLint·tsc·vite build, 전체 pytest 1588개·6 skip·610 subtests(뒤에 추가한 CLI 테스트 6개는 신규 33개 실행에 포함), compileall, diff check 통과. legacy·PostgreSQL 실행 경로 변경 없음. ADR-078 추가
+- 2026-09-30 방침 조정(사용자 결정, ADR-079): 기능 구현을 우선해 실제 학교 데이터 노출 방지는 당분간 고려 대상에서 뺐다. 모델을 특정 DB에 묶지 않는 원칙은 유지한다. 약어·fuzzy는 방식(공통 코드)과 지식(DB별 데이터)으로 나눈다.
+- 2026-09-30 Phase 8-13 챗봇 값 힌트 완료(ADR-079). 새 모듈 `backend/adaptive/api/value_hints.py`(값 목록·질문 검사·출력 보정)와 `backend/adaptive/harness/postgres_values.py`(읽기 전용 DISTINCT reader, 너무 많음/실패 구분)를 추가했다. `OllamaQueryModel`은 힌트가 있을 때만 Context 다음에 힌트 한 줄을 넣고, 힌트가 없으면 prompt가 이전과 같다. 챗봇은 힌트를 넣은 모델 호출 1회 뒤 보정하고, 기존 검증 경로를 모두 거친다. 레거시 약어(`컴융`·`컴융부`, `전핵` 등 7개)를 레거시 profile 값 사전으로 옮겼다. 뺀 것은 `전기`·`인공지능`·`컴공`이다. 두 private profile은 다시 썼고 smoke를 통과했다. 결과: 새 질문 12개에서 도입 전 3 → 보정만 6 → 힌트+보정 12, 약어 데이터 제외 7. 7-15 30문항에서 해석 범위 수용 가능 15 → 19(레거시 17), 해석 범위 퇴보 없음. `gpt-6-luna` high review-only 지적 6건을 재현했다. 실패 캐시 영구화와 200자 초과 힌트로 인한 챗봇 실패, 이 2건을 고쳤다. field 보정의 상시 동작, 별칭 힌트 유지, 포함 검색 정책(7-16), prompt 속 DB 값의 영향은 결정·한계로 기록했다. 결과는 `docs/phase8-13-chat-value-hints-results-2026-09-30.md`에 두었다. 전체 실행에서 새 테스트가 DB driver를 먼저 import해 import 격리 테스트가 깨진 것을 찾아, reader가 식별자를 직접 quote하고 driver는 연결할 때만 쓰도록 고쳤다. 관련 테스트(값 힌트 38개 포함), 전체 pytest 1629개·6 skip·610 subtests, compileall, diff check 통과. legacy DB는 읽기만 했다. ADR-079 추가

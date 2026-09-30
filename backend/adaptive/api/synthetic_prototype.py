@@ -400,11 +400,16 @@ def create_synthetic_clarification_prototype(
     postgres_executors: dict[str, Any] | None = None,
     ollama_model: Any | None = None,
     mapping_model: Any | None = None,
+    postgres_value_reader: Any | None = None,
 ) -> FastAPI:
     """Assemble the synthetic clarification prototype app.
 
     ``mapping_model`` (Phase 8-12) is a JSON-schema model call used only to
     order the review candidates of uploaded databases.
+
+    ``postgres_value_reader`` (Phase 8-13) reads bounded distinct values for
+    chat value hints. By default a read-only reader is built for profiles that
+    use the real executor (injected test executors get none).
     """
     tmp: Any = None
     try:
@@ -604,7 +609,20 @@ def create_synthetic_clarification_prototype(
         try:
             # Phase 7-13: one-shot QueryIR chat over PostgreSQL profiles only;
             # without an Ollama model the route answers 503.
-            register_chat_query_routes(app, pg_contexts=pg_contexts, model=ollama_model)
+            value_reader = postgres_value_reader
+            if value_reader is None:
+                reader_configs = {
+                    _profile.database_id: _profile.connection_config
+                    for _profile in ordered_pg_profiles
+                    if _profile.database_id not in pg_executor_overrides
+                }
+                if reader_configs:
+                    from ..harness.postgres_values import PostgresDistinctValueReader
+
+                    value_reader = PostgresDistinctValueReader(reader_configs)
+            register_chat_query_routes(
+                app, pg_contexts=pg_contexts, model=ollama_model, value_reader=value_reader
+            )
         except Exception:
             raise RuntimeError(_PROTOTYPE_CREATION_FAILURE) from None
     except Exception:

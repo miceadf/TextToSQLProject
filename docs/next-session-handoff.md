@@ -1,6 +1,6 @@
 # 새 Codex 대화용 짧은 인수인계
 
-현재 기준: 2026-09-30, Phase 8-12 업로드 흐름 AI mapping 제안 연결까지 완료(8-10 AI 제안 v2, 8-09 AI 제안, 8-08 benchmark, 8-06 값 사전, 7-17 LEFT JOIN, 8-05까지의 관리자 기능 포함). 사용자 결정으로 benchmark 개선과 8-11은 프로토타입 이후로 미뤘다(ADR-078). 최신 상태는 항상 Git과 코드로 다시 확인한다. 설계와 로드맵의 원본은 [`schema-adaptive-text-to-sql-plan.md`](schema-adaptive-text-to-sql-plan.md), 독립 평가 세트 설계 기준은 [`independent-evaluation-set-design.md`](independent-evaluation-set-design.md), 안전한 잠정 비교는 [`phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md`](phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md)다.
+현재 기준: 2026-09-30, Phase 8-13 챗봇 값 힌트까지 완료(8-12 업로드 AI 제안, 8-10 AI 제안 v2, 8-09 AI 제안, 8-08 benchmark, 8-06 값 사전, 7-17 LEFT JOIN, 8-05까지의 관리자 기능 포함). 사용자 결정으로 benchmark 개선과 8-11은 프로토타입 이후로 미뤘다(ADR-078). 최신 상태는 항상 Git과 코드로 다시 확인한다. 설계와 로드맵의 원본은 [`schema-adaptive-text-to-sql-plan.md`](schema-adaptive-text-to-sql-plan.md), 독립 평가 세트 설계 기준은 [`independent-evaluation-set-design.md`](independent-evaluation-set-design.md), 안전한 잠정 비교는 [`phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md`](phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md)다.
 
 ## 프로젝트와 현재 경계
 
@@ -86,6 +86,10 @@
   - 결과: 기존 235/240, 보류 116/120(v2+설명).
   - 의미 함정은 미해결이다.
 
+- Phase 8-13:
+  - 챗봇이 DB 실제 값(값 500개 이하 text field)과 값 사전 별칭으로 질문을 검사해 모델에 힌트를 주고, 없는 field 이름·잘못 들어간 값을 닫힌 규칙으로 고친다.
+  - 레거시 약어는 `legacy_view_profile.py`의 값 사전 데이터에 있다. 바꾸면 `--write --live --replace --target base|view`로 private profile을 다시 쓴다.
+  - 새 질문 12/12, 7-15 해석 범위 19/22(레거시 17). 사용 중인 서버는 재시작해야 반영된다.
 - Phase 8-12:
   - 업로드 시 로컬 모델이 column을 고르고 첫 후보로 둔다. 실패하면 규칙 제안을 쓴다.
   - 켜는 법: `dev:all` launcher는 loopback Ollama면 기본으로 켠다(`backend/.env`의 `MAPPING_MODEL`로 tag 변경). 직접 실행 시 `--mapping-model-tag qwen2.5-coder:7b-instruct`.
@@ -109,8 +113,10 @@
   - 8-09: AI mapping 제안 비교 완료(v1.1).
   - 8-10: AI 제안 v2·관리자 설명·보류 변형 완료.
   - 8-12: 업로드 흐름 AI 제안 연결 완료.
+  - 8-13: 챗봇 값 힌트 완료(사용자 요청으로 8-07보다 먼저).
   - 승인된 다음 순서(ADR-078, 프로토타입 우선): 8-07 축소판 관리자 화면 → 처음부터 끝까지 browser smoke·시연 절차.
     - 8-07 축소판 범위: 검토, 코드표→값 사전, test query 미리보기, 버전. 업로드 DB의 변환·값 사전·부분 게시(`unsupported`)도 포함한다.
+    - 8-13 뒤 추가: 값 사전 별칭(약어) 입력. 업로드한 SQLite DB도 QueryIR 챗봇·값 힌트를 쓰도록 연결한다(지금은 PostgreSQL profile만).
     - 그 뒤: 8-11(이론·실습 시간 등), L1 뒤 prompt·별칭, Phase 9.
 0. Phase 8 남은 항목:
    - FK 없는 관계 선언(benchmark에서 필요할 때).

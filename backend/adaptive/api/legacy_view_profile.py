@@ -95,16 +95,24 @@ UNSUPPORTED_FIELDS = ("CourseOffering.semester", "CourseOffering.year", "Departm
 # Phase 8-06: the category values of the team-built legacy DB, with the
 # spellings users and the model write without parentheses. Labels are the
 # stored values themselves; values outside the list are still searched.
+#
+# Phase 8-13: the legacy system's own abbreviations (its ``COMMON_ALIASES``)
+# move here as this database's data. Left out on purpose: "전기" (collides
+# with ordinary words such as 전기공학) and, for departments, "인공지능"
+# (a course-name word) and "컴공" (no such department in this DB).
 _CATEGORY_ALIASES: dict[str, tuple[str, ...]] = {
-    "전공(핵심)": ("전공핵심", "핵심전공"),
+    "전공(핵심)": ("전공핵심", "핵심전공", "전핵"),
     "전공(기초)": ("전공기초", "기초전공"),
-    "전공(심화)": ("전공심화", "심화전공"),
-    "교양(소양)": ("교양소양", "소양교양"),
-    "교양(균형)": ("교양균형", "균형교양"),
-    "교양(소양필수)": ("교양소양필수", "소양필수교양", "소양필수"),
-    "교양(기초)": ("교양기초", "기초교양"),
-    "일반선택": (),
+    "전공(심화)": ("전공심화", "심화전공", "전심"),
+    "교양(소양)": ("교양소양", "소양교양", "교소"),
+    "교양(균형)": ("교양균형", "균형교양", "교균"),
+    "교양(소양필수)": ("교양소양필수", "소양필수교양", "소양필수", "교소필"),
+    "교양(기초)": ("교양기초", "기초교양", "교기"),
+    "일반선택": ("일선",),
     "교직": (),
+}
+_DEPARTMENT_ALIASES: dict[str, tuple[str, ...]] = {
+    "공과대학 컴퓨터융합학부": ("컴융", "컴융부"),
 }
 VALUE_DICTIONARIES: dict[str, ValueDictionary] = {
     "Course.category": ValueDictionary(
@@ -115,6 +123,15 @@ VALUE_DICTIONARIES: dict[str, ValueDictionary] = {
         unknown="pass",
         reviewer=REVIEWER,
         reason="Phase 8-06 developer dictionary of the team-built legacy category values (not an L2 review)",
+    ),
+    "Department.name": ValueDictionary(
+        entries=tuple(
+            ValueEntry(stored=stored, label=stored, aliases=aliases)
+            for stored, aliases in _DEPARTMENT_ALIASES.items()
+        ),
+        unknown="pass",
+        reviewer=REVIEWER,
+        reason="Phase 8-13 legacy abbreviations moved from the legacy keyword table (not an L2 review)",
     ),
 }
 

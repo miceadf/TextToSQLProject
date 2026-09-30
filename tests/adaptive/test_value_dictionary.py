@@ -390,7 +390,10 @@ def test_v4_requires_both_new_keys(repository: Path, monkeypatch: pytest.MonkeyP
 
 
 def test_registration_requires_every_stored_value(repository: Path) -> None:  # noqa: F811
-    stored = {entry.stored for entry in lvp.VALUE_DICTIONARIES["Course.category"].entries}
+    # Phase 8-13 added a department dictionary; every dictionary is checked.
+    stored = {
+        entry.stored for dictionary in lvp.VALUE_DICTIONARIES.values() for entry in dictionary.entries
+    }
     asked: list[tuple[str, str]] = []
 
     def missing_one(table: str, column: str) -> set[str]:
