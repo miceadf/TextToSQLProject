@@ -54,6 +54,9 @@ MAX_TEXT_LENGTH = 1000
 # names ("수학과" for "자연과학대학 수학과").
 CHAT_ROW_LIMIT = 200
 CONTAINS_FIELDS = frozenset({"Course.name", "Department.name", "Instructor.name", "Course.category"})
+# Phase 8-14 (user decision): a development option shows the executed SQL in
+# the chat, like the legacy chatbot. Off unless the server enables it.
+MAX_SQL_PREVIEW = 20000
 
 _REQUEST_KEYS = frozenset({"database_id", "query"})
 _NOT_UNDERSTOOD_STAGES = frozenset({HarnessStage.IR_GENERATED, HarnessStage.IR_VALIDATED})
@@ -124,6 +127,63 @@ class _FixedOutputModel:
     def generate_ir(self, request: Any, ontology: Any, mapping: Any) -> dict[str, Any]:
         del request, ontology, mapping
         return self._output
+
+
+class _RecordingExecutor:
+    """Remembers the compiled query that actually reached the executor."""
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+        self.compiled: Any = None
+
+    def execute(self, database_id: str, compiled: Any) -> Any:
+        self.compiled = compiled
+        return self._inner.execute(database_id, compiled)
+
+
+def _sql_literal(value: Any) -> str:
+    if isinstance(value, bool):
+        return "TRUE" if value else "FALSE"
+    if isinstance(value, (int, float)):
+        return repr(value)
+    if isinstance(value, str):
+        if "\\" in value:
+            # E'' strings read backslashes the same way under every
+            # standard_conforming_strings setting (LIKE escapes use them).
+            return "E'" + value.replace("\\", "\\\\").replace("'", "''") + "'"
+        return "'" + value.replace("'", "''") + "'"
+    raise ValueError("unsupported parameter")
+
+
+def render_sql_preview(sql: str, parameters: list[Any]) -> str:
+    """The executed statement with its bound values written in, for reading only.
+
+    The database received the statement and the values separately.
+    """
+    out: list[str] = []
+    values = list(parameters)
+    index = 0
+    position = 0
+    while position < len(sql):
+        if sql.startswith("%%", position):
+            out.append("%")
+            position += 2
+        elif sql.startswith("%s", position):
+            if index >= len(values):
+                raise ValueError("too few parameters")
+            out.append(_sql_literal(values[index]))
+            index += 1
+            position += 2
+        else:
+            out.append(sql[position])
+            position += 1
+    if index != len(values):
+        raise ValueError("too many parameters")
+    text = "".join(out)
+    # Counted in UTF-16 code units, as the browser's parser counts it.
+    if len(text.encode("utf-16-le")) // 2 > MAX_SQL_PREVIEW:
+        raise ValueError("preview too long")
+    return text
 
 
 class _NoSqlite:
@@ -207,6 +267,7 @@ def answer_chat_query(
     pg_contexts: dict[str, Any],
     model: Any,
     value_indexes: Any | None = None,
+    show_sql: bool = False,
 ) -> dict[str, Any]:
     """Answer one question; raises ``ChatQueryError`` for non-answers.
 
@@ -330,12 +391,13 @@ def answer_chat_query(
             item["operator"] = Operator.CONTAINS.value
     executed = QueryIR.model_validate(rewritten)
 
+    recorder = _RecordingExecutor(DatabaseRoutingExecutor(_NoSqlite(), {database_id: context}))
     try:
         harness = ExecutionHarness(
             model=_FixedOutputModel(rewritten),
             compiler=context.compiler(),
             sql_policy=context.policy(),
-            executor=DatabaseRoutingExecutor(_NoSqlite(), {database_id: context}),
+            executor=recorder,
         )
         result = harness.run(request, ontology, mapping)
     except Exception:
@@ -356,7 +418,7 @@ def answer_chat_query(
         if not isinstance(row, dict) or set(row) != set(card_fields):
             raise ChatQueryError(ChatQueryErrorCode.EXECUTION_FAILED, "RESULT_SHAPE_MISMATCH")
         rows.append({_REF_TO_DTO_KEY[field]: _json_value(row[field]) for field in card_fields})
-    return {
+    answer: dict[str, Any] = {
         "version": CHAT_QUERY_VERSION,
         "database_id": database_id,
         "status": "SUCCEEDED",
@@ -376,6 +438,14 @@ def answer_chat_query(
             ]
         },
     }
+    if show_sql and recorder.compiled is not None:
+        try:
+            answer["sql"] = render_sql_preview(
+                str(recorder.compiled.sql), list(recorder.compiled.parameters)
+            )
+        except Exception:
+            pass  # a display aid; the answer stands without it
+    return answer
 
 
 def _parse_request(payload: dict[str, Any] | None) -> tuple[str, str]:
@@ -401,6 +471,7 @@ def register_chat_query_routes(
     pg_contexts: dict[str, Any],
     model: Any | None,
     value_reader: Any | None = None,
+    show_sql: bool = False,
 ) -> None:
     if not isinstance(pg_contexts, dict):
         raise ValueError("pg_contexts must be a dict")
@@ -424,6 +495,7 @@ def register_chat_query_routes(
                 pg_contexts=contexts,
                 model=model,
                 value_indexes=value_indexes,
+                show_sql=bool(show_sql),
             )
             text = json.dumps(answer, ensure_ascii=False, sort_keys=True, allow_nan=False)
             return JSONResponse(status_code=200, content=json.loads(text))

@@ -115,7 +115,7 @@ def test_main_degrades_legacy_view_and_never_prints_values(
     monkeypatch.delenv(DSN_ENV, raising=False)
     calls: list[tuple[bool, bool]] = []
 
-    def fake_create(profiles: Any, model: Any, mapping_model: Any = None) -> Any:
+    def fake_create(profiles: Any, model: Any, mapping_model: Any = None, show_sql: bool = False) -> Any:
         calls.append((bool(profiles), model is not None))
         if profiles:
             raise RuntimeError("drifted " + SECRET_DSN)
@@ -153,7 +153,7 @@ def test_ollama_failure_keeps_legacy_view(
     def broken_model(_ollama: Any) -> Any:
         raise RuntimeError("transport")
 
-    def fake_create(profiles: Any, model: Any, mapping_model: Any = None) -> Any:
+    def fake_create(profiles: Any, model: Any, mapping_model: Any = None, show_sql: bool = False) -> Any:
         calls.append((bool(profiles), model is not None))
         return _App()
 
@@ -181,7 +181,7 @@ def test_invalid_profile_keeps_ollama(
     def broken_profiles(_ids: Any, _root: Any) -> Any:
         raise RuntimeError("bad profile")
 
-    def fake_create(profiles: Any, model: Any, mapping_model: Any = None) -> Any:
+    def fake_create(profiles: Any, model: Any, mapping_model: Any = None, show_sql: bool = False) -> Any:
         calls.append((bool(profiles), model is not None))
         return _App()
 
@@ -207,7 +207,7 @@ def test_drifted_base_profile_keeps_the_view_profile(
     monkeypatch.delenv(BASE_DSN_ENV, raising=False)
     calls: list[list[str]] = []
 
-    def fake_create(profiles: Any, model: Any, mapping_model: Any = None) -> Any:
+    def fake_create(profiles: Any, model: Any, mapping_model: Any = None, show_sql: bool = False) -> Any:
         calls.append(list(profiles or []))
         if profiles and "legacy-base" in profiles:
             raise RuntimeError("drifted")
@@ -245,7 +245,7 @@ def test_one_invalid_profile_keeps_the_other(
             raise RuntimeError("bad profile")
         return list(ids)
 
-    def fake_create(profiles: Any, model: Any, mapping_model: Any = None) -> Any:
+    def fake_create(profiles: Any, model: Any, mapping_model: Any = None, show_sql: bool = False) -> Any:
         calls.append(list(profiles or []))
         return _App()
 

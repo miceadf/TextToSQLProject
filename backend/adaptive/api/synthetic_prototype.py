@@ -401,6 +401,7 @@ def create_synthetic_clarification_prototype(
     ollama_model: Any | None = None,
     mapping_model: Any | None = None,
     postgres_value_reader: Any | None = None,
+    show_chat_sql: bool = False,
 ) -> FastAPI:
     """Assemble the synthetic clarification prototype app.
 
@@ -410,6 +411,9 @@ def create_synthetic_clarification_prototype(
     ``postgres_value_reader`` (Phase 8-13) reads bounded distinct values for
     chat value hints. By default a read-only reader is built for profiles that
     use the real executor (injected test executors get none).
+
+    ``show_chat_sql`` (Phase 8-14, development option) adds the executed SQL
+    to successful chat answers. Off by default.
     """
     tmp: Any = None
     try:
@@ -621,7 +625,11 @@ def create_synthetic_clarification_prototype(
 
                     value_reader = PostgresDistinctValueReader(reader_configs)
             register_chat_query_routes(
-                app, pg_contexts=pg_contexts, model=ollama_model, value_reader=value_reader
+                app,
+                pg_contexts=pg_contexts,
+                model=ollama_model,
+                value_reader=value_reader,
+                show_sql=show_chat_sql is True,
             )
         except Exception:
             raise RuntimeError(_PROTOTYPE_CREATION_FAILURE) from None
@@ -687,6 +695,7 @@ def create_synthetic_clarification_prototype(
         app.state.synthetic_prototype_tmpdir = tmp.name
         app.state.synthetic_prototype_cleanup = _cleanup
         app.state.synthetic_postgres_database_ids = tuple(sorted(pg_contexts))
+        app.state.synthetic_prototype_chat_sql_shown = show_chat_sql is True
         app.state.synthetic_prototype_mapping_proposer_kind = (
             "rules" if mapping_model is None else "ai"
         )
@@ -765,6 +774,11 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="SECONDS",
         help="Ollama request timeout in seconds (1-120).",
+    )
+    parser.add_argument(
+        "--show-sql",
+        action="store_true",
+        help="Development option: show the executed SQL in chat answers (Phase 8-14).",
     )
     parser.add_argument(
         "--mapping-model-tag",
@@ -890,13 +904,17 @@ def main(argv: list[str] | None = None) -> int:
             factory_kwargs["ollama_model"] = ollama_model
         if mapping_model is not None:
             factory_kwargs["mapping_model"] = mapping_model
+        if getattr(args, "show_sql", False):
+            factory_kwargs["show_chat_sql"] = True
         try:
             local_app = create_synthetic_clarification_prototype(**factory_kwargs)
         except Exception:
             print(_CLI_CONFIG_FAILURE, file=_sys.stderr, flush=True)
             return 2
-    elif ollama_model is not None or mapping_model is not None:
+    elif ollama_model is not None or mapping_model is not None or getattr(args, "show_sql", False):
         model_kwargs: dict[str, Any] = {}
+        if getattr(args, "show_sql", False):
+            model_kwargs["show_chat_sql"] = True
         if ollama_model is not None:
             model_kwargs["ollama_model"] = ollama_model
         if mapping_model is not None:

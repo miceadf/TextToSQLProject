@@ -12,7 +12,9 @@ chatbot see the same database and model:
 - Ollama is enabled only for a loopback base URL, with the no-system request
   format the fine-tuned model needs (ADR-059);
 - upload mapping proposals (Phase 8-12) use the same loopback base URL (or the
-  default one) with ``MAPPING_MODEL`` or the benchmarked default tag.
+  default one) with ``MAPPING_MODEL`` or the benchmarked default tag;
+- the chat shows the executed SQL like the legacy chatbot (Phase 8-14, a
+  development aid for checking answers); ``SHOW_SQL=0`` turns it off.
 
 Each optional part degrades on its own: a missing profile, an unreachable or
 drifted database, or an invalid Ollama setting starts the prototype without
@@ -36,7 +38,7 @@ LEGACY_SPECS = (BASE_SPEC, VIEW_SPEC)
 ENV_FILE = Path("backend/.env")
 REQUEST_FORMAT = "alpaca-raw-no-system-v1"
 OLLAMA_TIMEOUT = "120"
-_ENV_KEYS = frozenset({"DATABASE_URL", "OLLAMA_BASE_URL", "OLLAMA_MODEL", "MAPPING_MODEL"})
+_ENV_KEYS = frozenset({"DATABASE_URL", "OLLAMA_BASE_URL", "OLLAMA_MODEL", "MAPPING_MODEL", "SHOW_SQL"})
 _FIXED_HOST = "127.0.0.1"
 
 __all__ = ["main", "plan_launch", "plan_mapping_model", "read_env_file"]
@@ -136,11 +138,16 @@ def _build_model(ollama: dict[str, str]) -> Any:
 
 
 def _create_app(
-    profiles: list[Any] | None, model: Any | None, mapping_model: Any | None = None
+    profiles: list[Any] | None,
+    model: Any | None,
+    mapping_model: Any | None = None,
+    show_sql: bool = False,
 ) -> Any:
     from .synthetic_prototype import create_synthetic_clarification_prototype
 
     kwargs: dict[str, Any] = {}
+    if show_sql:
+        kwargs["show_chat_sql"] = True
     if profiles:
         kwargs["postgres_profiles"] = profiles
     if model is not None:
@@ -194,6 +201,8 @@ def main(argv: list[str] | None = None) -> int:
         except Exception:
             status["ollama"] = "disabled (STARTUP_FAILED)"
     mapping_settings, status["mapping_ai"] = plan_mapping_model(env_values)
+    show_sql = env_values.get("SHOW_SQL", "1").strip() != "0"
+    status["chat_sql"] = "shown" if show_sql else "hidden"
     mapping_model: Any | None = None
     if mapping_settings is not None:
         try:
@@ -203,6 +212,8 @@ def main(argv: list[str] | None = None) -> int:
 
     def create(profiles: list[Any] | None, with_model: Any | None) -> Any:
         try:
+            if show_sql:
+                return _create_app(profiles, with_model, mapping_model, True)
             return _create_app(profiles, with_model, mapping_model)
         except Exception:
             return None

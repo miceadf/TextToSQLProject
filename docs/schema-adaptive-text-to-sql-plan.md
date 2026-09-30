@@ -696,6 +696,8 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 - [x] Phase 8-09 AI mapping 제안(`ai-mapping-v1.1`: 로컬 `qwen2.5-coder:7b-instruct`, schema 제한 출력, runtime 규칙 검증기, 분반 table anchor 규칙)과 규칙 기반 비교(질문 AI 223/240, 규칙 205, 규칙+anchor 206; 값 사전 0/3·의미 함정 0/2는 미해결; 합성·L1/L3 전)
 - [x] Phase 8-10 AI mapping 제안 v2(저장 값 일치 검사, 값 사전 전용 단계, 관리자 column 설명 `admin-notes-v1`·코드표 직접 사전, 보류 변형 6개·사전 등록 hash; 기존 세트 223→232→235/240, 보류 세트 104→116/120; 자연어 설명은 의미 함정 미해결)
 - [ ] Phase 8-11 DB별 ontology 확장 field와 매개변수형 변환(공통 ontology는 팀 관리, DB별 확장은 관리자가 데이터로 선언, 변환은 닫힌 목록을 매개변수형으로 확장; 첫 사례 이론·실습 시간; 챗봇 응답·화면의 field 목록 일반화) — 프로토타입 이후로 보류(ADR-078)
+- [x] Phase 8-14 챗봇 실행 SQL 표시 개발 옵션(executor가 받은 문장 + bound 값 literal 보기용, 성공 답에만 `sql`, 옵션 끔이면 응답 불변, CLI `--show-sql`·launcher 기본 켬 `SHOW_SQL=0`; ADR-080)
+- [ ] 후속: 공통 약어 묶음(대상 값이 있을 때만 적용), 이해 실패 질문에서 약어 후보 제안(ADR-080)
 - [x] Phase 8-13 챗봇 값 힌트(DB별 값 목록 ≤500·단어 조각·별칭·조사·붙여 쓰기·fuzzy 힌트를 모델 호출 1회에 추가, ontology 기반 없는 field 이름 보정과 힌트 기반 field 이동, 약어는 DB별 값 사전 데이터; 새 질문 3→12/12, 7-15 해석 범위 15→19·레거시 17; ADR-079)
 - [x] Phase 8-12 업로드 흐름에 AI mapping 제안 연결(`ai-mapping-v2` column 단계를 제품 모듈 `mapping/ai_proposal.py`로 이동·benchmark와 공유, AI 첫 후보 + 규칙 후보, `AI_PROPOSAL` 근거, 실패 시 규칙 대체, upload v2 `proposer`·review v2 `source`, 등록 threadpool 실행, `--mapping-model-tag`·launcher `MAPPING_MODEL`; 이름 변경 합성 DB live smoke AI 15/15·규칙 1/15)
 - [x] verified query 자동 회귀 테스트(Phase 8-05: 서버 계산 결과 hash를 verified 기준선으로 기록, publish·재활성화 직후와 재활성화 전 비활성 버전에서 고정 query 회귀 비교; 경고만, 자동 차단 없음; 합성 SQLite만 검증)
@@ -717,6 +719,8 @@ Phase 8 분할 계획(상세는 [`docs/prompts/phase8-01-mapping-version-rollbac
 4b. 8-11 DB별 ontology 확장 field와 매개변수형 변환(2026-09-30 프로토타입 이후로 보류, ADR-078).
 4c. 8-12 업로드 흐름에 AI mapping 제안 연결(완료, ADR-078).
 4d. 8-13 챗봇 값 힌트(완료, ADR-079; 사용자 요청으로 8-07보다 먼저).
+4e. 8-14 챗봇 실행 SQL 표시(완료, ADR-080).
+5a. 8-07 축소판에 약어 입력·규칙/AI 약어 후보·충돌 검사·관리자 승인과 업로드 DB의 QueryIR 챗봇 연결을 포함한다(ADR-080).
 5. 8-07 관리자 화면 통합 축소판(검토·코드표→값 사전·test query 미리보기·버전; 업로드 DB 변환·값 사전·부분 게시 포함)과 처음부터 끝까지 browser smoke·시연 절차.
 6. prompt·field 별칭 개선은 L1 질문 세트 확보 뒤.
 7. Phase 9 최종 평가는 L1/L3 뒤.
@@ -2031,6 +2035,23 @@ SQLite DB 입력
   - DB 값 속 지시문이 모델에 영향을 줄 수 있다. 출력 검증은 모양만 막는다.
   - 새 DB의 약어는 관리자 입력(8-07)이 필요하다.
 
+### ADR-080: 챗봇 실행 SQL은 서버 개발 옵션으로만 보여 주고, DB별 약어는 자동 후보 + 관리자 승인으로 채운다
+
+- 날짜: 2026-09-30
+- 상태: 채택(사용자 결정)
+- 결정 1: 실행 SQL 표시
+  - 레거시 챗봇처럼 QueryIR 경로도 실행 SQL을 볼 수 있어야 결과를 끝까지 확인할 수 있다.
+  - 서버 옵션(`--show-sql`, dev launcher는 기본 켬·`SHOW_SQL=0`으로 끔)을 켰을 때만 성공 답에 `sql`을 붙인다.
+  - 보여 주는 것은 executor가 실제로 받은 문장에 bound 값을 SQL literal로 채운 보기용 문장이다. 실행은 계속 parameter binding이다.
+  - 옵션을 끄면 응답은 이전과 같다. 기존의 "브라우저에 SQL을 보내지 않는다" 원칙은 옵션이 꺼진 상태의 기본으로 남는다.
+- 결정 2: DB별 약어
+  - 약어는 학교·커뮤니티마다 달라 DB별 데이터로 둔다(ADR-079).
+  - 관리자 부담은 단계적으로 줄인다.
+    - 공통 방식(값 조각·오타)이 약어 없이도 상당 부분을 푼다.
+    - 8-07에서는 약어 입력 화면, 규칙 후보(단어별 첫 글자)와 로컬 AI 후보, 충돌 검사(다른 값·약어·일반 단어와 겹침), 관리자 승인을 만든다.
+    - 후속: 여러 학교가 함께 쓰는 공통 약어 묶음(대상 값이 있을 때만 적용). 이해 실패·0건 질문의 모르는 단어로 약어 후보 제안(질문 기록 저장이 필요하므로 개인정보 판단 필요).
+- 영향: 옵션을 켜면 브라우저에 물리 table·column 이름과 값이 보인다. 외부 시연·실제 자료 사용 전에는 끄거나 L5/E3 판단이 필요하다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -2285,3 +2306,4 @@ SQLite DB 입력
 - 2026-09-30 Phase 8-12 업로드 흐름 AI mapping 제안 연결 완료(ADR-078). `OllamaJsonModel`·`schema_conforms`·column prompt 조립을 `backend/adaptive/mapping/ai_proposal.py`로 옮겼다. benchmark는 이를 가져다 쓰며 prompt 문자열은 옮기기 전과 같다(전 변형·버전 hash 비교, 테스트 고정). `register_database(mapping_proposer=)`는 메모리 sample로 모델을 한 번 부르고, 계약 검사를 통과한 제안만 저장하며, 실패하면 규칙 제안을 쓴다. 업로드 응답은 `private-sqlite-upload-v2`(`mapping.proposer`: `AI`/`RULES`/`AI_UNAVAILABLE`), 검토 응답은 `private-mapping-review-v2`(후보 `source`)다. 등록은 threadpool에서 실행한다. CLI `--mapping-model-tag`, dev launcher는 loopback이면 기본 켬(`MAPPING_MODEL`로 tag 변경, 상태 `mapping_ai`). 화면에는 제안 출처와 후보별 AI 표시를 넣었다. `gpt-6-luna` high review-only 지적 1건(검토 후보 `review_status`를 아무 문자열이나 받음, 6-19부터)을 재현해 알려진 상태만 받도록 고쳤다. live smoke(이름 변경 합성 DB 1개): AI 첫 후보 15/15, 규칙 1/15, 13초. 결과는 `docs/phase8-12-ai-proposal-upload-results-2026-09-30.md`에 두었다. 관련 backend 204개와 신규 33개, frontend Node 93개·ESLint·tsc·vite build, 전체 pytest 1588개·6 skip·610 subtests(뒤에 추가한 CLI 테스트 6개는 신규 33개 실행에 포함), compileall, diff check 통과. legacy·PostgreSQL 실행 경로 변경 없음. ADR-078 추가
 - 2026-09-30 방침 조정(사용자 결정, ADR-079): 기능 구현을 우선해 실제 학교 데이터 노출 방지는 당분간 고려 대상에서 뺐다. 모델을 특정 DB에 묶지 않는 원칙은 유지한다. 약어·fuzzy는 방식(공통 코드)과 지식(DB별 데이터)으로 나눈다.
 - 2026-09-30 Phase 8-13 챗봇 값 힌트 완료(ADR-079). 새 모듈 `backend/adaptive/api/value_hints.py`(값 목록·질문 검사·출력 보정)와 `backend/adaptive/harness/postgres_values.py`(읽기 전용 DISTINCT reader, 너무 많음/실패 구분)를 추가했다. `OllamaQueryModel`은 힌트가 있을 때만 Context 다음에 힌트 한 줄을 넣고, 힌트가 없으면 prompt가 이전과 같다. 챗봇은 힌트를 넣은 모델 호출 1회 뒤 보정하고, 기존 검증 경로를 모두 거친다. 레거시 약어(`컴융`·`컴융부`, `전핵` 등 7개)를 레거시 profile 값 사전으로 옮겼다. 뺀 것은 `전기`·`인공지능`·`컴공`이다. 두 private profile은 다시 썼고 smoke를 통과했다. 결과: 새 질문 12개에서 도입 전 3 → 보정만 6 → 힌트+보정 12, 약어 데이터 제외 7. 7-15 30문항에서 해석 범위 수용 가능 15 → 19(레거시 17), 해석 범위 퇴보 없음. `gpt-6-luna` high review-only 지적 6건을 재현했다. 실패 캐시 영구화와 200자 초과 힌트로 인한 챗봇 실패, 이 2건을 고쳤다. field 보정의 상시 동작, 별칭 힌트 유지, 포함 검색 정책(7-16), prompt 속 DB 값의 영향은 결정·한계로 기록했다. 결과는 `docs/phase8-13-chat-value-hints-results-2026-09-30.md`에 두었다. 전체 실행에서 새 테스트가 DB driver를 먼저 import해 import 격리 테스트가 깨진 것을 찾아, reader가 식별자를 직접 quote하고 driver는 연결할 때만 쓰도록 고쳤다. 관련 테스트(값 힌트 35개 포함), 전체 pytest 1629개·6 skip·610 subtests, compileall, diff check 통과. legacy DB는 읽기만 했다. ADR-079 추가
+- 2026-09-30 Phase 8-14 챗봇 실행 SQL 표시 완료(ADR-080, 사용자 결정). `chat_query.py`는 executor가 받은 compile 결과를 기록하고, 옵션이 켜져 있으면 bound 값을 SQL literal로 채운 보기용 문장을 성공 답의 `sql`에 넣는다. literal 규칙: 문자열 `'...'`, 역슬래시가 있으면 `E'...'`, 숫자, `TRUE`/`FALSE`, `%%`→`%`. 길이 상한은 UTF-16 기준 20,000이다. `synthetic_prototype --show-sql`, dev launcher 기본 켬(`SHOW_SQL=0`으로 끔, 상태 `chat_sql`). frontend는 성공 응답에서만 선택 key `sql`을 받고, 기존 SQL 패널에 "Executed SQL (QueryIR · 값은 보기용으로 채워 넣음)"로 보여 준다. live 확인에서 `컴융 전공`은 `dept_name = '공과대학 컴퓨터융합학부' AND category LIKE '%전공%'`로 나왔다. "월요일 오후 3학점 교양"에서는 모델이 오후 조건을 빠뜨린 것이 SQL로 드러났다. `gpt-6-luna` high review-only 지적 2건을 재현·수정했다. 역슬래시 값 표기(`E''`)와 길이 계산 단위(UTF-16)다. DB별 약어 방향(자동 후보 + 관리자 승인, 후속 공통 묶음·사용 기록 제안)을 로드맵에 넣었다. SQL 표시 테스트 10개, frontend Node 94개·ESLint·tsc·vite build, 전체 pytest 1639개·6 skip·610 subtests, compileall, diff check 통과. ADR-080 추가

@@ -20,6 +20,8 @@ const FAILURE_CODE = /^[A-Z0-9_]{1,64}$/;
 const MAX_ROWS = 200;
 // Same cap as the server's MAX_TEXT_LENGTH for result cells.
 const MAX_TEXT = 1000;
+// Longest executed-SQL preview the server sends (same cap as the backend).
+const MAX_SQL_PREVIEW = 20000;
 // The server rejects ASCII control characters other than tab, LF, and CR.
 function hasControlCharacter(text: string): boolean {
   for (let index = 0; index < text.length; index += 1) {
@@ -46,6 +48,9 @@ export type ChatQueryAnswer =
       rowCount: number;
       limit: number;
       filters: ChatFilter[];
+      // Phase 8-14: executed SQL (values written in), only when the server's
+      // development option is on.
+      sql?: string;
     }
   | { status: 'UNSUPPORTED'; unsupported: { field: string; label: string }[] }
   | { status: 'NOT_UNDERSTOOD'; failureCode: string };
@@ -131,7 +136,10 @@ export function parseChatQueryResponse(value: unknown, databaseId: string): Chat
   const status = value['status'];
   if (status === 'SUCCEEDED') {
     const keys = ['version', 'database_id', 'status', 'columns', 'rows', 'row_count', 'limit', 'understood'];
-    if (!hasExactKeys(value, keys)) return null;
+    const hasSql = Object.prototype.hasOwnProperty.call(value, 'sql');
+    if (!hasExactKeys(value, hasSql ? [...keys, 'sql'] : keys)) return null;
+    const sql = value['sql'];
+    if (hasSql && (typeof sql !== 'string' || sql.length === 0 || sql.length > MAX_SQL_PREVIEW)) return null;
     const columns = value['columns'];
     if (
       !Array.isArray(columns) ||
@@ -154,7 +162,9 @@ export function parseChatQueryResponse(value: unknown, databaseId: string): Chat
     }
     const filters = parseFilters(value['understood']);
     if (filters === null) return null;
-    return { status, columns: columns as string[], rows: parsedRows, rowCount, limit, filters };
+    const answer: ChatQueryAnswer = { status, columns: columns as string[], rows: parsedRows, rowCount, limit, filters };
+    if (hasSql) answer.sql = sql as string;
+    return answer;
   }
   if (status === 'UNSUPPORTED') {
     if (!hasExactKeys(value, ['version', 'database_id', 'status', 'unsupported'])) return null;

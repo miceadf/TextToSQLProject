@@ -70,9 +70,25 @@ describe('phase7-14 response parser', () => {
     assert.equal(notUnderstood?.status, 'NOT_UNDERSTOOD');
   });
 
-  it('rejects SQL, physical columns, and inconsistent answers', () => {
+  it('phase8-14: keeps the executed SQL only as an optional string on success', () => {
+    const plain = parseChatQueryResponse(succeeded(), DB);
+    assert.ok(plain?.status === 'SUCCEEDED' && plain.sql === undefined);
+    const withSql = parseChatQueryResponse(succeeded({ sql: "SELECT 1 WHERE x = '3'" }), DB);
+    assert.ok(withSql?.status === 'SUCCEEDED' && withSql.sql === "SELECT 1 WHERE x = '3'");
+    for (const sql of ['', 3, null, 'x'.repeat(20001)]) {
+      assert.equal(parseChatQueryResponse(succeeded({ sql }), DB), null);
+    }
+    assert.equal(
+      parseChatQueryResponse(
+        { version: 'adaptive-chat-query-v1', database_id: DB, status: 'NOT_UNDERSTOOD', failure_code: 'X', sql: 'SELECT 1' },
+        DB,
+      ),
+      null,
+    );
+  });
+
+  it('rejects physical columns and inconsistent answers', () => {
     const cases: Record<string, unknown>[] = [
-      succeeded({ sql: 'SELECT 1' }),
       succeeded({ columns: [...COLUMNS.slice(0, -1), 'credit_hours'] }),
       succeeded({ rows: [{ ...ROW, credit_hours: '3/3/0' }] }),
       succeeded({ rows: [{ ...ROW, credits: Number.NaN }] }),

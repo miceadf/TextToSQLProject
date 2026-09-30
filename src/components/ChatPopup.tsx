@@ -669,6 +669,7 @@ export default function ChatPopup({
       if (controller.signal.aborted || targetKeyRef.current !== requestKey) return
       setDbCourses(answer.status === 'SUCCEEDED' ? rowsToCourses(chatRowsToLegacyRows(answer.rows)) : null)
       setLastUnderstood(answer.status === 'SUCCEEDED' ? describeUnderstood(answer.filters) : '')
+      setLastSql(answer.status === 'SUCCEEDED' ? (answer.sql ?? '') : '')
       if (answer.status !== 'SUCCEEDED') setLastWarning(describeAnswer(answer))
       setMessages((prev) => [...prev, { id: makeId('sys'), role: 'system', text: describeAnswer(answer) }])
     } catch (error) {
@@ -882,7 +883,11 @@ export default function ChatPopup({
                   className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-[11px] font-semibold text-slate-600 transition hover:bg-slate-100"
                   aria-expanded={sqlOpen}
                 >
-                  <span>Generated SQL</span>
+                  <span>
+                    {chatTarget.kind === 'queryir'
+                      ? 'Executed SQL (QueryIR · 값은 보기용으로 채워 넣음)'
+                      : 'Generated SQL'}
+                  </span>
                   <span className="text-slate-400">
                     {sqlOpen ? '접기' : '펼치기'}
                   </span>
