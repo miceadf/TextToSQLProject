@@ -36,6 +36,9 @@ class FieldTransform(str, Enum):
     # Single-character Korean weekday column ("월"); filter values such as
     # "월요일" or "Mon" are normalized to it (Phase 7-16).
     KOREAN_WEEKDAY = "KOREAN_WEEKDAY"
+    # Four-digit text time ("0900") -> "HH:MM" text (Phase 8-17); comparing
+    # "1230" with "12:00" as raw text would misorder them.
+    HHMM_TEXT_TO_HHMM = "HHMM_TEXT_TO_HHMM"
 
 
 _POSTGRES_TEMPLATES = {
@@ -43,12 +46,14 @@ _POSTGRES_TEMPLATES = {
     FieldTransform.TIME_TO_HHMM: "TO_CHAR({column}, 'HH24:MI')",
     # The column already holds the canonical form; only filter values change.
     FieldTransform.KOREAN_WEEKDAY: "{column}",
+    FieldTransform.HHMM_TEXT_TO_HHMM: "(SUBSTRING({column} FROM 1 FOR 2) || ':' || SUBSTRING({column} FROM 3 FOR 2))",
 }
 
 _DATA_TYPES = {
     FieldTransform.SLASH_FIRST_NUMERIC: frozenset({DataType.NUMBER}),
     FieldTransform.TIME_TO_HHMM: frozenset({DataType.TIME}),
     FieldTransform.KOREAN_WEEKDAY: frozenset({DataType.STRING}),
+    FieldTransform.HHMM_TEXT_TO_HHMM: frozenset({DataType.TIME}),
 }
 
 # Transformed values are compared, never pattern-matched.
@@ -70,6 +75,7 @@ _TRANSFORM_OPERATORS = {
     FieldTransform.KOREAN_WEEKDAY: frozenset(
         {Operator.EQUALS, Operator.NOT_EQUALS, Operator.CONTAINS}
     ),
+    FieldTransform.HHMM_TEXT_TO_HHMM: TRANSFORM_OPERATORS,
 }
 
 
@@ -91,7 +97,11 @@ def column_type_supports(transform: FieldTransform, declared_type: str) -> bool:
     """Check the physical declared type the template expects."""
     normalized = (declared_type or "").strip().lower()
     transform = FieldTransform(transform)
-    if transform in (FieldTransform.SLASH_FIRST_NUMERIC, FieldTransform.KOREAN_WEEKDAY):
+    if transform in (
+        FieldTransform.SLASH_FIRST_NUMERIC,
+        FieldTransform.KOREAN_WEEKDAY,
+        FieldTransform.HHMM_TEXT_TO_HHMM,
+    ):
         return normalized.startswith(("character varying", "varchar", "text", "character", "char"))
     if transform is FieldTransform.TIME_TO_HHMM:
         return normalized.startswith("time ") or normalized == "time"
@@ -128,7 +138,7 @@ def normalize_filter_value(transform: FieldTransform, value: Any) -> Any:
         if day is None:
             raise ValueError("weekday filter value is not a weekday")
         return day
-    if FieldTransform(transform) is FieldTransform.TIME_TO_HHMM:
+    if FieldTransform(transform) in (FieldTransform.TIME_TO_HHMM, FieldTransform.HHMM_TEXT_TO_HHMM):
         match = _TIME_TEXT.fullmatch(value.strip()) if isinstance(value, str) else None
         if match is None:
             raise ValueError("time filter value is not HH:MM")

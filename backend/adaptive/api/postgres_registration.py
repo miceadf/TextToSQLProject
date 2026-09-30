@@ -44,6 +44,7 @@ _STATUS = {
     "INSPECTION_FAILED": 502,
     "LIMIT_REACHED": 409,
     "ALIAS_CONFLICT": 409,
+    "ALIAS_LENGTH": 400,
     "SOURCE_CHANGED": 409,
 }
 
@@ -439,6 +440,8 @@ class PostgresRegistrationService:
                     )
                     if blocked is None:
                         blocked = self._big_field_collision(editable, context[0], reader, database_id, alias, body["stored"])
+                    if blocked == dictionaries_store.ALIAS_LENGTH_REASON:
+                        raise pg.PostgresRegistrationError("ALIAS_LENGTH")  # not a collision (Phase 8-17)
                     if blocked is not None:
                         raise pg.PostgresRegistrationError("ALIAS_CONFLICT")
                     if warning is not None:

@@ -204,9 +204,34 @@ export function parseCatalogResponse(value: unknown): CatalogResult | null {
     items.push(item);
   }
   if (value['total'] !== items.length) return null;
-  const keys = items.map((item) => `${item.year}|${item.semester}|${item.course_code}|${item.section}`);
-  if (new Set(keys).size !== keys.length) return null;
+  // Phase 8-17: an offering that meets more than once a week arrives as one
+  // item per timetable row. Those rows must agree on everything but the time,
+  // and no time may repeat.
+  const firstByKey = new Map<string, CanonicalCourse>();
+  const times = new Set<string>();
+  for (const item of items) {
+    const key = offeringKey(item);
+    const time = `${key}|${item.day}|${item.start_time}|${item.end_time}`;
+    if (times.has(time)) return null;
+    times.add(time);
+    const first = firstByKey.get(key);
+    if (first === undefined) firstByKey.set(key, item);
+    else if (!sameOffering(first, item)) return null;
+  }
   return { database_id: value['database_id'], items, total: items.length };
+}
+
+function offeringKey(item: CanonicalCourse): string {
+  return `${item.year}|${item.semester}|${item.course_code}|${item.section}`;
+}
+
+const OFFERING_FIELDS = [
+  'course_code', 'course_name', 'credits', 'category', 'department_code', 'department_name',
+  'instructor_name', 'year', 'semester', 'section', 'capacity', 'enrolled',
+] as const;
+
+function sameOffering(left: CanonicalCourse, right: CanonicalCourse): boolean {
+  return OFFERING_FIELDS.every((field) => left[field] === right[field]);
 }
 
 export function isValidKeyword(value: unknown): value is string {
@@ -263,6 +288,10 @@ export function databaseLabel(databases: readonly RegistryDatabase[], databaseId
   return found?.label ?? '알 수 없는 DB';
 }
 
+const KOREAN_WEEKDAYS: Record<string, Course['slots'][number]['day']> = {
+  월: 'Mon', 화: 'Tue', 수: 'Wed', 목: 'Thu', 금: 'Fri', 토: 'Sat',
+};
+
 function weekdayOf(day: string): Course['slots'][number]['day'] | null {
   const upper = day.trim().toUpperCase();
   if (upper === 'MON') return 'Mon';
@@ -271,7 +300,9 @@ function weekdayOf(day: string): Course['slots'][number]['day'] | null {
   if (upper === 'THU') return 'Thu';
   if (upper === 'FRI') return 'Fri';
   if (upper === 'SAT') return 'Sat';
-  return null;
+  // Phase 8-17: Korean weekdays ("월", or a dictionary label "월요일").
+  const korean = /^([월화수목금토])(?:요일)?$/.exec(day.trim());
+  return korean ? KOREAN_WEEKDAYS[korean[1]!] ?? null : null;
 }
 
 function clockHour(text: string): number | null {
@@ -307,6 +338,25 @@ export function canonicalToCourse(item: CanonicalCourse): Course {
     locationText: undefined,
     slots,
   };
+}
+
+/** One course per offering; timetable rows of the same offering become its slots (Phase 8-17). */
+export function catalogToCourses(items: readonly CanonicalCourse[]): Course[] {
+  const courses = new Map<string, Course>();
+  for (const item of items) {
+    const course = canonicalToCourse(item);
+    const existing = courses.get(course.id);
+    if (existing === undefined) {
+      courses.set(course.id, course);
+      continue;
+    }
+    courses.set(course.id, {
+      ...existing,
+      timeText: `${existing.timeText}, ${course.timeText}`,
+      slots: [...existing.slots, ...course.slots],
+    });
+  }
+  return [...courses.values()];
 }
 
 export function parsePrototypeDatabaseParam(search: string): string | null {

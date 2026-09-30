@@ -39,12 +39,19 @@ export type ReviewFetchLike = (
 export class MappingReviewClientError extends Error {
   readonly kind: 'transport' | 'contract' | 'server';
   readonly serverCode: string | null;
+  // Phase 8-17: the blocking fields a PUBLISH_BLOCKED error names, if any.
+  readonly fields: readonly string[] | null;
 
-  constructor(kind: 'transport' | 'contract' | 'server', serverCode: string | null = null) {
+  constructor(
+    kind: 'transport' | 'contract' | 'server',
+    serverCode: string | null = null,
+    fields: readonly string[] | null = null,
+  ) {
     super(kind === 'transport' ? REVIEW_TRANSPORT_MESSAGE : REVIEW_CONTRACT_MESSAGE);
     this.name = 'MappingReviewClientError';
     this.kind = kind;
     this.serverCode = serverCode;
+    this.fields = fields;
   }
 }
 
@@ -476,7 +483,7 @@ async function postAction(
   const payload = await readPayload(response);
   if (!response.ok) {
     const parsed = parseReviewError(payload);
-    throw new MappingReviewClientError('server', parsed?.code ?? null);
+    throw new MappingReviewClientError('server', parsed?.code ?? null, parsed?.fields ?? null);
   }
   return payload;
 }
@@ -729,10 +736,18 @@ export function getReviewErrorMessage(code: string | null): string {
   return REVIEW_GENERIC_MESSAGE;
 }
 
+// Every field is reviewed, yet the server refused: the approved columns do not
+// give one query path in this database (for example two FK routes to a table).
+export const PUBLISH_RUNTIME_BLOCKED_MESSAGE =
+  '검토는 끝났지만 이 DB 구조에서 질의 경로를 하나로 정할 수 없어 게시하지 않았습니다. 승인한 column을 다시 확인해 주세요.';
+
 export function toReviewMessage(error: unknown): string {
   if (error instanceof MappingReviewClientError) {
     if (error.kind === 'transport') return REVIEW_TRANSPORT_MESSAGE;
     if (error.kind === 'contract') return REVIEW_CONTRACT_MESSAGE;
+    if (error.serverCode === 'MAPPING_REVIEW_PUBLISH_BLOCKED' && error.fields?.length === 0) {
+      return PUBLISH_RUNTIME_BLOCKED_MESSAGE;
+    }
     return getReviewErrorMessage(error.serverCode);
   }
   return REVIEW_GENERIC_MESSAGE;

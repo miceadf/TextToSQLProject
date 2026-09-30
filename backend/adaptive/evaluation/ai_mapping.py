@@ -283,6 +283,8 @@ def values_fit(transform: FieldTransform, values: list[str]) -> bool:
         return all(value in WEEKDAYS for value in values)
     if transform is FieldTransform.SLASH_FIRST_NUMERIC:
         return all(_SLASH_VALUE.fullmatch(value) for value in values)
+    if transform is FieldTransform.HHMM_TEXT_TO_HHMM:
+        return all(re.fullmatch(r"(?:[01]\d|2[0-3])[0-5]\d", value) for value in values)
     return True
 
 

@@ -161,6 +161,7 @@ const MESSAGES: Record<string, string> = {
   POSTGRES_REGISTRATION_SOURCE_UNAVAILABLE: 'PostgreSQL 연결에 실패했습니다. 서버 설정을 확인해 주세요.',
   POSTGRES_REGISTRATION_INSPECTION_FAILED: 'schema 구조를 읽지 못했습니다 (table이 없거나 권한이 없음).',
   POSTGRES_REGISTRATION_ALIAS_CONFLICT: '다른 값이나 다른 약어와 겹치는 표기가 있습니다.',
+  POSTGRES_REGISTRATION_ALIAS_LENGTH: '약어는 2~20자여야 합니다. 한 글자 표기는 뜻(표시)에 넣으세요.',
   POSTGRES_REGISTRATION_LIMIT_REACHED: '서버에 붙일 수 있는 DB 수를 넘었습니다.',
 };
 

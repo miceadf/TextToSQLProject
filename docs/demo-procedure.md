@@ -42,6 +42,27 @@
 
 단계 9~10은 smoke에서 확인한 결과다. 모델 출력은 매번 같다고 보장할 수 없다(temperature 0이어도 환경에 따라 달라질 수 있음).
 
+## 2-1. (선택) 다른 학교 DB 장면 (약 5분, Phase 8-17)
+
+모델이 레거시 DB에 묶이지 않는다는 것을 보여 주는 장면이다. 데이터는 모두 지어낸 합성 데이터다.
+
+준비(한 번만):
+1. 합성 DB DSN을 `SCHEMA_ADAPTIVE_SYNTHETIC_POSTGRES_DSN`에 두고 schema를 만든다. 이 DSN은 loopback, DB 이름 `schema_adaptive_synthetic`이어야 한다.
+   ```bash
+   python -m backend.adaptive.fixtures.other_school create
+   ```
+2. `backend/.env`에 `PG_SOURCE_OTHER_SCHOOL=<같은 DSN>`을 넣고 서버를 다시 켠다. 화면 연결 목록에 `other-school`이 보인다.
+
+| 단계 | 화면 조작 | 말할 요점 |
+|---|---|---|
+| 1 | 연결 `other-school`, schema `other_school`, ID `other-school`, Label `Other School` → **등록** | 이름이 `hg_nm`, `gm_nm`처럼 전혀 다르고, 요일은 `MON`, 시간은 `0900`이다. |
+| 2 | 검토: 13개 승인, 학기 → `gangjwa.hakgi_cd`, 교수명 → `gyosu.gs_nm` remap | AI가 처음 보는 이름에서도 대부분 맞게 골랐다. 대상 학년 `suggang_hangnyeon`은 쓰지 않는다. |
+| 3 | 값 사전: 학과 `소웨`·`전전`·`기공`, 학기 `10=1학기`·`20=2학기`, 요일 `MON=월요일` … | 약어와 코드의 뜻은 그 학교 관리자가 넣는다. |
+| 4 | **사전 적용해 게시** → DB 선택 | 강의 목록에서 주 2회 수업이 한 줄에 두 시간으로 보인다. |
+| 5 | "소웨 전공필수 과목 보여줘", "금요일 오전 수업 보여줘" | SQL 패널에 이 학교의 table 이름이 보인다. 시간은 `HH:MM`으로 바꿔 비교한다. |
+
+지우기: `python -m backend.adaptive.fixtures.other_school drop`, 그리고 `.schema-adaptive/postgres-registrations/other-school`·`.schema-adaptive/postgres-profiles/other-school`.
+
 ## 3. 되돌리기 (다시 시연하기 전)
 
 1. 서버를 끈다(Ctrl+C).
@@ -56,5 +77,6 @@
 
 - 업로드한 SQLite DB는 QueryIR 챗봇·값 사전을 아직 지원하지 않는다. 화면 등록의 주 경로는 PostgreSQL이다.
 - PostgreSQL 등록에는 버전 되돌리기와 test query 미리보기가 아직 없다.
-- 규칙 약어 후보에는 어색한 것도 섞인다. 모두 관리자 승인을 거친다.
+- 규칙 약어 후보에는 어색한 것도 섞인다. 모두 관리자 승인을 거친다. 한 글자 약어는 넣을 수 없다.
+- ontology에 없는 조건(예: "1학년 대상")은 모델이 다른 field에 끼워 넣어 0건이 나올 수 있다. "이해한 조건"에 그대로 보인다.
 - 챗봇 모델은 레거시 데이터로 fine-tuning된 7B 모델이다. 복합 조건(예: "오후" + 요일 + 학점)에서는 조건을 빠뜨릴 수 있고, SQL 패널로 확인할 수 있다.

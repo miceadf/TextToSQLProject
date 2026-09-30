@@ -28,6 +28,7 @@ MAX_LISTED_VALUES = 500
 MAX_OTHER_TEXT_VALUES = 5000
 AI_BATCH = 60
 MAX_ALIAS_LENGTH = 20
+ALIAS_LENGTH_REASON = "길이가 맞지 않음(2~20자)"
 REVIEW_REASON = "Phase 8-07 administrator-reviewed dictionary (not an L2 review)"
 _WORD = re.compile(r"[^\W_]+")
 
@@ -143,7 +144,7 @@ def check_alias(
     """(blocking reason, warning) for one alias of one stored value."""
     key = lookup_key(alias)
     if len(key) < 2 or len(alias) > MAX_ALIAS_LENGTH:
-        return "길이가 맞지 않음(2~20자)", None
+        return ALIAS_LENGTH_REASON, None
     for other_field, values in values_by_field.items():
         for value in values:
             if other_field == field and value == stored:

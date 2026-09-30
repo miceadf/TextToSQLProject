@@ -17,7 +17,7 @@ import {
   CATALOG_VIA_CHAT_MESSAGE,
   LEGACY_SELECTION_ID,
   STORAGE_KEY,
-  canonicalToCourse,
+  catalogToCourses,
   databaseLabel,
   isDatabaseId,
   readStoredDatabaseId,
@@ -377,7 +377,7 @@ export default function MainPage({
             keyword: keyword || undefined,
             signal: controller.signal,
           })
-          courses = catalog.items.map(canonicalToCourse)
+          courses = catalogToCourses(catalog.items)
         }
         if (disposed || !mountedRef.current || isStaleResponse(operationRef.current, operation)) return
         setAllCourses(courses)

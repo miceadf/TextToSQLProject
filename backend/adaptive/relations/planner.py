@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import deque
 from collections.abc import Iterable
+from functools import lru_cache
 
 from backend.adaptive.mapping.contracts import PublishedMappingProfile
 from backend.adaptive.relations.contracts import (
@@ -77,6 +78,14 @@ def plan_join_path(
         anchor=anchor,
         max_states=max_states,
     )
+    if len(solution_edge_sets) > 1:
+        # Phase 8-17: among equally short plans, the only one whose every FK
+        # joins tables holding the same or directly related ontology entities
+        # wins (a course's department, not its professor's department).
+        confirmed = _confirmed_relation_ids(graph, profile)
+        preferred = [edges for edges in solution_edge_sets if edges <= confirmed]
+        if len(preferred) == 1:
+            solution_edge_sets = preferred
     plans = [
         _build_plan(graph, anchor, required_tables, edge_ids)
         for edge_ids in solution_edge_sets
@@ -153,6 +162,45 @@ def _resolve_required_tables(
             field_tables=unknown_tables,
         )
     return sorted(set(mapped_tables.values()))
+
+
+@lru_cache(maxsize=1)
+def _ontology_relations() -> tuple[frozenset[str], frozenset[frozenset[str]]]:
+    """(entity names, related entity pairs) of the default ontology."""
+    from backend.adaptive.ontology import load_default_ontology
+
+    ontology = load_default_ontology()
+    entities = frozenset(entity.name for entity in ontology.entities)
+    pairs = frozenset(
+        frozenset((relation.source_entity, relation.target_entity))
+        for relation in ontology.relations
+    )
+    return entities, pairs
+
+
+def _confirmed_relation_ids(
+    graph: PhysicalRelationGraph, profile: PublishedMappingProfile
+) -> frozenset[str]:
+    """FKs joining two mapped tables whose entities are equal or directly related.
+
+    An FK touching a table without mapped fields, or a field outside the
+    ontology, is never confirmed.
+    """
+    entities, related = _ontology_relations()
+    hosted: dict[str, set[str]] = {}
+    for semantic_field, target in profile.fields.items():
+        hosted.setdefault(target.table, set()).add(semantic_field.split(".", 1)[0])
+    confirmed = set()
+    for relation in graph.relations:
+        source = hosted.get(relation.source_table)
+        target = hosted.get(relation.target_table)
+        if not source or not target or not (source | target) <= entities:
+            continue
+        if source & target or any(
+            frozenset((a, b)) in related for a in source for b in target
+        ):
+            confirmed.add(relation.relation_id)
+    return frozenset(confirmed)
 
 
 def _find_minimum_edge_sets(

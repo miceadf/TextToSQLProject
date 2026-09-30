@@ -60,6 +60,7 @@ MAX_JSON_BYTES = 8 * 1024 * 1024
 WEEKDAYS = frozenset("월화수목금토일")
 # Numbers may omit the leading zero ("1/.5/1" in the team's legacy data).
 _SLASH_VALUE = re.compile(r"^(?:\d+(?:\.\d+)?|\.\d+)(?:/(?:\d+(?:\.\d+)?|\.\d+))+$")
+_HHMM_VALUE = re.compile(r"^(?:[01]\d|2[0-3])[0-5]\d$")
 _SYSTEM_SCHEMAS = ("pg_catalog", "information_schema", "pg_toast")
 
 
@@ -564,6 +565,8 @@ def transform_fits(transform: FieldTransform, declared_type: str, data_type: Dat
         return bool(values) and all(value in WEEKDAYS for value in values)
     if transform is FieldTransform.SLASH_FIRST_NUMERIC:
         return bool(values) and all(_SLASH_VALUE.fullmatch(value) for value in values)
+    if transform is FieldTransform.HHMM_TEXT_TO_HHMM:
+        return bool(values) and all(_HHMM_VALUE.fullmatch(value) for value in values)
     return True  # TIME_TO_HHMM: the column type decides
 
 

@@ -198,7 +198,7 @@ describe('phase7-14 wiring', () => {
     assert.match(main, /SYNTHETIC_CATALOG_UNSUPPORTED/);
     assert.match(main, /catalogOnlyViaChat = catalogError === CATALOG_VIA_CHAT_MESSAGE/);
     // Target changes invalidate in-flight answers synchronously, on both paths.
-    assert.match(popup, /useLayoutEffect\(\(\) => \{\r?\n    if \(targetKeyRef\.current === targetKey\) return/);
+    assert.match(popup, /useLayoutEffect\(\(\) => \{\r?\n {4}if \(targetKeyRef\.current === targetKey\) return/);
     assert.equal((popup.match(/targetKeyRef\.current !== requestKey/g) ?? []).length >= 4, true);
   });
 });

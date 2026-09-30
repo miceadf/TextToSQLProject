@@ -136,6 +136,17 @@ def test_set_suggest_remove_and_conflicts(client_repo) -> None:  # noqa: F811
     assert "컴융" in stored_file.read_text(encoding="utf-8")
 
 
+def test_a_too_short_alias_is_not_reported_as_a_collision(client_repo) -> None:  # noqa: F811
+    client, _repo, _app, _executor = client_repo
+    _ready(client)
+    short = _set(client, "Schedule.day", "월", ["x"])
+    assert short.status_code == 400
+    assert short.json() == {"error": {"code": "POSTGRES_REGISTRATION_ALIAS_LENGTH"}}
+    assert _set(client, "Course.category", "교양", ["일반선택"]).json() == {
+        "error": {"code": "POSTGRES_REGISTRATION_ALIAS_CONFLICT"}
+    }
+
+
 def test_publish_applies_dictionaries_instead_of_transforms(client_repo) -> None:  # noqa: F811
     client, repo, app, _executor = client_repo
     _ready(client)
@@ -154,7 +165,7 @@ def test_publish_applies_dictionaries_instead_of_transforms(client_repo) -> None
 def test_publish_stops_when_a_stored_value_disappeared(client_repo, stored_values) -> None:  # noqa: F811
     client, repo, _app, _executor = client_repo
     _ready(client)
-    assert _set(client, "Course.category", "교양", ["교"]).status_code == 409  # too short is blocked
+    assert _set(client, "Course.category", "교양", ["교"]).status_code == 400  # too short is blocked (8-17: ALIAS_LENGTH)
     assert _set(client, "Course.category", "교양", ["교양과목"]).status_code == 200
     stored_values["category"] = ["전공(핵심)", "일반선택"]
     blocked = _review(client, {"action": "PUBLISH", "database_id": DB_ID, "published_by": "admin"})
