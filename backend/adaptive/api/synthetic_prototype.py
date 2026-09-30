@@ -654,6 +654,7 @@ def create_synthetic_clarification_prototype(
                     expected_ontology_version=_expected_ontology_version,
                     value_reader=value_reader,
                     mapping_proposer=None if mapping_model is None else _upload_proposer(mapping_model),
+                    alias_model=mapping_model,
                     adapter_factory=options.get("adapter_factory"),
                     executor_factory=options.get("executor_factory"),
                     connector=options.get("connector"),

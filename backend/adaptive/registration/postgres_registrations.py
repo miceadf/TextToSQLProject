@@ -23,7 +23,7 @@ import shutil
 import subprocess
 import tempfile
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -560,6 +560,7 @@ class PublishPlan:
     transforms: dict[str, FieldTransform]
     unsupported: tuple[str, ...]
     anchor_table: str | None
+    dictionaries: dict[str, Any] = field(default_factory=dict)
 
 
 def plan_publish(
@@ -569,8 +570,14 @@ def plan_publish(
     version: int,
     published_by: str,
     read_values: Callable[[str, str], list[str]],
+    dictionaries: dict[str, Any] | None = None,
 ) -> tuple[PublishPlan | None, list[str]]:
-    """The publishable mapping, or the fields that block it."""
+    """The publishable mapping, or the fields that block it.
+
+    A field with a value dictionary (Phase 8-07) gets no transform: the
+    runtime allows only one of the two per field.
+    """
+    dictionaries = dict(dictionaries or {})
     blocking = sorted(name for name, entry in draft.fields.items() if entry.decision is ReviewDecision.PENDING)
     if blocking:
         return None, blocking
@@ -589,6 +596,9 @@ def plan_publish(
             )
     if blocking or not mapped:
         return None, blocking or sorted(draft.fields)
+    stray = sorted(name for name in dictionaries if name not in mapped)
+    if stray:
+        return None, stray
     unsupported = tuple(sorted(name for name in draft.fields if name not in mapped))
     mapping = PublishedMappingProfile(
         database_id=draft.database_id,
@@ -600,12 +610,18 @@ def plan_publish(
         fields=mapped,
     )
     section = mapped.get("CourseOffering.section")
+    transforms = {
+        name: transform
+        for name, transform in decide_transforms(mapped, loaded.catalog, read_values).items()
+        if name not in dictionaries
+    }
     return (
         PublishPlan(
             mapping=mapping,
-            transforms=decide_transforms(mapped, loaded.catalog, read_values),
+            transforms=transforms,
             unsupported=unsupported,
             anchor_table=section.table if section is not None else None,
+            dictionaries=dictionaries,
         ),
         [],
     )
@@ -627,7 +643,9 @@ def profile_documents(plan: PublishPlan, manifest: PostgresRegistration) -> tupl
         "field_transforms": {name: transform.value for name, transform in sorted(plan.transforms.items())},
         "unsupported_fields": list(plan.unsupported),
         "anchor_table": plan.anchor_table,
-        "value_dictionaries": {},
+        "value_dictionaries": {
+            name: dictionary.model_dump(mode="json") for name, dictionary in sorted(plan.dictionaries.items())
+        },
     }
     profile_bytes = (json.dumps(profile, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
     return profile_bytes, mapping_bytes
@@ -644,7 +662,7 @@ def runtime_profile(plan: PublishPlan, manifest: PostgresRegistration, source: P
         field_transforms=plan.transforms,
         unsupported_fields=list(plan.unsupported),
         anchor_table=plan.anchor_table,
-        value_dictionaries={},
+        value_dictionaries=dict(plan.dictionaries),
     )
 
 
@@ -656,6 +674,7 @@ def publish_review(
     source: PostgresSource,
     validate: Callable[[Any], Any],
     read_values: Callable[[str, str], list[str]],
+    dictionaries: dict[str, Any] | None = None,
 ) -> tuple[Any, list[str]]:
     """(validated runtime context or ``None``, blocking fields).
 
@@ -670,7 +689,12 @@ def publish_review(
     previous = load_published(repository_root=repository_root, database_id=database_id)
     version = 1 if previous is None else previous.mapping_version + 1
     plan, blocking = plan_publish(
-        loaded, draft, version=version, published_by=published_by, read_values=read_values
+        loaded,
+        draft,
+        version=version,
+        published_by=published_by,
+        read_values=read_values,
+        dictionaries=dictionaries,
     )
     if plan is None:
         return None, blocking

@@ -153,6 +153,8 @@ const MESSAGES: Record<string, string> = {
   POSTGRES_REGISTRATION_REGISTRATION_CONFLICT: '이미 사용 중인 Database ID입니다.',
   POSTGRES_REGISTRATION_SOURCE_UNAVAILABLE: 'PostgreSQL 연결에 실패했습니다. 서버 설정을 확인해 주세요.',
   POSTGRES_REGISTRATION_INSPECTION_FAILED: 'schema 구조를 읽지 못했습니다 (table이 없거나 권한이 없음).',
+  POSTGRES_REGISTRATION_ALIAS_CONFLICT: '다른 값이나 다른 약어와 겹치는 표기가 있습니다.',
+  POSTGRES_REGISTRATION_LIMIT_REACHED: '서버에 붙일 수 있는 DB 수를 넘었습니다.',
 };
 
 export function toPostgresMessage(error: unknown): string {
@@ -162,4 +164,165 @@ export function toPostgresMessage(error: unknown): string {
     return (error.serverCode && MESSAGES[error.serverCode]) || '처리 중 오류가 발생했습니다.';
   }
   return '처리 중 오류가 발생했습니다.';
+}
+
+// --- Phase 8-07: value dictionaries (code tables and abbreviations) -------------------------
+
+export const POSTGRES_DICTIONARIES_PATH = '/api/adaptive/v1/postgres/dictionaries';
+export const POSTGRES_DICTIONARIES_VERSION = 'postgres-dictionaries-v1';
+const FIELD_REF = /^[A-Z][A-Za-z]*\.[a-z_]+$/;
+const MAX_VALUE = 200;
+
+export interface DictionaryEntry {
+  stored: string;
+  label: string;
+  aliases: string[];
+}
+
+export interface DictionaryField {
+  field: string;
+  label: string;
+  values: string[] | null;
+  entries: DictionaryEntry[];
+}
+
+export interface DictionaryDetail {
+  fields: DictionaryField[];
+  warnings: { alias: string; warning: string }[];
+}
+
+export interface AliasCandidate {
+  stored: string;
+  alias: string;
+  source: 'RULE' | 'AI';
+  blocked: string | null;
+  warning: string | null;
+}
+
+function isText(value: unknown, max = MAX_VALUE): value is string {
+  return typeof value === 'string' && value.length >= 1 && value.length <= max;
+}
+
+function parseEntry(value: unknown): DictionaryEntry | null {
+  if (!isPlainObject(value) || !hasExactKeys(value, ['stored', 'label', 'aliases'])) return null;
+  const { stored, label, aliases } = value;
+  if (!isText(stored) || !isText(label) || !Array.isArray(aliases)) return null;
+  if (!aliases.every((alias) => isText(alias))) return null;
+  return { stored, label, aliases: aliases as string[] };
+}
+
+export function parseDictionaryDetail(value: unknown, databaseId: string): DictionaryDetail | null {
+  if (!isPlainObject(value)) return null;
+  const withWarnings = Object.prototype.hasOwnProperty.call(value, 'warnings');
+  const keys = ['version', 'database_id', 'fields', ...(withWarnings ? ['warnings'] : [])];
+  if (!hasExactKeys(value, keys)) return null;
+  if (value['version'] !== POSTGRES_DICTIONARIES_VERSION || value['database_id'] !== databaseId) return null;
+  if (!Array.isArray(value['fields'])) return null;
+  const fields: DictionaryField[] = [];
+  for (const item of value['fields']) {
+    if (!isPlainObject(item) || !hasExactKeys(item, ['field', 'label', 'values', 'entries'])) return null;
+    const { field, label, values, entries } = item;
+    if (typeof field !== 'string' || !FIELD_REF.test(field) || !isText(label, 100)) return null;
+    if (values !== null && (!Array.isArray(values) || values.length > 500 || !values.every((v) => isText(v)))) return null;
+    if (!Array.isArray(entries)) return null;
+    const parsedEntries: DictionaryEntry[] = [];
+    for (const entry of entries) {
+      const parsed = parseEntry(entry);
+      if (parsed === null) return null;
+      parsedEntries.push(parsed);
+    }
+    fields.push({ field, label, values: values as string[] | null, entries: parsedEntries });
+  }
+  const warnings: { alias: string; warning: string }[] = [];
+  if (withWarnings) {
+    if (!Array.isArray(value['warnings'])) return null;
+    for (const item of value['warnings']) {
+      if (!isPlainObject(item) || !hasExactKeys(item, ['alias', 'warning'])) return null;
+      if (!isText(item['alias']) || !isText(item['warning'], 500)) return null;
+      warnings.push({ alias: item['alias'] as string, warning: item['warning'] as string });
+    }
+  }
+  return { fields, warnings };
+}
+
+export function parseCandidates(value: unknown, databaseId: string, field: string): AliasCandidate[] | null {
+  if (!isPlainObject(value) || !hasExactKeys(value, ['version', 'database_id', 'field', 'ai_used', 'candidates'])) return null;
+  if (value['version'] !== POSTGRES_DICTIONARIES_VERSION || value['database_id'] !== databaseId) return null;
+  if (value['field'] !== field || typeof value['ai_used'] !== 'boolean' || !Array.isArray(value['candidates'])) return null;
+  const out: AliasCandidate[] = [];
+  for (const item of value['candidates']) {
+    if (!isPlainObject(item) || !hasExactKeys(item, ['stored', 'alias', 'source', 'blocked', 'warning'])) return null;
+    const { stored, alias, source, blocked, warning } = item;
+    if (!isText(stored) || !isText(alias) || (source !== 'RULE' && source !== 'AI')) return null;
+    if (blocked !== null && !isText(blocked, 500)) return null;
+    if (warning !== null && !isText(warning, 500)) return null;
+    out.push({ stored, alias, source, blocked: blocked as string | null, warning: warning as string | null });
+  }
+  return out;
+}
+
+async function postDictionary(fetchFn: PgFetchLike, body: Record<string, unknown>, signal?: AbortSignal) {
+  return request(fetchFn, POSTGRES_DICTIONARIES_PATH, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal,
+  });
+}
+
+export async function fetchDictionaries(fetchFn: PgFetchLike, databaseId: string, options?: { signal?: AbortSignal }) {
+  if (!isDatabaseId(databaseId)) throw new PostgresRegistrationClientError('contract');
+  const url = `${POSTGRES_DICTIONARIES_PATH}?database_id=${encodeURIComponent(databaseId)}`;
+  const parsed = parseDictionaryDetail(await request(fetchFn, url, { method: 'GET', signal: options?.signal }), databaseId);
+  if (parsed === null) throw new PostgresRegistrationClientError('contract');
+  return parsed;
+}
+
+export async function setDictionaryEntry(
+  fetchFn: PgFetchLike,
+  input: { databaseId: string; field: string; stored: string; label: string; aliases: string[]; reviewer: string },
+): Promise<DictionaryDetail> {
+  const payload = await postDictionary(fetchFn, {
+    action: 'SET',
+    database_id: input.databaseId,
+    field: input.field,
+    stored: input.stored,
+    label: input.label,
+    aliases: input.aliases,
+    reviewer: input.reviewer,
+  });
+  const parsed = parseDictionaryDetail(payload, input.databaseId);
+  if (parsed === null) throw new PostgresRegistrationClientError('contract');
+  return parsed;
+}
+
+export async function removeDictionaryEntry(
+  fetchFn: PgFetchLike,
+  input: { databaseId: string; field: string; stored: string; reviewer: string },
+): Promise<DictionaryDetail> {
+  const payload = await postDictionary(fetchFn, {
+    action: 'REMOVE',
+    database_id: input.databaseId,
+    field: input.field,
+    stored: input.stored,
+    reviewer: input.reviewer,
+  });
+  const parsed = parseDictionaryDetail(payload, input.databaseId);
+  if (parsed === null) throw new PostgresRegistrationClientError('contract');
+  return parsed;
+}
+
+export async function suggestAliases(
+  fetchFn: PgFetchLike,
+  input: { databaseId: string; field: string; ai: boolean },
+): Promise<AliasCandidate[]> {
+  const payload = await postDictionary(fetchFn, {
+    action: 'SUGGEST',
+    database_id: input.databaseId,
+    field: input.field,
+    ai: input.ai,
+  });
+  const parsed = parseCandidates(payload, input.databaseId, input.field);
+  if (parsed === null) throw new PostgresRegistrationClientError('contract');
+  return parsed;
 }

@@ -56,7 +56,10 @@ class _Cursor:
             self.rows = [("public",), ("campus",), ("bad-name",)]
             return
         column = text.split('"')[1] if '"' in text else ""
-        self.rows = [(value,) for value in VALUES.get(column, ["x"])]
+        rows = VALUES.get(column, ["x"])
+        if "ANY(" in text:  # exact presence check (Phase 8-07)
+            rows = [value for value in rows if value in params[0]]
+        self.rows = [(value,) for value in rows]
 
     def fetchall(self) -> list[Any]:
         return self.rows

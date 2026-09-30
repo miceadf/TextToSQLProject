@@ -338,15 +338,30 @@ def repair_output(
     *,
     index: ValueIndex | None = None,
     hints: list[ValueHint] | None = None,
+    available_fields: list[str] | None = None,
 ) -> Any:
-    """Closed repairs before QueryIR validation; anything unexpected is left as is."""
+    """Closed repairs before QueryIR validation; anything unexpected is left as is.
+
+    Phase 8-07: a select wildcard (``Schedule.*``) of a known entity means
+    "every column"; the chat replaces ``select`` with its fixed card anyway,
+    so wildcards are dropped (an empty select falls back to the first
+    available field).
+    """
     if not isinstance(output, dict):
         return output
     known = set(ontology.fields)
     by_word = _field_repairs(ontology)
+    entities = {entity.name for entity in ontology.entities}
     repaired = dict(output)
     if isinstance(output.get("select"), list):
-        repaired["select"] = [_repair_ref(ref, known, by_word) for ref in output["select"]]
+        select = [
+            _repair_ref(ref, known, by_word)
+            for ref in output["select"]
+            if not (isinstance(ref, str) and ref.endswith(".*") and ref[:-2] in entities)
+        ]
+        if not select and output["select"] and available_fields:
+            select = [available_fields[0]]
+        repaired["select"] = select
     filters = output.get("filters")
     if not isinstance(filters, list):
         return repaired

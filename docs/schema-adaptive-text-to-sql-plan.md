@@ -686,7 +686,7 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 
 - [ ] DB 등록·스캔 화면
 - [ ] mapping proposal 검토 화면
-- [ ] 코드값·관계 교정 화면
+- [x] 코드값 교정 화면(Phase 8-07 축소판: PostgreSQL 등록의 값 사전 편집·약어 후보·충돌 검사, ADR-082; 관계 교정은 미포함)
 - [x] test query 및 결과 미리보기(Phase 8-04: 게시·활성 private 등록에서 서버 고정 test query 5개만, 기존 실행 경로·최대 5행·결과 hash; 합성 SQLite만 검증)
 - [x] mapping publish·rollback 화면(Phase 8-01: 버전 이력·이전 immutable 버전 재활성화, 합성 SQLite만 검증)
 - [x] schema fingerprint 비교(Phase 8-02: 등록 간 읽기 전용 비교·활성 mapping 영향, 합성 SQLite만 검증; PostgreSQL 연결은 순수 함수만 공유)
@@ -696,6 +696,8 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 - [x] Phase 8-09 AI mapping 제안(`ai-mapping-v1.1`: 로컬 `qwen2.5-coder:7b-instruct`, schema 제한 출력, runtime 규칙 검증기, 분반 table anchor 규칙)과 규칙 기반 비교(질문 AI 223/240, 규칙 205, 규칙+anchor 206; 값 사전 0/3·의미 함정 0/2는 미해결; 합성·L1/L3 전)
 - [x] Phase 8-10 AI mapping 제안 v2(저장 값 일치 검사, 값 사전 전용 단계, 관리자 column 설명 `admin-notes-v1`·코드표 직접 사전, 보류 변형 6개·사전 등록 hash; 기존 세트 223→232→235/240, 보류 세트 104→116/120; 자연어 설명은 의미 함정 미해결)
 - [ ] Phase 8-11 DB별 ontology 확장 field와 매개변수형 변환(공통 ontology는 팀 관리, DB별 확장은 관리자가 데이터로 선언, 변환은 닫힌 목록을 매개변수형으로 확장; 첫 사례 이론·실습 시간; 챗봇 응답·화면의 field 목록 일반화) — 프로토타입 이후로 보류(ADR-078)
+- [x] Phase 8-07 축소판 값 사전 편집(코드표·약어, 규칙/AI 약어 후보, 충돌 막음·경고, 큰 column 정확 일치 확인, 게시 시 저장 값 재확인·변환 제외, 챗봇 select 와일드카드 제거; live `weekday-english` 0→2건·브라우저 확인; ADR-082)
+- [ ] 후속: 업로드 SQLite DB의 부분 게시·변환·값 사전·QueryIR 챗봇, PostgreSQL 등록의 버전 되돌리기·test query·대기 등록 목록
 - [x] Phase 8-15 화면에서 PostgreSQL 등록(서버 소유 연결 목록 `DATABASE_URL`·`PG_SOURCE_*`, schema 선택, 규칙/AI 제안, 같은 검토 API의 PostgreSQL 분기와 `IGNORE`, 게시 때 변환·기준 table·미지원 field 고정 규칙 결정, runtime 검증 뒤 profile 쌍 저장, 재시작 없이 추가하는 `LivePostgresContexts`, 재시작 시 재로드; 실제 PostgreSQL smoke 2개·브라우저 확인; ADR-081)
 - [x] Phase 8-14 챗봇 실행 SQL 표시 개발 옵션(executor가 받은 문장 + bound 값 literal 보기용, 성공 답에만 `sql`, 옵션 끔이면 응답 불변, CLI `--show-sql`·launcher 기본 켬 `SHOW_SQL=0`; ADR-080)
 - [ ] 후속: 공통 약어 묶음(대상 값이 있을 때만 적용), 이해 실패 질문에서 약어 후보 제안(ADR-080)
@@ -722,6 +724,7 @@ Phase 8 분할 계획(상세는 [`docs/prompts/phase8-01-mapping-version-rollbac
 4d. 8-13 챗봇 값 힌트(완료, ADR-079; 사용자 요청으로 8-07보다 먼저).
 4e. 8-14 챗봇 실행 SQL 표시(완료, ADR-080).
 4f. 8-15 화면에서 PostgreSQL 등록(완료, ADR-081; 8-07 검토 화면을 두 DB 종류 공통으로 만들기 위해 먼저 함).
+4g. 8-07 축소판 값 사전 편집(완료, ADR-082).
 5a. 8-07 축소판에 약어 입력·규칙/AI 약어 후보·충돌 검사·관리자 승인과 업로드 DB의 QueryIR 챗봇 연결을 포함한다(ADR-080).
 5. 8-07 관리자 화면 통합 축소판(검토·코드표→값 사전·test query 미리보기·버전; 업로드 DB 변환·값 사전·부분 게시 포함)과 처음부터 끝까지 browser smoke·시연 절차.
 6. prompt·field 별칭 개선은 L1 질문 세트 확보 뒤.
@@ -2069,6 +2072,20 @@ SQLite DB 입력
 - 순서 판단: 8-15를 8-07보다 먼저 했다. 8-07 검토 화면(코드표·약어·변환 선택·부분 게시)을 SQLite·PostgreSQL 공통으로 한 번에 만들기 위해서다.
 - 한계: 값 사전 입력, 버전 되돌리기, test query, view 등록은 8-07 이후다.
 
+### ADR-082: 값 사전은 관리자가 화면에서 편집하고, 약어 후보는 규칙·AI가 내되 충돌 검사와 승인을 거쳐 게시 때 적용한다
+
+- 날짜: 2026-09-30
+- 상태: 채택(사용자 결정: 8-07 진행, 약어는 자동 후보 + 관리자 승인 ADR-080)
+- 결정:
+  - 범위: 화면 등록 PostgreSQL DB의 코드표(`stored`→`label`)와 약어(`aliases`)를 등록 폴더의 `dictionaries.json`에서 편집하고, 게시 때 profile v4 `value_dictionaries`로 넣는다.
+  - 편집 대상은 runtime 규칙과 같다: 승인·재지정된 문자열 field, text column, 식별 field 제외. 사전이 있는 field에는 변환을 붙이지 않는다.
+  - 후보는 한국어 공통 규칙(2글자 묶음의 첫 글자)과, 요청할 때만 부르는 로컬 AI(schema 제한 출력)로 만든다. 후보는 저장하지 않는다.
+  - 충돌 검사: 다른 저장 값·단어 조각·다른 항목 표기와 같으면 막는다. 다른 text 값 속에 들어 있으면 경고한다. 목록에 없는 큰 column은 정확 일치 조회로 확인한다.
+  - 게시 때 저장 값 존재를 다시 확인한다. 확인할 수 없으면 막는다.
+  - 챗봇 보정에 알려진 개체의 select 와일드카드 제거를 더했다. select는 고정 카드로 바뀌므로 결과는 달라지지 않는다.
+- 이유: 코드값과 약어는 규칙으로 알 수 없는 DB별 지식이다(ADR-079). 관리자 입력을 구조화하고 기계적으로 검사해야 확실히 반영된다(8-10 결론).
+- 한계: SQLite 업로드 DB는 아직 대상이 아니다. 규칙 후보에는 어색한 것도 섞인다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -2325,3 +2342,4 @@ SQLite DB 입력
 - 2026-09-30 Phase 8-13 챗봇 값 힌트 완료(ADR-079). 새 모듈 `backend/adaptive/api/value_hints.py`(값 목록·질문 검사·출력 보정)와 `backend/adaptive/harness/postgres_values.py`(읽기 전용 DISTINCT reader, 너무 많음/실패 구분)를 추가했다. `OllamaQueryModel`은 힌트가 있을 때만 Context 다음에 힌트 한 줄을 넣고, 힌트가 없으면 prompt가 이전과 같다. 챗봇은 힌트를 넣은 모델 호출 1회 뒤 보정하고, 기존 검증 경로를 모두 거친다. 레거시 약어(`컴융`·`컴융부`, `전핵` 등 7개)를 레거시 profile 값 사전으로 옮겼다. 뺀 것은 `전기`·`인공지능`·`컴공`이다. 두 private profile은 다시 썼고 smoke를 통과했다. 결과: 새 질문 12개에서 도입 전 3 → 보정만 6 → 힌트+보정 12, 약어 데이터 제외 7. 7-15 30문항에서 해석 범위 수용 가능 15 → 19(레거시 17), 해석 범위 퇴보 없음. `gpt-6-luna` high review-only 지적 6건을 재현했다. 실패 캐시 영구화와 200자 초과 힌트로 인한 챗봇 실패, 이 2건을 고쳤다. field 보정의 상시 동작, 별칭 힌트 유지, 포함 검색 정책(7-16), prompt 속 DB 값의 영향은 결정·한계로 기록했다. 결과는 `docs/phase8-13-chat-value-hints-results-2026-09-30.md`에 두었다. 전체 실행에서 새 테스트가 DB driver를 먼저 import해 import 격리 테스트가 깨진 것을 찾아, reader가 식별자를 직접 quote하고 driver는 연결할 때만 쓰도록 고쳤다. 관련 테스트(값 힌트 35개 포함), 전체 pytest 1629개·6 skip·610 subtests, compileall, diff check 통과. legacy DB는 읽기만 했다. ADR-079 추가
 - 2026-09-30 Phase 8-14 챗봇 실행 SQL 표시 완료(ADR-080, 사용자 결정). `chat_query.py`는 executor가 받은 compile 결과를 기록하고, 옵션이 켜져 있으면 bound 값을 SQL literal로 채운 보기용 문장을 성공 답의 `sql`에 넣는다. literal 규칙: 문자열 `'...'`, 역슬래시가 있으면 `E'...'`, 숫자, `TRUE`/`FALSE`, `%%`→`%`. 길이 상한은 UTF-16 기준 20,000이다. `synthetic_prototype --show-sql`, dev launcher 기본 켬(`SHOW_SQL=0`으로 끔, 상태 `chat_sql`). frontend는 성공 응답에서만 선택 key `sql`을 받고, 기존 SQL 패널에 "Executed SQL (QueryIR · 값은 보기용으로 채워 넣음)"로 보여 준다. live 확인에서 `컴융 전공`은 `dept_name = '공과대학 컴퓨터융합학부' AND category LIKE '%전공%'`로 나왔다. "월요일 오후 3학점 교양"에서는 모델이 오후 조건을 빠뜨린 것이 SQL로 드러났다. `gpt-6-luna` high review-only 지적 2건을 재현·수정했다. 역슬래시 값 표기(`E''`)와 길이 계산 단위(UTF-16)다. DB별 약어 방향(자동 후보 + 관리자 승인, 후속 공통 묶음·사용 기록 제안)을 로드맵에 넣었다. SQL 표시 테스트 10개, frontend Node 94개·ESLint·tsc·vite build, 전체 pytest 1639개·6 skip·610 subtests, compileall, diff check 통과. ADR-080 추가
 - 2026-09-30 Phase 8-15 화면에서 PostgreSQL 등록 완료(ADR-081, 사용자 결정: 서버 연결 목록). 새 모듈: `backend/adaptive/registration/postgres_registrations.py`(연결·등록·검토·게시 계획·profile 쌍), `backend/adaptive/api/postgres_registration.py`(연결·schema·등록 route, 검토 분기, 실행 중 추가). `LivePostgresContexts`는 router·챗봇·목록·clarification loader가 같은 참조로 보고, 목록은 게시된 PostgreSQL DB를 함께 보여 준다. 검토에 `IGNORE`를 추가했다(SQLite 게시 조건은 불변). dev launcher는 `PG_SOURCE_*`를 읽고, 게시된 등록을 재시작 때 다시 붙인다(연결이 없으면 `SOURCE_MISSING`). 화면: "DB 변경" 창에 PostgreSQL 등록 영역, 검토 패널에 "이 DB에 없음". 창에 최대 높이·스크롤을 넣었다. 실제 PostgreSQL smoke 2개(legacy-like, credits-slash; 임시 schema 생성·삭제)와 브라우저 확인(레거시 `public` 등록 → AI 제안 → 검토 시작, 확인 뒤 파일 삭제)을 했다. `gpt-6-luna` high review-only 지적 4건을 재현·수정했다: clarification loader 공유, DB 수 상한, profile 쌍 원자성, 목록 스냅샷. 결과는 `docs/phase8-15-postgres-registration-results-2026-09-30.md`에 두었다. PostgreSQL 등록 테스트 25개, frontend Node 99개·ESLint·tsc·vite build, 전체 pytest 1664개·6 skip·610 subtests, compileall, diff check 통과. legacy DB는 읽기만 했다. ADR-081 추가
+- 2026-09-30 Phase 8-07 축소판 값 사전 편집 완료(ADR-082). 새 모듈 `backend/adaptive/registration/postgres_dictionaries.py`(저장·편집 대상·규칙/AI 후보·충돌 검사)와 `/api/adaptive/v1/postgres/dictionaries`(GET, POST SET/REMOVE/SUGGEST)를 추가했다. 게시가 사전을 적용하고 저장 값을 다시 확인한다. reader에 정확 일치 확인 `present`를 더했다. 화면에 `ValueDictionaryPanel`을 추가했다: field·저장 값 선택, 뜻·약어 입력, 규칙/규칙+AI 후보, 저장 전 게시 차단, 새로고침. 챗봇 보정에 select 와일드카드 제거를 더했다. live(`weekday-english` 임시 schema): "월요일 수업" 사전 없이 0건 → 코드표 게시 후 2건. 브라우저에서 레거시 `public` 등록 → 학과명 승인 → `컴융` 저장·규칙 후보까지 확인했다. 임시 파일은 지웠다. `gpt-6-luna` high review-only 지적 6건을 재현·수정했다: 큰 column 존재 확인, 큰 column 충돌, 편집 대상에서 빠진 항목 삭제, 후보 field 기억, 저장 전 게시 차단, 검토자 길이. 결과는 `docs/phase8-07-value-dictionary-editor-results-2026-09-30.md`에 두었다. 값 사전 테스트 24개, frontend Node 103개·ESLint·tsc·vite build, 전체 pytest 1691개·6 skip·610 subtests, compileall, diff check 통과. legacy DB는 읽기만 했다. ADR-082 추가

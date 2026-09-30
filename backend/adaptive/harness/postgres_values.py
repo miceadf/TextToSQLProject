@@ -61,6 +61,41 @@ class PostgresDistinctValueReader:
             raise ValueError("invalid reader configuration")
         self._configs = {**self._configs, database_id: config}
 
+    def present(self, database_id: str, table: str, column: str, values: list[str]) -> set[str] | None:
+        """Phase 8-07: which of these exact values the column holds (``None`` = unavailable)."""
+        config = self._configs.get(database_id)
+        if config is None or not isinstance(values, list) or not 1 <= len(values) <= 64:
+            return None
+        if not all(isinstance(value, str) for value in values):
+            return None
+        connection = None
+        try:
+            quoted = _quote(column)
+            query = (
+                f"SELECT DISTINCT {quoted} FROM {_quote(config.schema)}.{_quote(table)} "
+                f"WHERE {quoted} = ANY(%s)"
+            )
+            connection = self._connector(config)
+            set_encoding = getattr(connection, "set_client_encoding", None)
+            if callable(set_encoding):
+                set_encoding("UTF8")
+            cursor = connection.cursor()
+            cursor.execute(query, (list(values),))
+            rows = cursor.fetchall()
+        except Exception:
+            return None
+        finally:
+            if connection is not None:
+                try:
+                    connection.rollback()
+                except Exception:
+                    pass
+                try:
+                    connection.close()
+                except Exception:
+                    pass
+        return {row[0] for row in rows if isinstance(row, (tuple, list)) and len(row) == 1 and isinstance(row[0], str)}
+
     def read(self, database_id: str, table: str, column: str, limit: int) -> Any:
         config = self._configs.get(database_id)
         if config is None or not isinstance(limit, int) or not 1 <= limit <= 5000:

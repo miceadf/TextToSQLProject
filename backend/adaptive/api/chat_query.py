@@ -322,7 +322,13 @@ def answer_chat_query(
         ) from None
 
     try:
-        output = repair_output(output, _domain_ontology(), index=index, hints=hints)
+        output = repair_output(
+            output,
+            _domain_ontology(),
+            index=index,
+            hints=hints,
+            available_fields=[field for field in CANONICAL_SELECT if field in mapping.fields],
+        )
     except Exception:
         pass  # repairs are optional; validation below decides
     try:

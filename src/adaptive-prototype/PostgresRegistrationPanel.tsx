@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import MappingReviewPanel from './MappingReviewPanel.tsx';
+import ValueDictionaryPanel from './ValueDictionaryPanel.tsx';
 import {
   fetchPostgresSchemas,
   fetchPostgresSources,
@@ -182,6 +183,7 @@ export default function PostgresRegistrationPanel({
             table은 게시할 때 서버가 정합니다.
           </div>
           <MappingReviewPanel key={result.database_id} databaseId={result.database_id} onPublished={() => onPublished?.()} />
+          <ValueDictionaryPanel key={`dictionary-${result.database_id}`} databaseId={result.database_id} onPublished={() => onPublished?.()} />
         </div>
       ) : null}
     </fieldset>

@@ -21,12 +21,15 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
+from ..registration import postgres_dictionaries as dictionaries_store
 from ..registration import postgres_registrations as pg
 from .registration_upload import _summarize_mapping, _summarize_schema
 
 SOURCES_PATH = "/api/adaptive/v1/postgres/sources"
 SCHEMAS_PATH = "/api/adaptive/v1/postgres/schemas"
 REGISTER_PATH = "/api/adaptive/v1/postgres/registrations"
+DICTIONARIES_PATH = "/api/adaptive/v1/postgres/dictionaries"
+DICTIONARIES_VERSION = "postgres-dictionaries-v1"
 SOURCES_VERSION = "postgres-sources-v1"
 REGISTER_VERSION = "private-postgres-registration-v1"
 _MAX_BODY_BYTES = 16 * 1024
@@ -37,6 +40,8 @@ _STATUS = {
     "REGISTRATION_CONFLICT": 409,
     "SOURCE_UNAVAILABLE": 502,
     "INSPECTION_FAILED": 502,
+    "LIMIT_REACHED": 409,
+    "ALIAS_CONFLICT": 409,
 }
 
 
@@ -64,6 +69,7 @@ class PostgresRegistrationService:
         max_databases: int = 8,
         value_reader: Any | None = None,
         mapping_proposer: Callable[..., Any] | None = None,
+        alias_model: Callable[[str, dict[str, Any]], Any] | None = None,
         adapter_factory: Callable[[str, Any], Any] | None = None,
         executor_factory: Callable[[str, Any], Any] | None = None,
         connector: Callable[[Any], Any] | None = None,
@@ -76,6 +82,7 @@ class PostgresRegistrationService:
         self._ontology_version = int(expected_ontology_version)
         self._reader = value_reader
         self._proposer = mapping_proposer
+        self._alias_model = alias_model
         self._adapter_factory = adapter_factory
         self._executor_factory = executor_factory
         self._connector = connector
@@ -275,6 +282,24 @@ class PostgresRegistrationService:
             values = reader.read(database_id, table, column, pg.TRANSFORM_SAMPLE_LIMIT)
             return [value for value in values if isinstance(value, str)] if isinstance(values, list) else []
 
+        # Phase 8-07: the edited dictionaries, re-checked against the stored values.
+        draft = pg.load_draft(repository_root=root, database_id=database_id)
+        entries = dictionaries_store.load_entries(repository_root=root, database_id=database_id)
+        editable = dictionaries_store.editable_fields(loaded, draft)
+        stale = []
+        for field_name, field_entries in entries.items():
+            if field_name not in editable:
+                stale.append(field_name)
+                continue
+            table, column = editable[field_name]
+            stored = [entry.stored for entry in field_entries]
+            present = reader.present(database_id, table, column, stored)
+            if present is None or set(stored) - present:
+                stale.append(field_name)  # missing, or not verifiable now
+        if stale:
+            return _publish_blocked_response(sorted(stale))
+        value_dictionaries = dictionaries_store.build_dictionaries(entries, published_by)
+
         def validate(profile: Any) -> Any:
             return build_validated_contexts(
                 [profile],
@@ -290,6 +315,7 @@ class PostgresRegistrationService:
             source=source,
             validate=validate,
             read_values=read_values,
+            dictionaries=value_dictionaries,
         )
         if context is None:
             return _publish_blocked_response(blocking)
@@ -303,6 +329,199 @@ class PostgresRegistrationService:
             "mapping_version": record.mapping_version if record is not None else 1,
             "registry_eligible": True,
         })
+
+
+    # -- value dictionaries (Phase 8-07) ---------------------------------------------------
+
+    def _dictionary_context(self, database_id: Any) -> tuple[Any, Any, dict[str, tuple[str, str]], Any]:
+        if not isinstance(database_id, str):
+            raise pg.PostgresRegistrationError("INVALID_INPUT")
+        root = self.repository_root
+        loaded = pg.load_postgres_registration(repository_root=root, database_id=database_id)
+        draft = pg.load_draft(repository_root=root, database_id=database_id)
+        if draft is None:
+            raise pg.PostgresRegistrationError("NOT_FOUND")
+        source = self.source(loaded.manifest.source_id)
+        if source is None:
+            raise pg.PostgresRegistrationError("SOURCE_UNAVAILABLE")
+        reader = self._local_reader(database_id, source.config(loaded.manifest.postgres_schema))
+        return loaded, draft, dictionaries_store.editable_fields(loaded, draft), reader
+
+    def _values(self, reader: Any, database_id: str, table: str, column: str, limit: int) -> list[str] | None:
+        values = reader.read(database_id, table, column, limit)
+        return [value for value in values if isinstance(value, str)] if isinstance(values, list) else None
+
+    def dictionaries(self, database_id: Any) -> dict[str, Any]:
+        if not isinstance(database_id, str):
+            raise pg.PostgresRegistrationError("INVALID_INPUT")
+        pg.load_postgres_registration(repository_root=self.repository_root, database_id=database_id)
+        if pg.load_draft(repository_root=self.repository_root, database_id=database_id) is None:
+            # Review not started: nothing is editable yet.
+            return {"version": DICTIONARIES_VERSION, "database_id": database_id, "fields": []}
+        _loaded, _draft, editable, reader = self._dictionary_context(database_id)
+        entries = dictionaries_store.load_entries(repository_root=self.repository_root, database_id=database_id)
+        from ..ontology import load_default_ontology
+
+        labels = {name: field.label for name, field in load_default_ontology().fields.items()}
+        fields = []
+        for name, (table, column) in editable.items():
+            values = self._values(reader, database_id, table, column, dictionaries_store.MAX_LISTED_VALUES)
+            fields.append({
+                "field": name,
+                "label": labels.get(name, name),
+                "values": values,
+                "entries": [entry.model_dump(mode="json") for entry in entries.get(name, [])],
+            })
+        for name in sorted(set(entries) - set(editable)):
+            # No longer editable (remapped or ignored): shown so it can be removed.
+            fields.append({
+                "field": name,
+                "label": labels.get(name, name),
+                "values": None,
+                "entries": [entry.model_dump(mode="json") for entry in entries[name]],
+            })
+        return {"version": DICTIONARIES_VERSION, "database_id": database_id, "fields": fields}
+
+    def dictionary_action(self, body: dict[str, Any]) -> dict[str, Any]:
+        action = body.get("action")
+        allowed = {
+            "SET": {"action", "database_id", "field", "stored", "label", "aliases", "reviewer"},
+            "REMOVE": {"action", "database_id", "field", "stored", "reviewer"},
+            "SUGGEST": {"action", "database_id", "field", "ai"},
+        }
+        if action not in allowed or set(body) != allowed[action]:
+            raise pg.PostgresRegistrationError("INVALID_INPUT")
+        database_id = body["database_id"]
+        loaded, _draft, editable, reader = self._dictionary_context(database_id)
+        field_name = body["field"]
+        reviewer = body.get("reviewer", "admin")
+        if not isinstance(reviewer, str) or not 1 <= len(reviewer.strip()) <= 64 or len(reviewer) > 64:
+            raise pg.PostgresRegistrationError("INVALID_INPUT")
+        if action == "REMOVE" and isinstance(field_name, str):
+            stored_fields = dictionaries_store.load_entries(repository_root=self.repository_root, database_id=database_id)
+            if field_name in stored_fields and field_name not in editable:
+                if not isinstance(body["stored"], str):
+                    raise pg.PostgresRegistrationError("INVALID_INPUT")
+                with self._lock:
+                    dictionaries_store.remove_entry(
+                        repository_root=self.repository_root, database_id=database_id, field=field_name,
+                        stored=body["stored"], reviewer=reviewer,
+                    )
+                return self.dictionaries(database_id)
+        if not isinstance(field_name, str) or field_name not in editable:
+            raise pg.PostgresRegistrationError("INVALID_INPUT")
+        with self._lock:
+            if action == "SET":
+                aliases = body["aliases"]
+                if not isinstance(aliases, list) or not all(isinstance(item, str) for item in aliases):
+                    raise pg.PostgresRegistrationError("INVALID_INPUT")
+                if not all(isinstance(body[key], str) for key in ("stored", "label", "reviewer")):
+                    raise pg.PostgresRegistrationError("INVALID_INPUT")
+                table, column = editable[field_name]
+                known = self._values(reader, database_id, table, column, dictionaries_store.MAX_LISTED_VALUES)
+                if known is None:
+                    present = reader.present(database_id, table, column, [body["stored"]])
+                    if present is None or body["stored"] not in present:
+                        raise pg.PostgresRegistrationError("INVALID_INPUT")
+                    known = [body["stored"]]
+                context = self._check_context(loaded, editable, reader, database_id)
+                warnings = []
+                for alias in aliases:
+                    blocked, warning = dictionaries_store.check_alias(
+                        alias, body["stored"], field=field_name, entries=context[1], **context[0]
+                    )
+                    if blocked is None:
+                        blocked = self._big_field_collision(editable, context[0], reader, database_id, alias, body["stored"])
+                    if blocked is not None:
+                        raise pg.PostgresRegistrationError("ALIAS_CONFLICT")
+                    if warning is not None:
+                        warnings.append({"alias": alias, "warning": warning})
+                dictionaries_store.set_entry(
+                    repository_root=self.repository_root, database_id=database_id, field=field_name,
+                    stored=body["stored"], label=body["label"], aliases=aliases, reviewer=body["reviewer"],
+                    allowed_fields=set(editable), known_values=known,
+                )
+                result = self.dictionaries(database_id)
+                result["warnings"] = warnings
+                return result
+            if action == "REMOVE":
+                if not isinstance(body["stored"], str) or not isinstance(body["reviewer"], str):
+                    raise pg.PostgresRegistrationError("INVALID_INPUT")
+                dictionaries_store.remove_entry(
+                    repository_root=self.repository_root, database_id=database_id, field=field_name,
+                    stored=body["stored"], reviewer=body["reviewer"],
+                )
+                return self.dictionaries(database_id)
+        # SUGGEST: candidates are returned, never stored.
+        if not isinstance(body["ai"], bool):
+            raise pg.PostgresRegistrationError("INVALID_INPUT")
+        table, column = editable[field_name]
+        values = self._values(reader, database_id, table, column, dictionaries_store.MAX_LISTED_VALUES) or []
+        candidates: dict[str, list[tuple[str, str]]] = {}
+        for value in values:
+            for alias in dictionaries_store.rule_candidates(value):
+                candidates.setdefault(value, []).append((alias, "RULE"))
+        if body["ai"] and self._alias_model is not None and values:
+            from ..ontology import load_default_ontology
+
+            label = load_default_ontology().fields[field_name].label
+            for value, aliases in dictionaries_store.ai_candidates(self._alias_model, label, values).items():
+                for alias in aliases:
+                    if all(alias != existing for existing, _source in candidates.get(value, [])):
+                        candidates.setdefault(value, []).append((alias, "AI"))
+        context = self._check_context(loaded, editable, reader, database_id)
+        out = []
+        for value in values:
+            for alias, source in candidates.get(value, []):
+                blocked, warning = dictionaries_store.check_alias(
+                    alias, value, field=field_name, entries=context[1], **context[0]
+                )
+                out.append({"stored": value, "alias": alias, "source": source, "blocked": blocked, "warning": warning})
+        return {
+            "version": DICTIONARIES_VERSION,
+            "database_id": database_id,
+            "field": field_name,
+            "ai_used": bool(body["ai"] and self._alias_model is not None),
+            "candidates": out[:200],
+        }
+
+    def _big_field_collision(
+        self,
+        editable: dict[str, tuple[str, str]],
+        context: dict[str, Any],
+        reader: Any,
+        database_id: str,
+        alias: str,
+        stored: str,
+    ) -> str | None:
+        """Exact matches in fields too large to list (their word pieces cannot be checked)."""
+        for name, (table, column) in editable.items():
+            if name in context["values_by_field"]:
+                continue
+            present = reader.present(database_id, table, column, [alias])
+            if present is None:
+                return "확인할 수 없음(값 조회 실패)"
+            if alias in present and alias != stored:
+                return f"다른 값과 겹침: {alias}"
+        return None
+
+    def _check_context(
+        self, loaded: Any, editable: dict[str, tuple[str, str]], reader: Any, database_id: str
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        values_by_field = {}
+        for name, (table, column) in editable.items():
+            values = self._values(reader, database_id, table, column, dictionaries_store.MAX_LISTED_VALUES)
+            if values is not None:
+                values_by_field[name] = values
+        edited = {pair for pair in editable.values()}
+        other_texts: list[str] = []
+        for table, column in dictionaries_store.text_columns(loaded):
+            if (table, column) in edited or len(other_texts) >= dictionaries_store.MAX_OTHER_TEXT_VALUES:
+                continue
+            values = self._values(reader, database_id, table, column, dictionaries_store.MAX_OTHER_TEXT_VALUES)
+            other_texts.extend(values or [])
+        entries = dictionaries_store.load_entries(repository_root=self.repository_root, database_id=database_id)
+        return {"values_by_field": values_by_field, "other_texts": other_texts[: dictionaries_store.MAX_OTHER_TEXT_VALUES]}, entries
 
 
 def register_postgres_registration_routes(app: FastAPI, service: PostgresRegistrationService) -> None:
@@ -323,6 +542,35 @@ def register_postgres_registration_routes(app: FastAPI, service: PostgresRegistr
                 return _error("INVALID_INPUT")
             schemas = await run_in_threadpool(service.schemas, params["source_id"])
             return _json({"version": SOURCES_VERSION, "source_id": params["source_id"], "schemas": schemas})
+        except pg.PostgresRegistrationError as exc:
+            return _error(exc.code)
+        except Exception:
+            return _error("INTERNAL_ERROR")
+
+    @app.get(DICTIONARIES_PATH)
+    async def get_dictionaries(http_request: Request) -> JSONResponse:
+        try:
+            params = dict(http_request.query_params)
+            if set(params) != {"database_id"}:
+                return _error("INVALID_INPUT")
+            return _json(await run_in_threadpool(service.dictionaries, params["database_id"]))
+        except pg.PostgresRegistrationError as exc:
+            return _error(exc.code)
+        except Exception:
+            return _error("INTERNAL_ERROR")
+
+    @app.post(DICTIONARIES_PATH)
+    async def post_dictionaries(http_request: Request) -> JSONResponse:
+        try:
+            raw = await http_request.body()
+            if not raw or len(raw) > _MAX_BODY_BYTES:
+                return _error("INVALID_INPUT")
+            from .review_publish import _parse_strict_body
+
+            body = _parse_strict_body(bytes(raw))
+            if not isinstance(body, dict):
+                return _error("INVALID_INPUT")
+            return _json(await run_in_threadpool(service.dictionary_action, body))
         except pg.PostgresRegistrationError as exc:
             return _error(exc.code)
         except Exception:

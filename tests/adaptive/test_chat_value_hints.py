@@ -399,3 +399,29 @@ def test_reader_is_bounded_and_fails_quietly() -> None:
         raise RuntimeError("postgresql://u:p@secret")
 
     assert PostgresDistinctValueReader({"db": config}, connector=broken).read("db", "t", "c", 3) is None
+
+
+def test_select_wildcards_of_known_entities_are_dropped() -> None:
+    output = ir(["Schedule.*"], [{"field": "Schedule.day", "operator": "equals", "value": "월"}])
+    assert repair_output(output, ONTOLOGY, available_fields=["Course.code"])["select"] == ["Course.code"]
+    mixed = ir(["Course.name", "Schedule.*", "Room.*"])
+    assert repair_output(mixed, ONTOLOGY, available_fields=["Course.code"])["select"] == ["Course.name", "Room.*"]
+
+
+def test_a_wildcard_select_is_answered_with_the_card() -> None:
+    model = HintModel(ir(["Schedule.*"], [{"field": "Department.name", "operator": "equals", "value": "국어국문학과"}]))
+    body, executor = chat(model, "국어국문학과 과목", FakeReader())
+    assert body["status"] == "SUCCEEDED" and len(executor.queries) == 1
+
+
+def test_reader_presence_check_is_exact_and_bounded() -> None:
+    config = PostgresConnectionConfig("postgresql://u:p@127.0.0.1:5432/db")
+    connection = FakeConnection([("MON",)])
+    reader = PostgresDistinctValueReader({"db": config}, connector=lambda _config: connection)
+    assert reader.present("db", "t", "day", ["MON", "XYZ"]) == {"MON"}
+    [(query, params)] = connection.cursor_obj.executed
+    assert query == 'SELECT DISTINCT "day" FROM "public"."t" WHERE "day" = ANY(%s)'
+    assert params == (["MON", "XYZ"],)
+    assert reader.present("db", "t", "day", []) is None
+    assert reader.present("db", "t", "day", ["x"] * 65) is None
+    assert reader.present("other", "t", "day", ["x"]) is None
