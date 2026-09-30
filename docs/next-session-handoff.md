@@ -1,6 +1,6 @@
 # 새 Codex 대화용 짧은 인수인계
 
-현재 기준: 2026-09-30, Phase 8-09 AI mapping 제안 비교까지 완료(8-08 benchmark, 8-06 값 사전, 7-17 LEFT JOIN, 8-05까지의 관리자 기능 포함). 최신 상태는 항상 Git과 코드로 다시 확인한다. 설계와 로드맵의 원본은 [`schema-adaptive-text-to-sql-plan.md`](schema-adaptive-text-to-sql-plan.md), 독립 평가 세트 설계 기준은 [`independent-evaluation-set-design.md`](independent-evaluation-set-design.md), 안전한 잠정 비교는 [`phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md`](phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md)다.
+현재 기준: 2026-09-30, Phase 8-10 AI 제안 v2·관리자 설명·보류 변형 평가까지 완료(8-09 AI 제안, 8-08 benchmark, 8-06 값 사전, 7-17 LEFT JOIN, 8-05까지의 관리자 기능 포함). 최신 상태는 항상 Git과 코드로 다시 확인한다. 설계와 로드맵의 원본은 [`schema-adaptive-text-to-sql-plan.md`](schema-adaptive-text-to-sql-plan.md), 독립 평가 세트 설계 기준은 [`independent-evaluation-set-design.md`](independent-evaluation-set-design.md), 안전한 잠정 비교는 [`phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md`](phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md)다.
 
 ## 프로젝트와 현재 경계
 
@@ -80,6 +80,12 @@
 
 - Phase 8-09: `python -m backend.adaptive.evaluation.ai_mapping --propose --label <id>`는 로컬 Ollama `qwen2.5-coder:7b-instruct`를 부른다(loopback). 그 결과 파일을 `variant_benchmark --live-synthetic --ai-proposals <file>`에 넘겨 실행한다. 결과는 AI 223/240, 규칙 205/240이다. 값 사전과 의미 함정은 미해결이다.
 
+- Phase 8-10:
+  - 제안 실행: `ai_mapping --propose --suite dev|holdout --pipeline v1.1|v2 [--notes] --label <id>`.
+  - 채점 실행: `variant_benchmark --live-synthetic --suite <s> --ai-proposals NAME=PATH …`.
+  - 결과: 기존 235/240, 보류 116/120(v2+설명).
+  - 의미 함정은 미해결이다.
+
 ## 실행
 
 팀 논의용 전체 실행은 `npm run dev:all`(legacy `:8000` + 합성 prototype `:8123` + Vite `:5173`). legacy 강좌 DB는 팀이 구성한 유사 데이터라는 사용자 확인이 있다(`docs/synthetic-clarification-team-handoff.md`).
@@ -95,8 +101,8 @@
   - 8-06: 값 사전 완료.
   - 8-08: 합성 변형 benchmark·규칙 기준선 완료.
   - 8-09: AI mapping 제안 비교 완료(v1.1).
-  - 승인된 다음 순서(계획 문서 Phase 8 개발 순서): 8-07 관리자 화면 통합 → L1 뒤 prompt·별칭 → Phase 9.
-  - 선택 후보: AI 제안 v2. 저장 값 일치 검사와 값 사전 전용 단계를 넣고, 새 보류 변형과 함께 평가한다.
+  - 8-10: AI 제안 v2·관리자 설명·보류 변형 완료.
+  - 승인된 다음 순서: 8-11 DB별 ontology 확장 field와 매개변수형 변환(첫 사례 이론·실습 시간) → 8-07 관리자 화면 통합(구조화 입력 우선) → L1 뒤 prompt·별칭 → Phase 9.
 0. Phase 8 남은 항목:
    - FK 없는 관계 선언(benchmark에서 필요할 때).
    - 8-07 관리자 화면 통합(값 사전 편집 포함).

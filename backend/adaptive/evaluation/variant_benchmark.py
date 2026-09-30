@@ -35,6 +35,7 @@ from ..mapping.transforms import FieldTransform
 from .variant_specs import (
     BENCHMARK_VERSION,
     CANONICAL_FIELDS,
+    SUITES,
     VARIANTS,
     GoldField,
     Variant,
@@ -458,6 +459,7 @@ def run_live(
     *,
     token_hex: Callable[[int], str] | None = None,
     extra_answers: dict[str, dict[str, VariantMappingAnswer]] | None = None,
+    suite: str = "dev",
 ) -> dict[str, Any]:
     """``extra_answers``: proposer name -> variant name -> stored answer."""
     import psycopg2  # type: ignore[import-not-found]
@@ -471,7 +473,7 @@ def run_live(
     variants: dict[str, Any] = {}
     connection = psycopg2.connect(dsn, connect_timeout=5)
     try:
-        for spec in VARIANTS:
+        for spec in SUITES[suite]:
             database_id = f"bench-{spec.name}"
             schema = generate_schema_name(token_hex)
             try:
@@ -521,6 +523,7 @@ def run_live(
         connection.close()
     return {
         "version": BENCHMARK_VERSION,
+        "suite": suite,
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "questions": len(QUESTIONS),
         "variants": variants,
@@ -530,12 +533,12 @@ def run_live(
 # --- summaries and CLI --------------------------------------------------------------------------
 
 
-def offline_scores() -> dict[str, Any]:
+def offline_scores(suite: str = "dev") -> dict[str, Any]:
     from ..ontology.loader import load_default_ontology
 
     ontology = load_default_ontology()
     scores = {}
-    for spec in VARIANTS:
+    for spec in SUITES[suite]:
         catalog = spec_catalog(spec, f"bench-{spec.name}")
         scores[spec.name] = {
             "axis": spec.axis,
@@ -594,6 +597,11 @@ def summarize(run: dict[str, Any]) -> dict[str, Any]:
                 outcomes = item.get("execution", {}).get("outcomes", {})
                 bucket["questions_total"] += len(outcomes)
                 bucket["questions_correct"] += sum(1 for o in outcomes.values() if o == "CORRECT")
+                # Every question selects the course key, so one unmapped key
+                # refuses a whole variant; report refusals apart from errors.
+                bucket["questions_refused_supported"] += sum(
+                    1 for o in outcomes.values() if o == "REFUSED_SUPPORTED"
+                )
     return {
         proposer: {scope: dict(counter) for scope, counter in scopes.items()}
         for proposer, scopes in totals.items()
@@ -615,12 +623,16 @@ def main(argv: list[str] | None = None, *, environ: dict[str, str] | None = None
     mode.add_argument("--check", action="store_true", help="Offline field scores only.")
     mode.add_argument("--live-synthetic", action="store_true", help="Build variants and execute.")
     parser.add_argument("--label", default=None)
-    parser.add_argument("--ai-proposals", default=None, help="Stored ai_mapping proposals to execute.")
+    parser.add_argument("--suite", choices=sorted(SUITES), default="dev")
+    parser.add_argument(
+        "--ai-proposals", action="append", default=[], metavar="NAME=PATH",
+        help="Stored ai_mapping proposals to execute as proposer NAME (repeatable).",
+    )
     parser.add_argument("--repository-root", default=str(Path.cwd()))
     args = parser.parse_args(argv)
     env = os.environ if environ is None else environ
     if args.check:
-        scores = offline_scores()
+        scores = offline_scores(args.suite)
         for name, record in scores.items():
             print(json.dumps({
                 "variant": name, "axis": record["axis"],
@@ -647,12 +659,16 @@ def main(argv: list[str] | None = None, *, environ: dict[str, str] | None = None
         print(json.dumps({"status": "FAILED", "code": "LABEL_EXISTS"}), flush=True)
         return 2
     try:
-        extra = None
+        extra: dict[str, dict[str, VariantMappingAnswer]] = {}
         if args.ai_proposals:
             from .ai_mapping import load_answers
 
-            extra = {"ai": load_answers(args.ai_proposals)}
-        run = run_live(dsn, extra_answers=extra)
+            for item in args.ai_proposals:
+                name, _, path = item.partition("=")
+                if re.fullmatch(r"ai[a-z0-9.+-]{0,30}", name) is None or not path or name in extra:
+                    raise ValueError("invalid --ai-proposals entry")
+                extra[name] = load_answers(path, args.suite)
+        run = run_live(dsn, extra_answers=extra, suite=args.suite)
     except Exception:
         print(json.dumps({"status": "FAILED", "code": "LIVE_FAILED"}), flush=True)
         return 2
