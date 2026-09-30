@@ -1,7 +1,7 @@
 import { isDatabaseId } from './databases.ts';
 
 export const MAPPING_REVIEW_PATH = '/api/adaptive/v1/registrations/review';
-export const MAPPING_REVIEW_VERSION = 'private-mapping-review-v1';
+export const MAPPING_REVIEW_VERSION = 'private-mapping-review-v2';
 
 const ERROR_CODE_PATTERN = /^[A-Z0-9_]{1,128}$/;
 const FINGERPRINT_PATTERN = /^[0-9a-f]{64}$/;
@@ -10,6 +10,12 @@ const MAX_TEXT_LENGTH = 200;
 const MAX_REASON_LENGTH = 500;
 const MAX_LISTED_VERSIONS = 50;
 const MAX_MAPPING_VERSION = 9999;
+// Candidate statuses the aligner emits (Phase 8-12 review: strict).
+const CANDIDATE_REVIEW_STATUSES: ReadonlySet<string> = new Set([
+  'AUTO_APPROVE_CANDIDATE',
+  'NEEDS_REVIEW',
+  'UNCERTAIN',
+]);
 const UTC_TIMESTAMP_PATTERN = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$/;
 
 export interface ReviewFetchInit {
@@ -48,6 +54,8 @@ export interface ReviewCandidate {
   column: string;
   confidence: number;
   review_status: string;
+  // Phase 8-12: the local model's choice (AI) or a rule candidate (RULES).
+  source: 'AI' | 'RULES';
 }
 
 export interface ReviewField {
@@ -140,7 +148,9 @@ export function isValidReason(value: unknown): value is string {
 
 function parseCandidate(value: unknown): ReviewCandidate | null {
   if (!isPlainObject(value)) return null;
-  if (!hasOnlyKeys(value, ['index', 'table', 'column', 'confidence', 'review_status'])) return null;
+  if (!hasOnlyKeys(value, ['index', 'table', 'column', 'confidence', 'review_status', 'source'])) return null;
+  const source = value['source'];
+  if (source !== 'AI' && source !== 'RULES') return null;
   if (!isNonNegativeInteger(value['index'])) return null;
   if (!isNonEmptyString(value['table'], MAX_TEXT_LENGTH)) return null;
   if (!isNonEmptyString(value['column'], MAX_TEXT_LENGTH)) return null;
@@ -152,13 +162,16 @@ function parseCandidate(value: unknown): ReviewCandidate | null {
   ) {
     return null;
   }
-  if (typeof value['review_status'] !== 'string' || value['review_status'].length === 0) return null;
+  if (typeof value['review_status'] !== 'string' || !CANDIDATE_REVIEW_STATUSES.has(value['review_status'])) {
+    return null;
+  }
   return {
     index: value['index'],
     table: value['table'],
     column: value['column'],
     confidence: value['confidence'],
     review_status: value['review_status'],
+    source,
   };
 }
 

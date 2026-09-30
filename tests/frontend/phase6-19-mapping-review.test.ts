@@ -27,7 +27,7 @@ import { isStaleResponse, nextOperation } from '../../src/adaptive-prototype/sta
 
 function detailPayload() {
   return {
-    version: 'private-mapping-review-v1',
+    version: 'private-mapping-review-v2',
     database_id: 'review-db-one',
     label: 'Review DB',
     status: 'PENDING_REVIEW',
@@ -48,6 +48,7 @@ function detailPayload() {
               column: 'course_name',
               confidence: 0.9,
               review_status: 'NEEDS_REVIEW',
+              source: 'AI',
             },
           ],
         },
@@ -63,6 +64,7 @@ function detailPayload() {
               column: 'course_code',
               confidence: 1,
               review_status: 'AUTO_APPROVE_CANDIDATE',
+              source: 'RULES',
             },
           ],
         },
@@ -105,9 +107,29 @@ describe('phase6-19 review parser and request contract', () => {
     assert.equal(parseReviewDetail({ ...detailPayload(), status: 'PUBLISHED' }), null);
   });
 
+  it('phase8-12: requires the candidate source and keeps it', () => {
+    const parsed = parseReviewDetail(detailPayload());
+    assert.equal(parsed?.fields[0]?.candidates[0]?.source, 'AI');
+    assert.equal(parsed?.fields[1]?.candidates[0]?.source, 'RULES');
+    for (const source of [undefined, 'MODEL', null]) {
+      const payload = structuredClone(detailPayload()) as unknown as {
+        review: { fields: Array<{ candidates: Array<Record<string, unknown>> }> };
+      };
+      const candidate = payload.review.fields[0]!.candidates[0]!;
+      if (source === undefined) delete candidate['source'];
+      else candidate['source'] = source;
+      assert.equal(parseReviewDetail(payload), null);
+    }
+    for (const status of ['BOGUS', 'UNMAPPED', '']) {
+      const payload = structuredClone(detailPayload());
+      payload.review.fields[0]!.candidates[0]!.review_status = status;
+      assert.equal(parseReviewDetail(payload), null);
+    }
+  });
+
   it('accepts strict publish and redacts unknown shapes', () => {
     const payload = {
-      version: 'private-mapping-review-v1',
+      version: 'private-mapping-review-v2',
       database_id: 'review-db-one',
       status: 'PUBLISHED',
       mapping_version: 2,
@@ -237,7 +259,7 @@ describe('phase6-19 review parser and request contract', () => {
     const second = nextOperation(first);
     assert.equal(isStaleResponse(second, first), true);
     assert.equal(isStaleResponse(second, second), false);
-    assert.equal(MAPPING_REVIEW_VERSION, 'private-mapping-review-v1');
+    assert.equal(MAPPING_REVIEW_VERSION, 'private-mapping-review-v2');
   });
 });
 

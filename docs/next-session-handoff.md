@@ -1,6 +1,6 @@
 # 새 Codex 대화용 짧은 인수인계
 
-현재 기준: 2026-09-30, Phase 8-10 AI 제안 v2·관리자 설명·보류 변형 평가까지 완료(8-09 AI 제안, 8-08 benchmark, 8-06 값 사전, 7-17 LEFT JOIN, 8-05까지의 관리자 기능 포함). 최신 상태는 항상 Git과 코드로 다시 확인한다. 설계와 로드맵의 원본은 [`schema-adaptive-text-to-sql-plan.md`](schema-adaptive-text-to-sql-plan.md), 독립 평가 세트 설계 기준은 [`independent-evaluation-set-design.md`](independent-evaluation-set-design.md), 안전한 잠정 비교는 [`phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md`](phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md)다.
+현재 기준: 2026-09-30, Phase 8-12 업로드 흐름 AI mapping 제안 연결까지 완료(8-10 AI 제안 v2, 8-09 AI 제안, 8-08 benchmark, 8-06 값 사전, 7-17 LEFT JOIN, 8-05까지의 관리자 기능 포함). 사용자 결정으로 benchmark 개선과 8-11은 프로토타입 이후로 미뤘다(ADR-078). 최신 상태는 항상 Git과 코드로 다시 확인한다. 설계와 로드맵의 원본은 [`schema-adaptive-text-to-sql-plan.md`](schema-adaptive-text-to-sql-plan.md), 독립 평가 세트 설계 기준은 [`independent-evaluation-set-design.md`](independent-evaluation-set-design.md), 안전한 잠정 비교는 [`phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md`](phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md)다.
 
 ## 프로젝트와 현재 경계
 
@@ -86,6 +86,12 @@
   - 결과: 기존 235/240, 보류 116/120(v2+설명).
   - 의미 함정은 미해결이다.
 
+- Phase 8-12:
+  - 업로드 시 로컬 모델이 column을 고르고 첫 후보로 둔다. 실패하면 규칙 제안을 쓴다.
+  - 켜는 법: `dev:all` launcher는 loopback Ollama면 기본으로 켠다(`backend/.env`의 `MAPPING_MODEL`로 tag 변경). 직접 실행 시 `--mapping-model-tag qwen2.5-coder:7b-instruct`.
+  - 화면: 업로드 요약에 `제안: AI 제안/규칙 기반/규칙 기반(AI 사용 불가)`, 검토 후보에 `AI 제안`.
+  - live smoke(이름 변경 합성 DB 1개): AI 15/15, 규칙 1/15.
+
 ## 실행
 
 팀 논의용 전체 실행은 `npm run dev:all`(legacy `:8000` + 합성 prototype `:8123` + Vite `:5173`). legacy 강좌 DB는 팀이 구성한 유사 데이터라는 사용자 확인이 있다(`docs/synthetic-clarification-team-handoff.md`).
@@ -102,7 +108,10 @@
   - 8-08: 합성 변형 benchmark·규칙 기준선 완료.
   - 8-09: AI mapping 제안 비교 완료(v1.1).
   - 8-10: AI 제안 v2·관리자 설명·보류 변형 완료.
-  - 승인된 다음 순서: 8-11 DB별 ontology 확장 field와 매개변수형 변환(첫 사례 이론·실습 시간) → 8-07 관리자 화면 통합(구조화 입력 우선) → L1 뒤 prompt·별칭 → Phase 9.
+  - 8-12: 업로드 흐름 AI 제안 연결 완료.
+  - 승인된 다음 순서(ADR-078, 프로토타입 우선): 8-07 축소판 관리자 화면 → 처음부터 끝까지 browser smoke·시연 절차.
+    - 8-07 축소판 범위: 검토, 코드표→값 사전, test query 미리보기, 버전. 업로드 DB의 변환·값 사전·부분 게시(`unsupported`)도 포함한다.
+    - 그 뒤: 8-11(이론·실습 시간 등), L1 뒤 prompt·별칭, Phase 9.
 0. Phase 8 남은 항목:
    - FK 없는 관계 선언(benchmark에서 필요할 때).
    - 8-07 관리자 화면 통합(값 사전 편집 포함).

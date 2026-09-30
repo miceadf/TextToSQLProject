@@ -90,7 +90,7 @@ def test_rollback_switches_execution_and_keeps_latest_pointer(client_repo) -> No
     response = _activate(client, 1)
     assert response.status_code == 200, response.text[:300]
     assert response.json() == {
-        "version": "private-mapping-review-v1",
+        "version": "private-mapping-review-v2",
         "database_id": DATABASE_ID,
         "status": "PUBLISHED",
         "mapping_version": 1,

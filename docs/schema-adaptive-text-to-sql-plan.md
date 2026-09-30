@@ -695,7 +695,8 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 - [x] Phase 8-08 합성 변형 benchmark(형식·코드값·의미·구조 12개 변형, `VariantMappingAnswer`, field·실행 점수, oracle 만점 검증)와 규칙 기반 mapping 기준선(field 163/180, 기준 table 1/12, 질문 205/240; oracle 180/180·240/240)
 - [x] Phase 8-09 AI mapping 제안(`ai-mapping-v1.1`: 로컬 `qwen2.5-coder:7b-instruct`, schema 제한 출력, runtime 규칙 검증기, 분반 table anchor 규칙)과 규칙 기반 비교(질문 AI 223/240, 규칙 205, 규칙+anchor 206; 값 사전 0/3·의미 함정 0/2는 미해결; 합성·L1/L3 전)
 - [x] Phase 8-10 AI mapping 제안 v2(저장 값 일치 검사, 값 사전 전용 단계, 관리자 column 설명 `admin-notes-v1`·코드표 직접 사전, 보류 변형 6개·사전 등록 hash; 기존 세트 223→232→235/240, 보류 세트 104→116/120; 자연어 설명은 의미 함정 미해결)
-- [ ] Phase 8-11 DB별 ontology 확장 field와 매개변수형 변환(공통 ontology는 팀 관리, DB별 확장은 관리자가 데이터로 선언, 변환은 닫힌 목록을 매개변수형으로 확장; 첫 사례 이론·실습 시간; 챗봇 응답·화면의 field 목록 일반화)
+- [ ] Phase 8-11 DB별 ontology 확장 field와 매개변수형 변환(공통 ontology는 팀 관리, DB별 확장은 관리자가 데이터로 선언, 변환은 닫힌 목록을 매개변수형으로 확장; 첫 사례 이론·실습 시간; 챗봇 응답·화면의 field 목록 일반화) — 프로토타입 이후로 보류(ADR-078)
+- [x] Phase 8-12 업로드 흐름에 AI mapping 제안 연결(`ai-mapping-v2` column 단계를 제품 모듈 `mapping/ai_proposal.py`로 이동·benchmark와 공유, AI 첫 후보 + 규칙 후보, `AI_PROPOSAL` 근거, 실패 시 규칙 대체, upload v2 `proposer`·review v2 `source`, 등록 threadpool 실행, `--mapping-model-tag`·launcher `MAPPING_MODEL`; 이름 변경 합성 DB live smoke AI 15/15·규칙 1/15)
 - [x] verified query 자동 회귀 테스트(Phase 8-05: 서버 계산 결과 hash를 verified 기준선으로 기록, publish·재활성화 직후와 재활성화 전 비활성 버전에서 고정 query 회귀 비교; 경고만, 자동 차단 없음; 합성 SQLite만 검증)
 - [x] Phase 8-01 mapping 버전 이력과 이전 버전 재활성화(`ACTIVATE`; activation만 교체, publish와 같은 실행 가능성 재검증, 최신 내용 재publish 시 최신 버전 재활성화, 활성 기록 `activated_by`·`activated_at`, frontend 2단계 확인; 합성 입력만)
 - [x] Phase 8-02 등록 간 schema 비교와 활성 mapping 영향 분석(`catalog-diff-v1`·`registration-compare-v1`; table·column·FK 변화, field별 `UNCHANGED`/`TYPE_CHANGED`/`COLUMN_MISSING`/`TABLE_MISSING`, 그대로 옮긴 mapping의 compile·AST 검사 통과 여부; 파일 쓰기·실행 권한 변경·candidate SQL 실행 없음)
@@ -712,8 +713,9 @@ Phase 8 분할 계획(상세는 [`docs/prompts/phase8-01-mapping-version-rollbac
 3. 합성 변형 benchmark(형식·코드값·의미·구조)와 규칙 기반 기준선 측정(완료, Phase 8-08·ADR-075).
 4. AI mapping 제안과 규칙 기반 비교(닫힌 목록 제안, 관리자 검토 유지)(완료, Phase 8-09·ADR-076).
 4a. 8-10 AI 제안 v2와 관리자 column 설명(완료, ADR-077).
-4b. 8-11 DB별 ontology 확장 field와 매개변수형 변환.
-5. 8-07 관리자 화면 통합과 browser smoke(구조화된 관리자 입력 우선).
+4b. 8-11 DB별 ontology 확장 field와 매개변수형 변환(2026-09-30 프로토타입 이후로 보류, ADR-078).
+4c. 8-12 업로드 흐름에 AI mapping 제안 연결(완료, ADR-078).
+5. 8-07 관리자 화면 통합 축소판(검토·코드표→값 사전·test query 미리보기·버전; 업로드 DB 변환·값 사전·부분 게시 포함)과 처음부터 끝까지 browser smoke·시연 절차.
 6. prompt·field 별칭 개선은 L1 질문 세트 확보 뒤.
 7. Phase 9 최종 평가는 L1/L3 뒤.
 
@@ -1964,6 +1966,38 @@ SQLite DB 입력
   - 설명은 개발자가 규칙에 따라 썼다.
   - 모든 질문이 과목 코드를 select해 실행 점수가 식별 field에 민감하다.
 
+### ADR-078: 합성 benchmark 개선을 멈추고 프로토타입을 완성하며, 업로드 DB의 mapping 초안은 로컬 모델의 column 선택을 첫 후보로 둔다
+
+- 날짜: 2026-09-30
+- 상태: 채택(사용자 결정: 프로토타입 우선, 이론·실습 시간 제외)
+- 배경:
+  - 8-08~8-10은 원래 table을 변형한 합성 benchmark 점수를 올리는 데 집중했다.
+  - 사용자 지적으로 일부 함정이 비현실적이었음을 확인했다.
+    - `capacity`는 보통 수강 정원인데, 함정 변형에서는 강의실 좌석으로 두었다.
+    - `credit_hours`는 기존 세트에서는 `학점/이론/실습` 문자열, 보류 세트에서는 "주당 수업 시간 합계"로 세트마다 뜻이 달랐다.
+  - 그래서 ADR-077의 "자연어 설명은 의미 함정을 못 고친다"는 근거는 현실적인 `course_year` 2건으로 줄어든다. 코드표 효과는 영향이 없다.
+- 결정:
+  - 범위 조정:
+    - benchmark 개선, 새 보류 세트, 8-11 일반화 설계, prompt 개선, 추가 모델 비교는 프로토타입 이후로 미룬다.
+    - 순서: 8-12 업로드 AI 제안 연결 → 8-07 축소판 관리자 화면 → 처음부터 끝까지 browser smoke와 시연 절차.
+  - 8-12 설계:
+    - 업로드 시 `ai-mapping-v2` column 단계만 한 번 호출한다. prompt 함수는 benchmark와 같다.
+    - AI 선택은 첫 후보가 되고 규칙 후보가 뒤따른다.
+    - confidence는 같은 column의 규칙 점수를 그대로 쓴다. AI 선택만으로는 자동 승인 후보가 되지 않는다.
+    - 근거에 `AI_PROPOSAL`을 더한다.
+    - 모델 실패·schema 위반·계약 불일치는 규칙 제안으로 대체하고 등록은 계속한다.
+    - 저장 값 예시는 prompt에만 쓰고 저장·응답하지 않는다.
+    - 업로드 DB의 변환·값 사전·부분 게시는 8-07에서 다룬다.
+- 이유:
+  - 프로토타입의 부족한 부분은 benchmark 점수가 아니라, AI 제안이 제품 흐름에 없고 관리자 화면이 연결되지 않은 점이다.
+  - 제품 prompt와 benchmark prompt를 하나로 두어야 측정한 것과 쓰는 것이 같다.
+- 결과:
+  - 이름이 낯선 합성 DB(flat fixture 열 이름 변경) 1회 live smoke: AI 첫 후보 15/15, 규칙 첫 후보 1/15, 호출 13초.
+  - AI 첫 후보만 승인해 게시하면 원래 flat DB와 같은 강의 목록이 나온다(fake model 회귀 테스트).
+- 한계:
+  - live smoke는 개발자가 만든 DB 1개, 1회 실행이며 성능 주장이 아니다.
+  - 모델이 고른 column이 변환(예: `3/3/0`)이 필요한 경우에도 업로드 경로는 column만 게시하므로 관리자가 걸러야 한다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -2214,3 +2248,5 @@ SQLite DB 입력
 - 2026-09-30 Phase 8-09 AI mapping 제안과 규칙 기반 비교 완료(ADR-076). `evaluation/ai_mapping.py`(column 선택 1회 + field별 값 처리, JSON schema 제한, runtime 규칙 검증기, 분반 table anchor, 저장 제안 재사용)를 추가했다. `variant_benchmark.py`에는 `rules+anchor` 비교군, `--ai-proposals`, 일반화된 집계를 더했다. v1 실행 결과는 질문 AI 223/240, 규칙 205, 규칙+anchor 206, oracle 240이다. 축별로는 형식 40/40, 코드값 51/60(규칙과 같음), 의미 56/60, 복합 16/20이다. AI는 값 사전을 하나도 내지 않았고, 영어 요일에 `KOREAN_WEEKDAY`를 골랐으며, 의미 함정 두 개를 모두 틀렸다. `gpt-6-luna` high review-only 지적 4건을 모두 재현해 고쳤고, `ai-mapping-v1.1`로 올렸다. 고친 것: 변환 설명의 예시가 benchmark 값과 같던 누설, 모델 출력 schema 미검사, 실패 호출의 채점, runtime 사전 모델과의 불일치. v1.1 재실행 답안은 12개 모두 v1과 같았다. v2 후보(저장 값 일치 검사, 값 사전 전용 단계)는 보류 변형과 함께 평가해야 하므로 아직 실행하지 않았다. 결과는 `docs/phase8-09-ai-mapping-results-2026-09-30.md`에 두었다. AI·benchmark 테스트 93개, 전체 pytest 1485개·6 skip·610 subtests, compileall, diff check 통과. legacy·frontend·runtime 변경 없음. ADR-076 추가
 - 2026-09-30 개발 순서 갱신(사용자 결정): AI 제안 v2(8-10) → DB별 ontology 확장 field·매개변수형 변환(8-11) → 8-07. 8-11을 둔 이유는 두 가지다. ontology 추가가 코드 수정을 요구하지 않게 해야 한다(공통/DB별 확장/닫힌 변환의 세 층). 첫 사례는 `3/3/0`의 이론·실습 시간이다.
 - 2026-09-30 Phase 8-10 AI 제안 v2 완료(ADR-077). `variant_specs.py`에 관리자 설명 `Note`(사유·코드표), 기존 세트 설명 28개, 보류 변형 6개(`HOLDOUT_VARIANTS`, 설명 11개)를 추가했다. `ai_mapping.py` v2에는 저장 값 일치 검사, 값 사전 전용 단계, 설명 입력, 코드표 직접 사전을 넣었고, v1.1은 버전 인자로 재현한다. `variant_benchmark.py`에는 `--suite`, 반복 `--ai-proposals`, 거절 수 집계를 더했다. 모델 실행 전에 세 파일 hash를 기록했다(2026-09-30T04:53:49Z). 결과: 기존 세트 규칙 205, v1.1 223, v2 232, v2+설명 235/240. 보류 세트 규칙 0, v1.1 104, v2 116, v2+설명 116/120. oracle은 두 세트 모두 만점이다. 코드값 축은 두 세트 모두 만점이다. 자연어 설명은 의미 함정 column 선택을 고치지 못했고, 효과는 코드표 직접 사전뿐이다. `gpt-6-luna` high review-only 지적 6건을 재현·반영했다. 반영한 것: 코드표 완전성·중복, 예시 없음, 코드 길이, 답안·trace 일치, 설명 사유 선언, 거절 수 보고. 규칙 밖 설명 1개를 제거한 뒤 해당 조건을 다시 실행했고, 답안은 같았다. 결과는 `docs/phase8-10-ai-mapping-v2-results-2026-09-30.md`에 두었다. AI·benchmark 테스트 169개, 전체 pytest 1561개·6 skip·610 subtests, compileall, diff check 통과. legacy·frontend·runtime 변경 없음. ADR-077 추가
+- 2026-09-30 범위 조정(사용자 결정, ADR-078): 합성 benchmark가 원래 table에 과적합되고 있다는 지적을 받아 benchmark 개선과 8-11 일반화 설계를 프로토타입 이후로 미뤘다. 이론·실습 시간은 넣지 않는다. 프로토타입 순서는 8-12 → 8-07 축소판 → browser smoke·시연 절차다. 8-10 함정 가운데 `capacity`(강의실 좌석)와 `credit_hours`(세트마다 다른 뜻)가 비현실적이었다는 점을 결과 문서에 적었다.
+- 2026-09-30 Phase 8-12 업로드 흐름 AI mapping 제안 연결 완료(ADR-078). `OllamaJsonModel`·`schema_conforms`·column prompt 조립을 `backend/adaptive/mapping/ai_proposal.py`로 옮겼다. benchmark는 이를 가져다 쓰며 prompt 문자열은 옮기기 전과 같다(전 변형·버전 hash 비교, 테스트 고정). `register_database(mapping_proposer=)`는 메모리 sample로 모델을 한 번 부르고, 계약 검사를 통과한 제안만 저장하며, 실패하면 규칙 제안을 쓴다. 업로드 응답은 `private-sqlite-upload-v2`(`mapping.proposer`: `AI`/`RULES`/`AI_UNAVAILABLE`), 검토 응답은 `private-mapping-review-v2`(후보 `source`)다. 등록은 threadpool에서 실행한다. CLI `--mapping-model-tag`, dev launcher는 loopback이면 기본 켬(`MAPPING_MODEL`로 tag 변경, 상태 `mapping_ai`). 화면에는 제안 출처와 후보별 AI 표시를 넣었다. `gpt-6-luna` high review-only 지적 1건(검토 후보 `review_status`를 아무 문자열이나 받음, 6-19부터)을 재현해 알려진 상태만 받도록 고쳤다. live smoke(이름 변경 합성 DB 1개): AI 첫 후보 15/15, 규칙 1/15, 13초. 결과는 `docs/phase8-12-ai-proposal-upload-results-2026-09-30.md`에 두었다. 관련 backend 204개와 신규 33개, frontend Node 93개·ESLint·tsc·vite build, 전체 pytest 1588개·6 skip·610 subtests(뒤에 추가한 CLI 테스트 6개는 신규 33개 실행에 포함), compileall, diff check 통과. legacy·PostgreSQL 실행 경로 변경 없음. ADR-078 추가

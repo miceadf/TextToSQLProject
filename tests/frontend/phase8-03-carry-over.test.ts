@@ -20,7 +20,7 @@ function field(name: string, decision = 'PENDING') {
 
 function pendingDetail(overrides: Record<string, unknown> = {}) {
   return {
-    version: 'private-mapping-review-v1',
+    version: 'private-mapping-review-v2',
     database_id: 'next-db',
     label: 'Next DB',
     status: 'PENDING_REVIEW',

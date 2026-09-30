@@ -11,6 +11,8 @@ class MappingSignal(str, Enum):
     COLUMN_NAME = "COLUMN_NAME"
     DATA_TYPE = "DATA_TYPE"
     TABLE_NAME = "TABLE_NAME"
+    # Phase 8-12: a local model chose this column (added to the rule evidence).
+    AI_PROPOSAL = "AI_PROPOSAL"
 
 
 class MappingReviewStatus(str, Enum):

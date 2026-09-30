@@ -108,6 +108,20 @@ class RuleBasedSchemaAligner:
             unmapped_fields=unmapped_fields,
         )
 
+    def score_column(
+        self,
+        ontology: DomainOntology,
+        semantic_field: str,
+        table: TableCatalog,
+        column: ColumnCatalog,
+    ) -> MappingCandidate:
+        """The rule score of one given column, even below the candidate minimum."""
+        for entity in ontology.entities:
+            for field in entity.fields:
+                if field.name == semantic_field:
+                    return self._score_candidate(entity, field, table, column)
+        raise ValueError("unknown semantic field")
+
     def _rank_field(
         self,
         catalog: DatabaseCatalog,

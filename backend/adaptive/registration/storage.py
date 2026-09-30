@@ -28,7 +28,7 @@ import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from pydantic import ValidationError
 
@@ -518,18 +518,78 @@ def _ensure_private_root(private_root: Path) -> None:
         raise _fail(RegistrationErrorCode.PRIVATE_STORAGE_INVALID)
 
 
+# (catalog with in-memory samples, ontology, rule proposal) -> proposal or None
+MappingProposer = Callable[[DatabaseCatalog, Any, MappingProposal], "MappingProposal | None"]
+PROPOSER_SAMPLE_LIMIT = 10
+
+
+def _proposal_is_consistent(
+    candidate: Any, rules: MappingProposal, catalog: DatabaseCatalog
+) -> bool:
+    if not isinstance(candidate, MappingProposal):
+        return False
+    if (
+        candidate.database_id != rules.database_id
+        or candidate.schema_fingerprint != rules.schema_fingerprint
+        or candidate.ontology_version != rules.ontology_version
+        or set(candidate.candidates) != set(rules.candidates)
+        or not set(candidate.unmapped_fields) <= set(rules.candidates)
+    ):
+        return False
+    physical = {(table.name, column.name) for table in catalog.tables for column in table.columns}
+    return all(
+        (option.table, option.column) in physical
+        for options in candidate.candidates.values()
+        for option in options
+    )
+
+
+def _proposal_with_model(
+    proposer: MappingProposer,
+    database_id: str,
+    staged_db: Path,
+    catalog: DatabaseCatalog,
+    ontology: Any,
+    rules: MappingProposal,
+) -> MappingProposal:
+    """Model proposal when it is usable, else the rule proposal.
+
+    Samples are read into memory for the prompt only; the stored catalog and
+    proposal stay sample-free.
+    """
+    try:
+        sampled = SQLiteAdapter(
+            {database_id: staged_db}, immutable=True, sample_limit=PROPOSER_SAMPLE_LIMIT
+        ).inspect(database_id, include_samples=True)
+        if sampled.schema_fingerprint != catalog.schema_fingerprint:
+            return rules
+        candidate = proposer(sampled, ontology, rules)
+    except Exception:
+        return rules
+    if candidate is None or not _proposal_is_consistent(candidate, rules, catalog):
+        return rules
+    try:
+        # Round-trip so nothing but the contract's own fields is kept.
+        return MappingProposal.model_validate(candidate.model_dump(mode="json"))
+    except Exception:
+        return rules
+
+
 def register_database(
     *,
     repository_root: str | Path,
     source_path: str | Path,
     database_id: str,
     label: str,
+    mapping_proposer: MappingProposer | None = None,
 ) -> Path:
     """Validate, copy, and publish one standalone SQLite file.
 
     Returns the path of the published ``registration.json`` commit marker.
     The new registration is ``PENDING_REVIEW`` and is not selectable from
-    the Phase 6-16 fixed registry.
+    the Phase 6-16 fixed registry. With ``mapping_proposer`` (Phase 8-12) a
+    local model may reorder the review candidates; any failure keeps the
+    rule proposal.
     """
     database_id = validate_database_id(database_id)
     label = validate_label(label)
@@ -599,6 +659,10 @@ def register_database(
             proposal = RuleBasedSchemaAligner().align(catalog, ontology)
         except (OSError, RuntimeError, ValueError):
             raise _fail(RegistrationErrorCode.MAPPING_FAILED) from None
+        if mapping_proposer is not None:
+            proposal = _proposal_with_model(
+                mapping_proposer, database_id, staged_db, catalog, ontology, proposal
+            )
         for table in catalog.tables:
             for column in table.columns:
                 if column.sample_values:

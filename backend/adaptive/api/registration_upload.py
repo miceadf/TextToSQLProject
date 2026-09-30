@@ -25,12 +25,15 @@ from urllib.parse import unquote_plus
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
+from ..mapping.ai_proposal import is_ai_candidate
 from ..registration import MAX_SOURCE_BYTES, REGISTRATION_STATUS
 from ..registration.errors import RegistrationError, RegistrationErrorCode
 
 
-SQLITE_UPLOAD_VERSION = "private-sqlite-upload-v1"
+# v2 (Phase 8-12): ``mapping.proposer`` and the ``AI_PROPOSAL`` reason signal.
+SQLITE_UPLOAD_VERSION = "private-sqlite-upload-v2"
 SQLITE_UPLOAD_PATH = "/api/adaptive/v1/registrations/upload"
 SQLITE_UPLOAD_CONTENT_TYPE = "application/x-sqlite3"
 
@@ -151,7 +154,7 @@ def _summarize_schema(catalog: Any) -> dict[str, Any] | None:
         return None
 
 
-def _summarize_mapping(proposal: Any) -> dict[str, Any] | None:
+def _summarize_mapping(proposal: Any, *, model_configured: bool = False) -> dict[str, Any] | None:
     try:
         candidates = dict(proposal.candidates)
         unmapped = [str(item) for item in list(proposal.unmapped_fields)]
@@ -197,8 +200,16 @@ def _summarize_mapping(proposal: Any) -> dict[str, Any] | None:
                     },
                 }
             )
+        has_ai = any(
+            is_ai_candidate(option) for options in candidates.values() for option in options
+        )
+        if has_ai:
+            proposer = "AI"
+        else:
+            proposer = "AI_UNAVAILABLE" if model_configured else "RULES"
         return {
             "ontology_version": ontology_version,
+            "proposer": proposer,
             "field_count": len(fields),
             "unmapped_count": len(unmapped),
             "unmapped_fields": sorted(unmapped),
@@ -228,8 +239,14 @@ def register_sqlite_upload_routes(
     repository_root: str | Path | None = None,
     register_database: Callable[..., Path] | None = None,
     load_registration: Callable[..., Any] | None = None,
+    mapping_proposer: Callable[..., Any] | None = None,
 ) -> None:
-    """Attach the registration-only raw-body upload endpoint."""
+    """Attach the registration-only raw-body upload endpoint.
+
+    ``mapping_proposer`` (Phase 8-12) lets a local model order the review
+    candidates; registration then runs in a worker thread so waiting for the
+    model never blocks other requests.
+    """
     if repository_root is None:
         resolved_root = _discover_repository_root()
     else:
@@ -251,6 +268,11 @@ def register_sqlite_upload_routes(
         load_fn = load_registration
     if not callable(register_fn) or not callable(load_fn):
         raise RuntimeError("synthetic prototype unavailable")
+    if mapping_proposer is not None and not callable(mapping_proposer):
+        raise RuntimeError("synthetic prototype unavailable")
+    proposer_kwargs: dict[str, Any] = (
+        {} if mapping_proposer is None else {"mapping_proposer": mapping_proposer}
+    )
     try:
         app.state.sqlite_upload_repository_root = str(resolved_root)
     except Exception:
@@ -336,18 +358,22 @@ def register_sqlite_upload_routes(
 
                 assert tmp_name is not None
                 try:
-                    register_fn(
+                    await run_in_threadpool(
+                        register_fn,
                         repository_root=root,
                         source_path=tmp_name,
                         database_id=database_id,
                         label=label,
+                        **proposer_kwargs,
                     )
                 except RegistrationError as exc:
                     return _error_response(_registration_to_public_code(exc))
                 except Exception:
                     return _error_response(SqliteUploadErrorCode.INTERNAL_ERROR.value)
                 try:
-                    loaded = load_fn(repository_root=root, database_id=database_id)
+                    loaded = await run_in_threadpool(
+                        load_fn, repository_root=root, database_id=database_id
+                    )
                 except RegistrationError:
                     return _error_response(SqliteUploadErrorCode.INTERNAL_ERROR.value)
                 except Exception:
@@ -362,7 +388,9 @@ def register_sqlite_upload_routes(
                     if len(fingerprint) != _FINGERPRINT_PATTERN_LEN:
                         return _error_response(SqliteUploadErrorCode.INTERNAL_ERROR.value)
                     schema_summary = _summarize_schema(loaded.catalog)
-                    mapping_summary = _summarize_mapping(loaded.proposal)
+                    mapping_summary = _summarize_mapping(
+                        loaded.proposal, model_configured=mapping_proposer is not None
+                    )
                     if schema_summary is None or mapping_summary is None:
                         return _error_response(SqliteUploadErrorCode.INTERNAL_ERROR.value)
                     payload = {

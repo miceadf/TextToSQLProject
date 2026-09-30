@@ -94,6 +94,7 @@ function FieldRow({
           <div key={candidate.index}>
             후보 {candidate.index}: {candidate.table}.{candidate.column} ({candidate.confidence}) ·{' '}
             {candidate.review_status}
+            {candidate.source === 'AI' ? ' · AI 제안' : null}
           </div>
         ))}
         {field.candidates.length === 0 ? <div>후보 없음 (remap 필요)</div> : null}

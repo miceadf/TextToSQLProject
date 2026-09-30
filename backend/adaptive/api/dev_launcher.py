@@ -10,7 +10,9 @@ chatbot see the same database and model:
   profile exists and the variable is not already set (Phase 7-17: the view
   profile and the base-table profile);
 - Ollama is enabled only for a loopback base URL, with the no-system request
-  format the fine-tuned model needs (ADR-059).
+  format the fine-tuned model needs (ADR-059);
+- upload mapping proposals (Phase 8-12) use the same loopback base URL (or the
+  default one) with ``MAPPING_MODEL`` or the benchmarked default tag.
 
 Each optional part degrades on its own: a missing profile, an unreachable or
 drifted database, or an invalid Ollama setting starts the prototype without
@@ -34,14 +36,14 @@ LEGACY_SPECS = (BASE_SPEC, VIEW_SPEC)
 ENV_FILE = Path("backend/.env")
 REQUEST_FORMAT = "alpaca-raw-no-system-v1"
 OLLAMA_TIMEOUT = "120"
-_ENV_KEYS = frozenset({"DATABASE_URL", "OLLAMA_BASE_URL", "OLLAMA_MODEL"})
+_ENV_KEYS = frozenset({"DATABASE_URL", "OLLAMA_BASE_URL", "OLLAMA_MODEL", "MAPPING_MODEL"})
 _FIXED_HOST = "127.0.0.1"
 
-__all__ = ["main", "plan_launch", "read_env_file"]
+__all__ = ["main", "plan_launch", "plan_mapping_model", "read_env_file"]
 
 
 def read_env_file(path: Path) -> dict[str, str]:
-    """Read only the three known keys; comments and other keys are ignored."""
+    """Read only the known keys; comments and other keys are ignored."""
     values: dict[str, str] = {}
     try:
         text = path.read_text(encoding="utf-8-sig")
@@ -95,6 +97,28 @@ def plan_launch(
     return profile_ids, ollama, status
 
 
+def plan_mapping_model(env_values: dict[str, str]) -> tuple[dict[str, str] | None, str]:
+    """Upload mapping proposals: (model args or None, status text)."""
+    from ..mapping.ai_proposal import DEFAULT_MAPPING_BASE_URL, DEFAULT_MAPPING_MODEL
+    from .ollama_startup import parse_ollama_startup_config
+
+    tag = env_values.get("MAPPING_MODEL") or DEFAULT_MAPPING_MODEL
+    base_url = (env_values.get("OLLAMA_BASE_URL") or "").rstrip("/") or DEFAULT_MAPPING_BASE_URL
+    try:
+        parse_ollama_startup_config(tag, base_url, OLLAMA_TIMEOUT)
+    except Exception:
+        return None, "disabled (INVALID_OR_NON_LOOPBACK_CONFIG)"
+    return {"model_tag": tag, "base_url": base_url}, "enabled"
+
+
+def _build_mapping_model(settings: dict[str, str]) -> Any:
+    from ..mapping.ai_proposal import OllamaJsonModel
+
+    return OllamaJsonModel(
+        settings["model_tag"], base_url=settings["base_url"], timeout_seconds=int(OLLAMA_TIMEOUT)
+    )
+
+
 def _load_profiles(profile_ids: list[str], repository_root: Path) -> list[Any]:
     from .postgres_startup_profile import load_postgres_startup_profiles
 
@@ -111,7 +135,9 @@ def _build_model(ollama: dict[str, str]) -> Any:
     )
 
 
-def _create_app(profiles: list[Any] | None, model: Any | None) -> Any:
+def _create_app(
+    profiles: list[Any] | None, model: Any | None, mapping_model: Any | None = None
+) -> Any:
     from .synthetic_prototype import create_synthetic_clarification_prototype
 
     kwargs: dict[str, Any] = {}
@@ -119,6 +145,8 @@ def _create_app(profiles: list[Any] | None, model: Any | None) -> Any:
         kwargs["postgres_profiles"] = profiles
     if model is not None:
         kwargs["ollama_model"] = model
+    if mapping_model is not None:
+        kwargs["mapping_model"] = mapping_model
     return create_synthetic_clarification_prototype(**kwargs)
 
 
@@ -165,10 +193,17 @@ def main(argv: list[str] | None = None) -> int:
             model = _build_model(ollama)
         except Exception:
             status["ollama"] = "disabled (STARTUP_FAILED)"
+    mapping_settings, status["mapping_ai"] = plan_mapping_model(env_values)
+    mapping_model: Any | None = None
+    if mapping_settings is not None:
+        try:
+            mapping_model = _build_mapping_model(mapping_settings)
+        except Exception:
+            status["mapping_ai"] = "disabled (STARTUP_FAILED)"
 
     def create(profiles: list[Any] | None, with_model: Any | None) -> Any:
         try:
-            return _create_app(profiles, with_model)
+            return _create_app(profiles, with_model, mapping_model)
         except Exception:
             return None
 

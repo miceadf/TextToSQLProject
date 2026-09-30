@@ -29,11 +29,13 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..mapping.ai_proposal import is_ai_candidate
 from ..registration import reviews as review_storage
 from ..registration.reviews import ReviewError, ReviewErrorCode
 
 
-REVIEW_VERSION = "private-mapping-review-v1"
+# v2 (Phase 8-12): review candidates carry ``source`` (AI or RULES).
+REVIEW_VERSION = "private-mapping-review-v2"
 REVIEW_PATH = "/api/adaptive/v1/registrations/review"
 COMPARE_VERSION = "registration-compare-v1"
 COMPARE_PATH = "/api/adaptive/v1/registrations/compare"
@@ -241,6 +243,8 @@ def _summarize_review(loaded_registration: Any, draft: Any) -> dict[str, Any] | 
                         "column": str(option.column),
                         "confidence": float(option.confidence),
                         "review_status": str(review_status),
+                        # Phase 8-12: who proposed this candidate.
+                        "source": "AI" if is_ai_candidate(option) else "RULES",
                     }
                 )
             decision = getattr(entry.decision, "value", entry.decision)

@@ -25,7 +25,7 @@ function version(n: number, overrides: Record<string, unknown> = {}) {
 
 function publishedDetail(overrides: Record<string, unknown> = {}) {
   return {
-    version: 'private-mapping-review-v1',
+    version: 'private-mapping-review-v2',
     database_id: 'review-db-one',
     label: 'Review DB',
     status: 'PUBLISHED',
@@ -105,7 +105,7 @@ describe('phase8-01 activation client', () => {
   }
 
   const success = {
-    version: 'private-mapping-review-v1',
+    version: 'private-mapping-review-v2',
     database_id: 'review-db-one',
     status: 'PUBLISHED',
     mapping_version: 1,

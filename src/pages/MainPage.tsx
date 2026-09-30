@@ -26,6 +26,7 @@ import {
   type RegistryDatabase,
 } from '../adaptive-prototype/databases.ts'
 import {
+  PROPOSER_LABELS,
   UPLOAD_PENDING_NOTICE,
   canStartUpload,
   toUploadMessage,
@@ -748,13 +749,17 @@ export default function MainPage({
                   ))}
                   <div>
                     매핑 {uploadResult.mapping.field_count}개 필드 · 미매핑{' '}
-                    {uploadResult.mapping.unmapped_count}개
+                    {uploadResult.mapping.unmapped_count}개 · 제안:{' '}
+                    {PROPOSER_LABELS[uploadResult.mapping.proposer]}
                   </div>
                   {uploadResult.mapping.fields.map((field) => (
                     <div key={field.semantic_field}>
                       {field.semantic_field} · {field.review_status}
                       {field.top_candidate !== null
                         ? ` · ${field.top_candidate.table}.${field.top_candidate.column} (${field.top_candidate.confidence})`
+                        : null}
+                      {field.top_candidate?.reasons.some((reason) => reason.signal === 'AI_PROPOSAL')
+                        ? ' · AI'
                         : null}
                     </div>
                   ))}

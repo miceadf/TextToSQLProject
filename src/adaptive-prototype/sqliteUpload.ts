@@ -1,7 +1,7 @@
 import { isDatabaseId } from './databases.ts';
 
 export const SQLITE_UPLOAD_PATH = '/api/adaptive/v1/registrations/upload';
-export const SQLITE_UPLOAD_VERSION = 'private-sqlite-upload-v1';
+export const SQLITE_UPLOAD_VERSION = 'private-sqlite-upload-v2';
 export const SQLITE_UPLOAD_CONTENT_TYPE = 'application/x-sqlite3';
 
 export const SQLITE_UPLOAD_STATUS = 'PENDING_REVIEW';
@@ -86,8 +86,20 @@ export interface MappingFieldSummary {
   } | null;
 }
 
+// Phase 8-12: who ordered the candidates. AI_UNAVAILABLE means a model was
+// configured but gave nothing usable, so the rule candidates are shown.
+export type MappingProposer = 'AI' | 'RULES' | 'AI_UNAVAILABLE';
+const MAPPING_PROPOSERS: ReadonlySet<string> = new Set(['AI', 'RULES', 'AI_UNAVAILABLE']);
+export const PROPOSER_LABELS: Record<MappingProposer, string> = {
+  AI: 'AI 제안',
+  RULES: '규칙 기반',
+  AI_UNAVAILABLE: '규칙 기반(AI 사용 불가)',
+};
+const MAPPING_SIGNALS: ReadonlySet<string> = new Set(['COLUMN_NAME', 'DATA_TYPE', 'TABLE_NAME', 'AI_PROPOSAL']);
+
 export interface MappingSummary {
   ontology_version: number;
+  proposer: MappingProposer;
   field_count: number;
   unmapped_count: number;
   unmapped_fields: string[];
@@ -214,7 +226,7 @@ function parseReason(value: unknown): MappingReason | null {
   if (!isPlainObject(value)) return null;
   if (!hasOnlyKeys(value, ['signal', 'score', 'detail'])) return null;
   const signal = value['signal'];
-  if (typeof signal !== 'string' || !['COLUMN_NAME', 'DATA_TYPE', 'TABLE_NAME'].includes(signal)) return null;
+  if (typeof signal !== 'string' || !MAPPING_SIGNALS.has(signal)) return null;
   if (typeof value['detail'] !== 'string') return null;
   if (typeof value['score'] !== 'number' || !Number.isFinite(value['score']) || value['score'] < 0 || value['score'] > 1) return null;
   return { signal, score: value['score'], detail: value['detail'] };
@@ -258,7 +270,9 @@ function parseField(value: unknown): MappingFieldSummary | null {
 
 function parseMapping(value: unknown): MappingSummary | null {
   if (!isPlainObject(value)) return null;
-  if (!hasOnlyKeys(value, ['ontology_version', 'field_count', 'unmapped_count', 'unmapped_fields', 'fields'])) return null;
+  if (!hasOnlyKeys(value, ['ontology_version', 'proposer', 'field_count', 'unmapped_count', 'unmapped_fields', 'fields'])) return null;
+  const proposer = value['proposer'];
+  if (typeof proposer !== 'string' || !MAPPING_PROPOSERS.has(proposer)) return null;
   if (!Array.isArray(value['unmapped_fields']) || !Array.isArray(value['fields'])) return null;
   if (!isPositiveInteger(value['ontology_version'])) return null;
   if (!isNonNegativeInteger(value['field_count']) || !isNonNegativeInteger(value['unmapped_count'])) return null;
@@ -278,6 +292,7 @@ function parseMapping(value: unknown): MappingSummary | null {
   if (new Set(fields.map((field) => field.semantic_field)).size !== fields.length) return null;
   return {
     ontology_version: value['ontology_version'],
+    proposer: proposer as MappingProposer,
     field_count: value['field_count'],
     unmapped_count: value['unmapped_count'],
     unmapped_fields: unmapped,

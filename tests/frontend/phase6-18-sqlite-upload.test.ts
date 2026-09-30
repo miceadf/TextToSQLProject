@@ -19,7 +19,7 @@ import { isStaleResponse, nextOperation } from '../../src/adaptive-prototype/sta
 
 function successPayload() {
   return {
-    version: 'private-sqlite-upload-v1',
+    version: 'private-sqlite-upload-v2',
     database_id: 'review-db-one',
     label: 'Review DB',
     status: 'PENDING_REVIEW',
@@ -55,6 +55,7 @@ function successPayload() {
     },
     mapping: {
       ontology_version: 1,
+      proposer: 'AI',
       field_count: 1,
       unmapped_count: 0,
       unmapped_fields: [],
@@ -66,7 +67,10 @@ function successPayload() {
             table: 'course_offerings',
             column: 'course_name',
             confidence: 0.8,
-            reasons: [{ signal: 'COLUMN_NAME', score: 0.8, detail: 'name overlap' }],
+            reasons: [
+              { signal: 'COLUMN_NAME', score: 0.8, detail: 'name overlap' },
+              { signal: 'AI_PROPOSAL', score: 1, detail: 'local model chose this column (ai-mapping-v2)' },
+            ],
           },
         },
       ],
@@ -114,6 +118,26 @@ describe('phase6-18 upload parser and request contract', () => {
       sample_values: ['row-value'],
     });
     assert.equal(parseUploadResponse(withSamples), null);
+  });
+
+  it('phase8-12: requires a known proposer and accepts the AI reason', () => {
+    const parsed = parseUploadResponse(successPayload());
+    assert.equal(parsed?.mapping.proposer, 'AI');
+    assert.equal(parsed?.mapping.fields[0]?.top_candidate?.reasons[1]?.signal, 'AI_PROPOSAL');
+    for (const proposer of ['RULES', 'AI_UNAVAILABLE']) {
+      const payload = structuredClone(successPayload());
+      payload.mapping.proposer = proposer;
+      assert.equal(parseUploadResponse(payload)?.mapping.proposer, proposer);
+    }
+    for (const proposer of [undefined, 'MODEL', 1]) {
+      const payload = structuredClone(successPayload()) as unknown as { mapping: Record<string, unknown> };
+      if (proposer === undefined) delete payload.mapping['proposer'];
+      else payload.mapping['proposer'] = proposer;
+      assert.equal(parseUploadResponse(payload), null);
+    }
+    const unknownSignal = structuredClone(successPayload());
+    unknownSignal.mapping.fields[0]!.top_candidate!.reasons[1]!.signal = 'MODEL_GUESS';
+    assert.equal(parseUploadResponse(unknownSignal), null);
   });
 
   it('parses fixed error shape and rejects detail reflection', () => {
@@ -169,7 +193,7 @@ describe('phase6-18 upload parser and request contract', () => {
     );
     assert.equal(getUploadErrorMessage('UNKNOWN_CODE_XYZ'), '처리 중 오류가 발생했습니다. 다시 시도해 주세요.');
     assert.ok(UPLOAD_PENDING_NOTICE.includes('검토 전에는 조회·질의에 사용할 수 없음'));
-    assert.equal(SQLITE_UPLOAD_VERSION, 'private-sqlite-upload-v1');
+    assert.equal(SQLITE_UPLOAD_VERSION, 'private-sqlite-upload-v2');
   });
 });
 

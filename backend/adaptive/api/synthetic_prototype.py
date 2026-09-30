@@ -385,13 +385,27 @@ class _FixedConstraintProvider:
         return {"entity": entity, "select": [ref], "filters": [], "limit": 50}
 
 
+def _upload_proposer(model: Any) -> Any:
+    from ..mapping.ai_proposal import propose_upload_mapping
+
+    def propose(catalog: Any, ontology: Any, rules: Any) -> Any:
+        return propose_upload_mapping(catalog, ontology, rules, model=model)
+
+    return propose
+
+
 def create_synthetic_clarification_prototype(
     postgres_profiles: list[Any] | None = None,
     postgres_adapters: dict[str, Any] | None = None,
     postgres_executors: dict[str, Any] | None = None,
     ollama_model: Any | None = None,
+    mapping_model: Any | None = None,
 ) -> FastAPI:
-    """Assemble the synthetic clarification prototype app."""
+    """Assemble the synthetic clarification prototype app.
+
+    ``mapping_model`` (Phase 8-12) is a JSON-schema model call used only to
+    order the review candidates of uploaded databases.
+    """
     tmp: Any = None
     try:
         if postgres_profiles is None:
@@ -571,8 +585,15 @@ def create_synthetic_clarification_prototype(
             schema_is_current=schema_is_current,
             postgres_contexts=pg_contexts,
         )
+        if mapping_model is not None and not callable(mapping_model):
+            raise RuntimeError(_PROTOTYPE_CREATION_FAILURE)
         try:
-            register_sqlite_upload_routes(app)
+            register_sqlite_upload_routes(
+                app,
+                mapping_proposer=(
+                    None if mapping_model is None else _upload_proposer(mapping_model)
+                ),
+            )
         except Exception:
             raise RuntimeError(_PROTOTYPE_CREATION_FAILURE) from None
         try:
@@ -648,6 +669,9 @@ def create_synthetic_clarification_prototype(
         app.state.synthetic_prototype_tmpdir = tmp.name
         app.state.synthetic_prototype_cleanup = _cleanup
         app.state.synthetic_postgres_database_ids = tuple(sorted(pg_contexts))
+        app.state.synthetic_prototype_mapping_proposer_kind = (
+            "rules" if mapping_model is None else "ai"
+        )
     except Exception:
         try:
             _cleanup()
@@ -725,6 +749,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Ollama request timeout in seconds (1-120).",
     )
     parser.add_argument(
+        "--mapping-model-tag",
+        action=_StoreOnce,
+        default=None,
+        metavar="TAG",
+        help="Order upload mapping candidates with this loopback Ollama model (Phase 8-12).",
+    )
+    parser.add_argument(
         "--ollama-request-format",
         action=_StoreOnce,
         default=None,
@@ -782,7 +813,11 @@ def main(argv: list[str] | None = None) -> int:
         getattr(args, "ollama_request_format", None),
     )
     ollama_model: Any = None
-    if any(value is not None for value in ollama_values):
+    # The base URL alone may serve only the mapping model (Phase 8-12).
+    chat_values = ollama_values if getattr(args, "mapping_model_tag", None) is None else (
+        ollama_values[0], ollama_values[2], ollama_values[3]
+    )
+    if any(value is not None for value in chat_values):
         # Explicit opt-in only; builds the adapter without contacting Ollama.
         try:
             from .ollama_startup import (
@@ -795,6 +830,19 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError(_CLI_CONFIG_FAILURE)
             ollama_model = build_startup_ollama_model(
                 parse_ollama_startup_config(*ollama_values)
+            )
+        except Exception:
+            print(_CLI_CONFIG_FAILURE, file=_sys.stderr, flush=True)
+            return 2
+    mapping_model: Any = None
+    mapping_tag = getattr(args, "mapping_model_tag", None)
+    if mapping_tag is not None:
+        try:
+            from ..mapping.ai_proposal import DEFAULT_MAPPING_BASE_URL, OllamaJsonModel
+
+            mapping_model = OllamaJsonModel(
+                mapping_tag,
+                base_url=getattr(args, "ollama_base_url", None) or DEFAULT_MAPPING_BASE_URL,
             )
         except Exception:
             print(_CLI_CONFIG_FAILURE, file=_sys.stderr, flush=True)
@@ -822,14 +870,21 @@ def main(argv: list[str] | None = None) -> int:
         factory_kwargs: dict[str, Any] = {"postgres_profiles": pg_profiles}
         if ollama_model is not None:
             factory_kwargs["ollama_model"] = ollama_model
+        if mapping_model is not None:
+            factory_kwargs["mapping_model"] = mapping_model
         try:
             local_app = create_synthetic_clarification_prototype(**factory_kwargs)
         except Exception:
             print(_CLI_CONFIG_FAILURE, file=_sys.stderr, flush=True)
             return 2
-    elif ollama_model is not None:
+    elif ollama_model is not None or mapping_model is not None:
+        model_kwargs: dict[str, Any] = {}
+        if ollama_model is not None:
+            model_kwargs["ollama_model"] = ollama_model
+        if mapping_model is not None:
+            model_kwargs["mapping_model"] = mapping_model
         try:
-            local_app = create_synthetic_clarification_prototype(ollama_model=ollama_model)
+            local_app = create_synthetic_clarification_prototype(**model_kwargs)
         except Exception:
             print(_CLI_CONFIG_FAILURE, file=_sys.stderr, flush=True)
             return 2
