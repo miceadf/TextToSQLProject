@@ -68,7 +68,7 @@ TABLE_COLUMNS: dict[str, tuple[str, ...]] = {
     "gyosu": ("gs_no", "gs_nm", "hg_cd"),
     "gyogwamok": ("gm_cd", "gm_nm", "hg_cd", "isu_cd", "hakjeom", "iron_si", "silsup_si", "suggang_hangnyeon"),
     "gangjwa": ("ks_id", "gm_cd", "gs_no", "nyeondo", "hakgi_cd", "ban_no", "jeongwon", "sugang_inwon"),
-    "siganpyo": ("sp_id", "ks_id", "yoil", "si_st", "si_ed"),
+    "siganpyo": ("sp_id", "ks_id", "yoil", "si_st", "si_ed", "gangui_sil"),
 }
 
 _DDL = (
@@ -89,8 +89,22 @@ _DDL = (
     " sugang_inwon integer NOT NULL, UNIQUE (nyeondo, hakgi_cd, gm_cd, ban_no))",
     "CREATE TABLE {siganpyo} (sp_id integer PRIMARY KEY,"
     " ks_id integer NOT NULL REFERENCES {gangjwa} (ks_id), yoil char(3) NOT NULL,"
-    " si_st char(4) NOT NULL, si_ed char(4) NOT NULL)",
+    " si_st char(4) NOT NULL, si_ed char(4) NOT NULL, gangui_sil varchar(20) NOT NULL)",
 )
+
+
+# Phase 8-19: classroom buildings by department, for the extension-field check.
+# Rooms come from the offering number, not the random stream, so every other
+# value stays exactly as in Phase 8-17.
+BUILDINGS = {
+    "SW": "IT관", "AI": "IT관", "EE": "IT관", "ME": "공학관", "IE": "공학관", "CE": "공학관",
+    "BA": "경영관", "EC": "경영관", "KL": "인문관", "EL": "인문관", "LA": "교양관",
+}
+
+
+def _room(code: str, offering_id: int) -> str:
+    floor = 1 + offering_id % 4
+    return f"{BUILDINGS[code]} {floor * 100 + (offering_id * 7) % 20 + 1}호"
 
 
 def _add_minutes(hhmm: str, minutes: int) -> str:
@@ -146,7 +160,7 @@ def school_rows(seed: int = SEED) -> dict[str, list[tuple[Any, ...]]]:
                     sessions = [(rng.choice(WEEKDAYS), start, _add_minutes(start, length))]
                 for day, begin, end in sessions:
                     schedule_id += 1
-                    rows["siganpyo"].append((schedule_id, offering_id, day, begin, end))
+                    rows["siganpyo"].append((schedule_id, offering_id, day, begin, end, _room(code, offering_id)))
     return rows
 
 
@@ -158,14 +172,14 @@ def joined_rows(seed: int = SEED) -> list[dict[str, Any]]:
     course = {row[0]: row for row in rows["gyogwamok"]}
     offering = {row[0]: row for row in rows["gangjwa"]}
     joined = []
-    for _sid, ks_id, day, start, end in rows["siganpyo"]:
+    for _sid, ks_id, day, start, end, room in rows["siganpyo"]:
         _ks, gm_cd, gs_no, year, semester, section, capacity, enrolled = offering[ks_id]
         _gm, name, dept, category, credits, _theory, _practice, grade = course[gm_cd]
         joined.append({
             "course_code": gm_cd, "course_name": name, "department": department[dept], "category": category,
             "credits": credits, "grade": grade, "instructor": professor[gs_no], "year": year,
             "semester": semester, "section": section, "capacity": capacity, "enrolled": enrolled,
-            "day": day, "start": start, "end": end,
+            "day": day, "start": start, "end": end, "room": room,
         })
     return joined
 
@@ -210,6 +224,9 @@ QUESTIONS: tuple[Question, ...] = (
     # grade; that premise was wrong (the legacy chatbot answered it), so the
     # field was added and the gold is the first-year courses.
     Question("q12", "1학년 대상 과목 보여줘", lambda r: r["grade"] == 1, "대상 학년"),
+    # Phase 8-19: the classroom is an extension field of this database only.
+    Question("q13", "IT관 303호 수업 보여줘", lambda r: r["room"] == "IT관 303호", "확장 항목(강의실)"),
+    Question("q14", "교양관에서 하는 수업 보여줘", lambda r: r["room"].startswith("교양관 "), "확장 항목(강의실 건물)"),
 )
 
 

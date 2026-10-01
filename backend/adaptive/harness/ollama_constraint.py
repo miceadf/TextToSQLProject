@@ -111,8 +111,11 @@ def _strict_revalidate(model_cls: type[Any], value: Any) -> Any:
         if not isinstance(nested, dict):
             raise _fail()
         expected = {"name", "data_type", "allowed_operators"}
+        # Phase 8-19: an optional label (None, or text for an extension field).
         if any(
-            not isinstance(item, dict) or set(item) != expected
+            not isinstance(item, dict)
+            or set(item) not in (expected, expected | {"label"})
+            or not (item.get("label") is None or isinstance(item.get("label"), str))
             for item in nested.values()
         ):
             raise _fail()

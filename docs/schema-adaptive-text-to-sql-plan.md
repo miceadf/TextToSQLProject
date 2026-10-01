@@ -696,6 +696,7 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 - [x] Phase 8-09 AI mapping 제안(`ai-mapping-v1.1`: 로컬 `qwen2.5-coder:7b-instruct`, schema 제한 출력, runtime 규칙 검증기, 분반 table anchor 규칙)과 규칙 기반 비교(질문 AI 223/240, 규칙 205, 규칙+anchor 206; 값 사전 0/3·의미 함정 0/2는 미해결; 합성·L1/L3 전)
 - [x] Phase 8-10 AI mapping 제안 v2(저장 값 일치 검사, 값 사전 전용 단계, 관리자 column 설명 `admin-notes-v1`·코드표 직접 사전, 보류 변형 6개·사전 등록 hash; 기존 세트 223→232→235/240, 보류 세트 104→116/120; 자연어 설명은 의미 함정 미해결)
 - [ ] Phase 8-11 DB별 ontology 확장 field와 매개변수형 변환(공통 ontology는 팀 관리, DB별 확장은 관리자가 데이터로 선언, 변환은 닫힌 목록을 매개변수형으로 확장; 첫 사례 이론·실습 시간; 챗봇 응답·화면의 field 목록 일반화) — 프로토타입 이후로 보류(ADR-078)
+- [x] Phase 8-19 DB별 확장 항목(8-11 축소판): 관리자 선언(화면 패널), profile v5, runtime 검사, 챗봇 항목 목록·카드·값 힌트, 가상 학교 강의실(14/14)·레거시 강의실·수업방식 확인(ADR-087)
 - [x] Phase 8-18 공통 항목 대상 학년(ontology 버전 2, 추가형 호환), 챗봇 카드 항목 일반화, SQLite 게시 필수 항목을 강의 목록 15개로, carry-over `NOT_IN_BASE`, 레거시 profile `target_year`(ADR-085)
 - [x] Phase 8-17 다른 학교 합성 DB 화면 검증(`other_school`, 고정 질문 11/12), planner의 ontology 관계 우선, `HHMM_TEXT_TO_HHMM`, 여러 시간표 행 강의 목록, 약어 길이·게시 차단 안내(ADR-084)
 - [x] Phase 8-16 등록 목록(다시 열기)·연결 신원 고정·등록 시 이름 규칙·학점 형식(`1/.5/1`), 처음부터 끝까지 browser smoke(레거시 DB 화면 등록 → 검토 → 약어 → 게시 → 챗봇 82건), 시연 절차 `docs/demo-procedure.md`(ADR-083)
@@ -730,7 +731,8 @@ Phase 8 분할 계획(상세는 [`docs/prompts/phase8-01-mapping-version-rollbac
 4g. 8-07 축소판 값 사전 편집(완료, ADR-082).
 4h. 8-16 등록 목록·browser smoke·시연 절차(완료, ADR-083). 프로토타입 완성 단계(ADR-078) 종료.
 4i. 8-17 다른 학교 합성 DB로 화면 흐름 검증(완료, ADR-084).
-4j. 8-18 공통 항목 대상 학년·항목 목록 일반화(완료, ADR-085). 다음: 8-19 DB별 확장 항목(8-11, 예: 강의실), 8-20 모르는 조건 처리.
+4j. 8-18 공통 항목 대상 학년·항목 목록 일반화(완료, ADR-085).
+4k. 8-19 DB별 확장 항목(완료, ADR-087). 다음: 8-20 모르는 조건 처리.
 5a. 8-07 축소판에 약어 입력·규칙/AI 약어 후보·충돌 검사·관리자 승인과 업로드 DB의 QueryIR 챗봇 연결을 포함한다(ADR-080).
 5. 8-07 관리자 화면 통합 축소판(검토·코드표→값 사전·test query 미리보기·버전; 업로드 DB 변환·값 사전·부분 게시 포함)과 처음부터 끝까지 browser smoke·시연 절차.
 6. prompt·field 별칭 개선은 L1 질문 세트 확보 뒤.
@@ -2163,6 +2165,25 @@ SQLite DB 입력
   - 남은 사람 작업은 L1/L3 검토, L4 사용성 평가, 평가용 모사 DB 제작이다.
   - 실제 학교 자료가 생기면 다시 본다.
 
+### ADR-087: DB별 확장 항목은 관리자가 데이터로 선언하고, 공통 항목과 같은 실행 경로를 탄다
+
+- 날짜: 2026-10-01
+- 상태: 채택(사용자 결정: 진행, 8-11 축소판)
+- 결정:
+  - 화면 등록 PostgreSQL DB에 관리자가 확장 항목(`<Entity>.ext_<key>`, 이름, 글자·정수·숫자)을 선언한다.
+  - 한 column은 한 항목에만 쓰고, 최대 10개다.
+  - 게시하면 mapping과 profile v5에 들어간다.
+  - runtime은 이름·연결·타입을 검사하고, 공통 항목·unsupported·변환·값 사전과 겹치는 것을 거부한다.
+  - 챗봇의 항목 목록은 공통 + 확장이다. 모델 prompt에서는 확장 항목에만 이름을 붙인다.
+  - 결과 카드는 `ext_<key>` 열과 이름 목록을 보인다. 글자 확장 항목은 포함 검색과 값 힌트를 쓴다.
+  - SQL은 기존 compiler·policy·executor를 그대로 거친다.
+  - 변환·값 사전·강의 목록 표시는 이번 범위에서 뺀다.
+- 이유: 강의실, 수업방식, 단과대학처럼 학교마다 다른 정보를 공통 ontology에 다 넣을 수는 없다. 코드 수정 없이 DB마다 더할 수 있어야 한다.
+- 결과:
+  - 가상 학교 고정 질문 14/14(강의실 2개 추가).
+  - 레거시 화면 등록에서 강의실·수업방식 질문이 동작한다.
+  - 값만 있는 질문은 값 힌트(값 500개 이하)에 의존한다는 한계가 있다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -2424,3 +2445,4 @@ SQLite DB 입력
 - 2026-09-30 Phase 8-17 다른 학교 합성 DB 화면 검증 완료(ADR-084). `backend/adaptive/fixtures/other_school.py`로 로컬 합성 DB에 schema `other_school`을 만들었다(강좌 102개, 시간표 143행; 로마자 약어 이름, 이수 구분 코드 table, 학기 코드, `MON` 요일, `char(4)` 시간, 분리된 학점, 교수 소속 학과, 주 2회 수업). 확인용 서버(8124·5174)에서 화면으로 등록 → AI 첫 후보 13/15 → 학기·교수명 remap → 약어 `소웨`·`전전`·`기공`과 학기·요일 코드 이름 → 게시 → 강의 목록·챗봇을 확인했다. 결함 4건을 고쳤다. 첫째, 교수→학과 FK 때문에 모호해 게시가 막혔다. planner가 길이가 같을 때 ontology 직접 관계만으로 된 유일한 계획을 고르게 했다. 둘째, `0900` 시간을 글자로 비교했다. `HHMM_TEXT_TO_HHMM` 변환을 추가했다. 셋째, 주 2회 수업이 있으면 강의 목록이 계약 위반이었다. 같은 강좌 행을 합치게 했고, 한국어 요일도 시간표에 놓는다. 넷째, 약어 길이와 runtime 게시 차단 안내가 원인과 달랐다. 실행 전에 고정한 질문 12개를 11/12 맞혔다. 실패한 "1학년 대상"은 ontology에 없는 조건을 이수 구분에 넣은 것이며, 한계로 기록했다. `gpt-6-luna` high review-only 지적 2건 중 fixture의 `DROP SCHEMA ... CASCADE`를 자기 table만 지우는 방식으로 고쳤고 합성 DB에서 재현했다. AI mapping 평가 prompt의 변환 목록은 hash로 고정한 것이라 그대로 두었다. 결과는 `docs/phase8-17-other-school-results-2026-09-30.md`에 두었다. 관련 테스트(합성 학교·planner·변환·값 사전), frontend Node 113개·ESLint(변경 파일)·tsc·vite build, 전체 pytest 1719개·6 skip·610 subtests(fixture drop 수정 뒤 해당 테스트 8개 재실행), compileall, diff check 통과. legacy DB는 읽지 않았다. 합성 schema는 시연용으로 남겼다. ADR-084 추가
 - 2026-10-01 Phase 8-18 공통 항목 대상 학년·항목 목록 일반화 완료(ADR-085). 공통 ontology를 버전 2로 올려 `Course.target_grade`를 추가했다. 버전 1 기록은 모두 유효하다(`since_version`, `accepts_version`, `fields_at`, `at_version`). runtime은 옛 mapping을 자기 버전 항목으로 검사하고, 새 항목은 unsupported로 둔다. 챗봇 카드는 `CARD_FIELDS`(ontology 순서)를 쓰고, 강의 목록은 15개를 유지한다. SQLite 게시는 강의 목록 15개만 필수로 하고, 차단 목록도 이 기준으로 보인다. carry-over는 `NOT_IN_BASE`를 기록하고 옛 버전 기준을 허용한다. 레거시 profile(view `target_year`, base `subject.target_year`)을 다시 만들었다(legacy DB 읽기만, smoke 통과). 확인용 서버에서 레거시 "1학년 과목"·"컴융 3학년 전공 과목"(33건)·"2학년 교양 과목"(14건)을 확인했다. 8-17 가상 학교를 다시 등록해 고정 질문 12/12를 맞혔다. q12 정답은 잘못된 전제(대상 학년 없음)로 정했던 것이라 1학년 과목으로 바꿨다. AI는 대상 학년을 학기 코드로 잘못 제안했다. `gpt-6-luna` high review-only 지적 4건 중 3건을 고쳤다(평가 세트 fingerprint, dataset profile 새 항목, carry-over 버전). 기존 PostgreSQL 등록의 draft 올리기는 범위에서 빼고 한계로 기록했다. 결과는 `docs/phase8-18-target-grade-results-2026-10-01.md`에 두었다. 전체 pytest 1730개 통과·4개 실패(버전 1을 고정한 테스트 2개) → 고친 뒤 해당 파일 19개 재실행 통과, 6 skip·606 subtests. frontend Node 115개·ESLint·tsc·vite build, compileall, diff check 통과. legacy DB는 읽기만 했다. ADR-085 추가
 - 2026-10-01 사용자 결정으로 데이터 전제와 사람 관문을 재정의했다(ADR-086). 실제 학교 DB는 받지 않는다고 보고, 레거시 DB(이전 학기 공개 수강편람 엑셀 기반)와 흉내 낸 DB만 쓴다. E3은 원본 재배포 금지 조건으로 사용, L5는 시연 자유(출처 표기, 학교 밖 공개 자료에서는 교수명 가림), L2는 관리자 검토 화면, L1/L3는 사용자와 팀원 검토, L4는 유지로 정했다. 독립 학교 평가는 팀원이 만든 모사 DB로 하며, AI는 평가 전까지 보지 않는다. 공통 ontology 변경은 사용자 결정으로 확정한다(8-18 대상 학년 확정). `AGENTS.md`의 운영 원칙과 `docs/human-validation-checkpoints.md`를 갱신했다. L1 검토 표는 Phase 9 진입 때 준비한다. 다음 개발은 8-19 DB별 확장 항목이다.
+- 2026-10-01 Phase 8-19 DB별 확장 항목 완료(ADR-087, 8-11 축소판). `mapping/extensions.py`, `registration/postgres_extensions.py`, `GET/POST /api/adaptive/v1/postgres/extensions`, 화면 "확장 항목" 패널을 추가했다. 게시하면 mapping과 profile v5(`extension_fields`)에 들어가고 서버 재시작 때 다시 읽는다. runtime은 확장 항목의 이름·연결·타입·겹침을 검사한다. 챗봇은 DB별 항목 목록(공통 + 확장)을 쓴다. 확장 항목에만 prompt label을 붙이고, 카드에 `ext_<key>` 열과 `extensions` 이름 목록을 보인다. 글자 확장 항목은 포함 검색과 값 힌트를 쓴다. 가상 학교 DB에 강의실 column을 추가하고 q13·q14를 고정해 14/14를 맞혔다. 화면 양식으로 단과대학을 추가해 "IT대학 과목" 57행을 확인했다. 처음에는 값 힌트가 확장 항목을 몰라 0행이었고, 고쳤다. 레거시 DB를 화면 경로로 등록해 강의실(교111 19행, DB 직접 조회와 일치)·수업방식을 확인했다. 값만 있는 질문("교111에서 하는 수업")은 값이 500개를 넘어 힌트가 없어 틀렸고, 한계로 기록했다. AI mapping 첫 후보는 catalog가 바뀌자 16개 중 10개만 맞았다(8-18은 13개). `gpt-6-luna` high review-only 지적 2건(live-capture label 형식, data_type 목록 500)을 재현·수정했다. 결과는 `docs/phase8-19-db-extension-fields-results-2026-10-01.md`에 두었다. 전체 pytest 1741개 통과·2개 실패(Luna 지적 1번 live-capture 형식, 수정 뒤 capture 테스트 25개 재실행 통과), 6 skip·611 subtests. 확장 항목 테스트 15개, frontend Node 119개·ESLint·tsc 통과, compileall, diff check 통과. legacy DB는 읽기만 했다. ADR-087 추가

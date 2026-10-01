@@ -29,6 +29,7 @@ from ..mapping.transforms import (
     normalize_transformed_value,
     transform_supports_data_type,
 )
+from ..mapping.extensions import MAX_EXTENSIONS, ExtensionField, column_fits, valid_extension
 from ..mapping.values import ValueDictionary
 
 POSTGRES_SCHEMA_VALUE = "postgres"
@@ -106,6 +107,8 @@ class PostgresRuntimeProfile:
     then a LEFT JOIN from that table.
 
     Phase 8-06: a profile may declare reviewed per-field value dictionaries.
+
+    Phase 8-19: a profile may declare this database's extension fields.
     """
 
     __slots__ = (
@@ -117,6 +120,7 @@ class PostgresRuntimeProfile:
         "_unsupported_fields",
         "_anchor_table",
         "_value_dictionaries",
+        "_extension_fields",
     )
 
     def __init__(
@@ -130,9 +134,11 @@ class PostgresRuntimeProfile:
         unsupported_fields: tuple[str, ...] | list[str] = (),
         anchor_table: str | None = None,
         value_dictionaries: dict[str, ValueDictionary] | None = None,
+        extension_fields: dict[str, ExtensionField] | None = None,
     ) -> None:
         if not _valid_database_id(database_id):
             raise PostgresRuntimeError()
+        extensions = _copy_extensions(extension_fields)
         transforms = _copy_transforms(field_transforms)
         unsupported = _copy_unsupported(unsupported_fields)
         anchor = _copy_anchor(anchor_table)
@@ -161,6 +167,7 @@ class PostgresRuntimeProfile:
         object.__setattr__(self, "_unsupported_fields", unsupported)
         object.__setattr__(self, "_anchor_table", anchor)
         object.__setattr__(self, "_value_dictionaries", dictionaries)
+        object.__setattr__(self, "_extension_fields", extensions)
 
     def __setattr__(self, name: str, value: Any) -> None:
         raise PostgresRuntimeError()
@@ -175,6 +182,10 @@ class PostgresRuntimeProfile:
     @property
     def label(self) -> str:
         return self._label
+
+    @property
+    def extension_fields(self) -> dict[str, ExtensionField]:
+        return dict(self._extension_fields)
 
     @property
     def field_transforms(self) -> dict[str, FieldTransform]:
@@ -214,6 +225,19 @@ class PostgresRuntimeProfile:
 
     def __str__(self) -> str:
         return self._redacted()
+
+
+def _copy_extensions(value: Any) -> dict[str, ExtensionField]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict) or len(value) > MAX_EXTENSIONS:
+        raise PostgresRuntimeError()
+    copied: dict[str, ExtensionField] = {}
+    for name, field in value.items():
+        if not valid_extension(name, field):
+            raise PostgresRuntimeError()
+        copied[name] = ExtensionField(label=field.label, data_type=field.data_type)
+    return copied
 
 
 def _copy_transforms(value: Any) -> dict[str, FieldTransform]:
@@ -332,6 +356,7 @@ class ValidatedPostgresContext:
         "_unsupported_fields",
         "_anchor_table",
         "_value_dictionaries",
+        "_extension_fields",
     )
 
     def __init__(
@@ -351,8 +376,10 @@ class ValidatedPostgresContext:
         unsupported_fields: tuple[str, ...] = (),
         anchor_table: str | None = None,
         value_dictionaries: dict[str, ValueDictionary] | None = None,
+        extension_fields: dict[str, ExtensionField] | None = None,
     ) -> None:
         object.__setattr__(self, "_database_id", database_id)
+        object.__setattr__(self, "_extension_fields", _copy_extensions(extension_fields))
         object.__setattr__(self, "_anchor_table", _copy_anchor(anchor_table))
         object.__setattr__(self, "_value_dictionaries", _copy_dictionaries(value_dictionaries))
         object.__setattr__(self, "_field_transforms", _copy_transforms(field_transforms))
@@ -420,6 +447,10 @@ class ValidatedPostgresContext:
 
     def value_dictionaries(self) -> dict[str, ValueDictionary]:
         return dict(self._value_dictionaries)
+
+    def extension_fields(self) -> dict[str, ExtensionField]:
+        """This database's own fields (Phase 8-19): name -> label and value type."""
+        return dict(self._extension_fields)
 
     def normalize_rows(self, columns: Any, rows: Any) -> Any:
         """JSON-safe values for transformed fields and display labels for
@@ -512,10 +543,19 @@ def _validate_one(
         canonical, newer = _fields_for(int(published.ontology_version), int(expected_ontology_version))
         transforms = profile.field_transforms
         unsupported = set(profile.unsupported_fields)
-        mapped = set(published.fields.keys())
+        extensions = profile.extension_fields
+        mapped = set(published.fields.keys()) - set(extensions)
         # Partial mapping only through an explicit unsupported list: the two
         # sets are disjoint and together cover the mapping version's fields exactly.
         if mapped & unsupported or mapped | unsupported != canonical or not mapped:
+            raise PostgresRuntimeError()
+        # Phase 8-19: every extension field is mapped, plain (no transform or
+        # dictionary), and never named like a common field.
+        if (
+            not set(extensions) <= set(published.fields)
+            or set(extensions) & (canonical | newer | unsupported | set(transforms))
+            or set(extensions) & set(profile.value_dictionaries)
+        ):
             raise PostgresRuntimeError()
         unsupported |= newer
         if not set(transforms).issubset(mapped):
@@ -553,6 +593,10 @@ def _validate_one(
             if physical in physical_fields:
                 raise PostgresRuntimeError()
             physical_fields.add(physical)
+        for name, extension in extensions.items():
+            target = published.fields[name]
+            if not column_fits(extension.data_type, declared_types.get((target.table, target.column), "")):
+                raise PostgresRuntimeError()
         if transforms:
             from ..ontology.loader import load_default_ontology
 
@@ -642,6 +686,7 @@ def _validate_one(
         unsupported_fields=tuple(sorted(unsupported)),
         anchor_table=anchor,
         value_dictionaries=dictionaries,
+        extension_fields=extensions,
     )
 
 

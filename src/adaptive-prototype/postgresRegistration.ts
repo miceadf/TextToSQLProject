@@ -162,7 +162,8 @@ const MESSAGES: Record<string, string> = {
   POSTGRES_REGISTRATION_INSPECTION_FAILED: 'schema 구조를 읽지 못했습니다 (table이 없거나 권한이 없음).',
   POSTGRES_REGISTRATION_ALIAS_CONFLICT: '다른 값이나 다른 약어와 겹치는 표기가 있습니다.',
   POSTGRES_REGISTRATION_ALIAS_LENGTH: '약어는 2~20자여야 합니다. 한 글자 표기는 뜻(표시)에 넣으세요.',
-  POSTGRES_REGISTRATION_LIMIT_REACHED: '서버에 붙일 수 있는 DB 수를 넘었습니다.',
+  POSTGRES_REGISTRATION_LIMIT_REACHED: '한도를 넘었습니다 (DB 수, 또는 확장 항목 10개).',
+  POSTGRES_REGISTRATION_EXTENSION_CONFLICT: '이미 다른 항목에 연결된 column이거나 같은 이름의 확장 항목이 있습니다.',
 };
 
 export function toPostgresMessage(error: unknown): string {
@@ -370,6 +371,139 @@ export function parseRegistrations(value: unknown): RegisteredPostgres[] | null 
 
 export async function fetchRegistrations(fetchFn: PgFetchLike, options?: { signal?: AbortSignal }) {
   const parsed = parseRegistrations(await request(fetchFn, POSTGRES_REGISTER_PATH, { method: 'GET', signal: options?.signal }));
+  if (parsed === null) throw new PostgresRegistrationClientError('contract');
+  return parsed;
+}
+
+// --- Phase 8-19: extension fields ------------------------------------------------------
+
+export const POSTGRES_EXTENSIONS_PATH = '/api/adaptive/v1/postgres/extensions';
+export const POSTGRES_EXTENSIONS_VERSION = 'postgres-extensions-v1';
+export const EXTENSION_KEY_PATTERN = /^[a-z][a-z0-9_]{0,30}$/;
+export const EXTENSION_ENTITIES = ['Course', 'Department', 'Instructor', 'CourseOffering', 'Schedule'] as const;
+export const EXTENSION_DATA_TYPES = ['string', 'integer', 'number'] as const;
+export const EXTENSION_ENTITY_LABELS: Record<string, string> = {
+  Course: '과목',
+  Department: '학과',
+  Instructor: '교원',
+  CourseOffering: '개설 강좌',
+  Schedule: '강의 시간',
+};
+export const EXTENSION_TYPE_LABELS: Record<string, string> = { string: '글자', integer: '정수', number: '숫자' };
+const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_$]{0,62}$/;
+
+export interface ExtensionFieldEntry {
+  key: string;
+  label: string;
+  entity: string;
+  table: string;
+  column: string;
+  data_type: string;
+}
+
+export interface ExtensionTable {
+  name: string;
+  columns: { name: string; type: string }[];
+}
+
+export interface ExtensionDetail {
+  database_id: string;
+  fields: ExtensionFieldEntry[];
+  tables: ExtensionTable[];
+}
+
+export function isExtensionLabel(value: unknown): value is string {
+  return typeof value === 'string' && value.length >= 1 && value.length <= 20 && value === value.trim();
+}
+
+export function parseExtensionDetail(value: unknown, databaseId: string): ExtensionDetail | null {
+  if (!isPlainObject(value) || !hasExactKeys(value, ['version', 'database_id', 'fields', 'tables'])) return null;
+  if (value['version'] !== POSTGRES_EXTENSIONS_VERSION || value['database_id'] !== databaseId) return null;
+  const rawFields = value['fields'];
+  const rawTables = value['tables'];
+  if (!Array.isArray(rawFields) || rawFields.length > 10 || !Array.isArray(rawTables) || rawTables.length > 300) return null;
+  const fields: ExtensionFieldEntry[] = [];
+  for (const item of rawFields) {
+    if (!isPlainObject(item) || !hasExactKeys(item, ['key', 'label', 'entity', 'table', 'column', 'data_type'])) return null;
+    const { key, label, entity, table, column, data_type: dataType } = item;
+    if (typeof key !== 'string' || !EXTENSION_KEY_PATTERN.test(key) || !isExtensionLabel(label)) return null;
+    if (typeof entity !== 'string' || !(EXTENSION_ENTITIES as readonly string[]).includes(entity)) return null;
+    if (typeof dataType !== 'string' || !(EXTENSION_DATA_TYPES as readonly string[]).includes(dataType)) return null;
+    if (typeof table !== 'string' || !IDENTIFIER.test(table) || typeof column !== 'string' || !IDENTIFIER.test(column)) {
+      return null;
+    }
+    fields.push({ key, label, entity, table, column, data_type: dataType });
+  }
+  const tables: ExtensionTable[] = [];
+  for (const item of rawTables) {
+    if (!isPlainObject(item) || !hasExactKeys(item, ['name', 'columns'])) return null;
+    const { name, columns } = item;
+    if (typeof name !== 'string' || !IDENTIFIER.test(name) || !Array.isArray(columns) || columns.length > 300) return null;
+    const parsedColumns: { name: string; type: string }[] = [];
+    for (const column of columns) {
+      if (!isPlainObject(column) || !hasExactKeys(column, ['name', 'type'])) return null;
+      if (typeof column['name'] !== 'string' || !IDENTIFIER.test(column['name'])) return null;
+      if (typeof column['type'] !== 'string' || column['type'].length > 100) return null;
+      parsedColumns.push({ name: column['name'], type: column['type'] });
+    }
+    tables.push({ name, columns: parsedColumns });
+  }
+  return { database_id: databaseId, fields, tables };
+}
+
+async function postExtension(fetchFn: PgFetchLike, body: Record<string, unknown>) {
+  return request(fetchFn, POSTGRES_EXTENSIONS_PATH, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+export async function fetchExtensions(fetchFn: PgFetchLike, databaseId: string, options?: { signal?: AbortSignal }) {
+  if (!isDatabaseId(databaseId)) throw new PostgresRegistrationClientError('contract');
+  const url = `${POSTGRES_EXTENSIONS_PATH}?database_id=${encodeURIComponent(databaseId)}`;
+  const parsed = parseExtensionDetail(await request(fetchFn, url, { method: 'GET', signal: options?.signal }), databaseId);
+  if (parsed === null) throw new PostgresRegistrationClientError('contract');
+  return parsed;
+}
+
+export async function setExtensionField(
+  fetchFn: PgFetchLike,
+  input: { databaseId: string; reviewer: string } & ExtensionFieldEntry,
+): Promise<ExtensionDetail> {
+  if (!isDatabaseId(input.databaseId)) throw new PostgresRegistrationClientError('contract');
+  const parsed = parseExtensionDetail(
+    await postExtension(fetchFn, {
+      action: 'SET',
+      database_id: input.databaseId,
+      key: input.key,
+      label: input.label,
+      entity: input.entity,
+      table: input.table,
+      column: input.column,
+      data_type: input.data_type,
+      reviewer: input.reviewer,
+    }),
+    input.databaseId,
+  );
+  if (parsed === null) throw new PostgresRegistrationClientError('contract');
+  return parsed;
+}
+
+export async function removeExtensionField(
+  fetchFn: PgFetchLike,
+  input: { databaseId: string; key: string; reviewer: string },
+): Promise<ExtensionDetail> {
+  if (!isDatabaseId(input.databaseId)) throw new PostgresRegistrationClientError('contract');
+  const parsed = parseExtensionDetail(
+    await postExtension(fetchFn, {
+      action: 'REMOVE',
+      database_id: input.databaseId,
+      key: input.key,
+      reviewer: input.reviewer,
+    }),
+    input.databaseId,
+  );
   if (parsed === null) throw new PostgresRegistrationClientError('contract');
   return parsed;
 }

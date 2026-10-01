@@ -88,6 +88,9 @@ class OntologyField(BaseModel):
     name: str = Field(min_length=1)
     data_type: DataType
     allowed_operators: set[Operator]
+    # Phase 8-19: set only for a database's extension field, so the model
+    # can tie the user's word to it; common fields stay unlabeled.
+    label: str | None = None
 
 
 class Ontology(BaseModel):

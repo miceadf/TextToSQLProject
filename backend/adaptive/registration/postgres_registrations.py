@@ -41,13 +41,15 @@ from ..mapping import (
     ReviewDecision,
     RuleBasedSchemaAligner,
 )
+from ..mapping.extensions import ExtensionField
 from ..mapping.transforms import FieldTransform, column_type_supports, transform_supports_data_type
 from ..ontology import DataType, load_default_ontology
 from . import storage as sqlite_storage
 
 REGISTRATION_VERSION = "private-postgres-registration-v1"
 PUBLISHED_VERSION = "private-postgres-published-v1"
-PROFILE_VERSION = "postgres-runtime-profile-v4"
+# Phase 8-19: v5 adds the database's extension fields.
+PROFILE_VERSION = "postgres-runtime-profile-v5"
 REGISTRATION_ROOT = ("postgres-registrations",)
 PROFILE_ROOT = ("postgres-profiles",)
 SOURCE_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
@@ -605,6 +607,7 @@ class PublishPlan:
     unsupported: tuple[str, ...]
     anchor_table: str | None
     dictionaries: dict[str, Any] = field(default_factory=dict)
+    extensions: dict[str, Any] = field(default_factory=dict)
 
 
 def plan_publish(
@@ -615,13 +618,16 @@ def plan_publish(
     published_by: str,
     read_values: Callable[[str, str], list[str]],
     dictionaries: dict[str, Any] | None = None,
+    extensions: list[Any] | None = None,
 ) -> tuple[PublishPlan | None, list[str]]:
     """The publishable mapping, or the fields that block it.
 
     A field with a value dictionary (Phase 8-07) gets no transform: the
-    runtime allows only one of the two per field.
+    runtime allows only one of the two per field. Extension fields
+    (Phase 8-19) join the mapping as declared, never sharing a column.
     """
     dictionaries = dict(dictionaries or {})
+    extensions = list(extensions or [])
     blocking = sorted(name for name, entry in draft.fields.items() if entry.decision is ReviewDecision.PENDING)
     if blocking:
         return None, blocking
@@ -640,6 +646,17 @@ def plan_publish(
             )
     if blocking or not mapped:
         return None, blocking or sorted(draft.fields)
+    for extension in extensions:
+        target = (extension.table, extension.column)
+        if target not in physical or target in used or extension.name in mapped:
+            blocking.append(extension.name)
+            continue
+        used.add(target)
+        mapped[extension.name] = PublishedFieldMapping(
+            table=target[0], column=target[1], reviewer=extension.reviewer, reason="Phase 8-19 extension field"
+        )
+    if blocking:
+        return None, blocking
     stray = sorted(name for name in dictionaries if name not in mapped)
     if stray:
         return None, stray
@@ -666,6 +683,10 @@ def plan_publish(
             unsupported=unsupported,
             anchor_table=section.table if section is not None else None,
             dictionaries=dictionaries,
+            extensions={
+                extension.name: ExtensionField(label=extension.label, data_type=extension.data_type)
+                for extension in extensions
+            },
         ),
         [],
     )
@@ -690,6 +711,10 @@ def profile_documents(plan: PublishPlan, manifest: PostgresRegistration) -> tupl
         "value_dictionaries": {
             name: dictionary.model_dump(mode="json") for name, dictionary in sorted(plan.dictionaries.items())
         },
+        "extension_fields": {
+            name: {"label": field.label, "data_type": field.data_type}
+            for name, field in sorted(plan.extensions.items())
+        },
     }
     profile_bytes = (json.dumps(profile, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
     return profile_bytes, mapping_bytes
@@ -707,6 +732,7 @@ def runtime_profile(plan: PublishPlan, manifest: PostgresRegistration, source: P
         unsupported_fields=list(plan.unsupported),
         anchor_table=plan.anchor_table,
         value_dictionaries=dict(plan.dictionaries),
+        extension_fields=dict(plan.extensions),
     )
 
 
@@ -719,6 +745,7 @@ def publish_review(
     validate: Callable[[Any], Any],
     read_values: Callable[[str, str], list[str]],
     dictionaries: dict[str, Any] | None = None,
+    extensions: list[Any] | None = None,
 ) -> tuple[Any, list[str]]:
     """(validated runtime context or ``None``, blocking fields).
 
@@ -739,6 +766,7 @@ def publish_review(
         published_by=published_by,
         read_values=read_values,
         dictionaries=dictionaries,
+        extensions=extensions,
     )
     if plan is None:
         return None, blocking

@@ -76,10 +76,17 @@ def _validate_shape(value: object) -> bool:
         return False
     if len(ontology["entities"]) != len(set(ontology["entities"])):
         return False
-    if not all(_exact_keys(field, {"name", "data_type", "allowed_operators"}) for field in ontology["fields"].values()):
+    base_keys = {"name", "data_type", "allowed_operators"}
+    # Phase 8-19: an optional label (None, or text for an extension field).
+    if not all(
+        _exact_keys(field, base_keys) or _exact_keys(field, base_keys | {"label"})
+        for field in ontology["fields"].values()
+    ):
         return False
     for name, field in ontology["fields"].items():
         if not isinstance(name, str) or not isinstance(field["name"], str) or not isinstance(field["data_type"], str):
+            return False
+        if not (field.get("label") is None or isinstance(field.get("label"), str)):
             return False
         if not isinstance(field["allowed_operators"], list) or not all(isinstance(item, str) for item in field["allowed_operators"]):
             return False

@@ -2,7 +2,7 @@
 
 사람 관문(2026-10-01 사용자 결정, ADR-086): 실제 학교 DB는 없다는 전제로 재정의했다. 개발을 막는 관문은 없다. 세부는 `human-validation-checkpoints.md`의 2026-10-01 절에 있다. 남은 사람 작업은 L1/L3 검토(Phase 9 진입 때 표 준비), L4, 팀원의 평가용 모사 DB 제작이다.
 
-현재 기준: 2026-10-01, Phase 8-18 공통 항목 대상 학년까지 완료(ADR-085, ontology 버전 2, 가상 학교 고정 질문 12/12). 다음: 8-19 DB별 확장 항목(강의실 등), 8-20 모르는 조건 처리(사용자 결정 순서). 프로토타입 완성 단계(ADR-078) 종료. 시연은 [`demo-procedure.md`](demo-procedure.md) 참고(8-07 값 사전, 8-15 PostgreSQL 등록, 8-14 챗봇 SQL 표시, 8-13 챗봇 값 힌트, 8-12 업로드 AI 제안, 8-10 AI 제안 v2, 8-09 AI 제안, 8-08 benchmark, 8-06 값 사전, 7-17 LEFT JOIN, 8-05까지의 관리자 기능 포함). 사용자 결정으로 benchmark 개선과 8-11은 프로토타입 이후로 미뤘다(ADR-078). 최신 상태는 항상 Git과 코드로 다시 확인한다. 설계와 로드맵의 원본은 [`schema-adaptive-text-to-sql-plan.md`](schema-adaptive-text-to-sql-plan.md), 독립 평가 세트 설계 기준은 [`independent-evaluation-set-design.md`](independent-evaluation-set-design.md), 안전한 잠정 비교는 [`phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md`](phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md)다.
+현재 기준: 2026-10-01, Phase 8-19 DB별 확장 항목까지 완료(ADR-087, 가상 학교 고정 질문 14/14). 다음: 8-20 모르는 조건 처리(사용자 결정 순서). 프로토타입 완성 단계(ADR-078) 종료. 시연은 [`demo-procedure.md`](demo-procedure.md) 참고(8-07 값 사전, 8-15 PostgreSQL 등록, 8-14 챗봇 SQL 표시, 8-13 챗봇 값 힌트, 8-12 업로드 AI 제안, 8-10 AI 제안 v2, 8-09 AI 제안, 8-08 benchmark, 8-06 값 사전, 7-17 LEFT JOIN, 8-05까지의 관리자 기능 포함). 사용자 결정으로 benchmark 개선과 8-11은 프로토타입 이후로 미뤘다(ADR-078). 최신 상태는 항상 Git과 코드로 다시 확인한다. 설계와 로드맵의 원본은 [`schema-adaptive-text-to-sql-plan.md`](schema-adaptive-text-to-sql-plan.md), 독립 평가 세트 설계 기준은 [`independent-evaluation-set-design.md`](independent-evaluation-set-design.md), 안전한 잠정 비교는 [`phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md`](phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md)다.
 
 ## 프로젝트와 현재 경계
 

@@ -13,6 +13,10 @@ const CARD_KEYS = [
   'instructor_name', 'year', 'semester', 'section', 'capacity', 'enrolled', 'day', 'start_time', 'end_time',
 ];
 const CARD_KEY_SET = new Set(CARD_KEYS);
+// Phase 8-19: a database's extension fields arrive as ext_<key> columns, each
+// named in the response's `extensions` list with its label.
+const EXTENSION_CARD_KEY = /^ext_[a-z][a-z0-9_]{0,30}$/;
+const MAX_EXTENSIONS = 10;
 const CANONICAL_FIELD = /^[A-Z][A-Za-z]{0,63}\.[a-z][a-z_]{0,63}$/;
 const OPERATORS = new Set([
   'equals', 'not_equals', 'greater_than', 'greater_than_or_equal', 'less_than', 'less_than_or_equal', 'contains',
@@ -52,6 +56,8 @@ export type ChatQueryAnswer =
       // Phase 8-14: executed SQL (values written in), only when the server's
       // development option is on.
       sql?: string;
+      // Phase 8-19: labels of the extension columns, when there are any.
+      extensions?: { key: string; label: string }[];
     }
   | { status: 'UNSUPPORTED'; unsupported: { field: string; label: string }[] }
   | { status: 'NOT_UNDERSTOOD'; failureCode: string };
@@ -131,6 +137,19 @@ function parseFilters(value: unknown): ChatFilter[] | null {
   return out;
 }
 
+function parseExtensions(value: unknown): { key: string; label: string }[] | null {
+  if (!Array.isArray(value) || value.length === 0 || value.length > MAX_EXTENSIONS) return null;
+  const out: { key: string; label: string }[] = [];
+  for (const item of value) {
+    if (!isPlainObject(item) || !hasExactKeys(item, ['key', 'label'])) return null;
+    const { key, label } = item;
+    if (typeof key !== 'string' || !EXTENSION_CARD_KEY.test(key)) return null;
+    if (typeof label !== 'string' || label.length < 1 || label.length > 20) return null;
+    out.push({ key, label });
+  }
+  return new Set(out.map((item) => item.key)).size === out.length ? out : null;
+}
+
 export function parseChatQueryResponse(value: unknown, databaseId: string): ChatQueryAnswer | null {
   if (!isPlainObject(value)) return null;
   if (value['version'] !== CHAT_QUERY_VERSION || value['database_id'] !== databaseId) return null;
@@ -138,15 +157,22 @@ export function parseChatQueryResponse(value: unknown, databaseId: string): Chat
   if (status === 'SUCCEEDED') {
     const keys = ['version', 'database_id', 'status', 'columns', 'rows', 'row_count', 'limit', 'understood'];
     const hasSql = Object.prototype.hasOwnProperty.call(value, 'sql');
-    if (!hasExactKeys(value, hasSql ? [...keys, 'sql'] : keys)) return null;
+    const hasExtensions = Object.prototype.hasOwnProperty.call(value, 'extensions');
+    if (!hasExactKeys(value, [...keys, ...(hasSql ? ['sql'] : []), ...(hasExtensions ? ['extensions'] : [])])) {
+      return null;
+    }
     const sql = value['sql'];
     if (hasSql && (typeof sql !== 'string' || sql.length === 0 || sql.length > MAX_SQL_PREVIEW)) return null;
+    const extensions = hasExtensions ? parseExtensions(value['extensions']) : [];
+    if (extensions === null) return null;
+    const extensionKeys = new Set(extensions.map((item) => item.key));
     const columns = value['columns'];
     if (
       !Array.isArray(columns) ||
       columns.length === 0 ||
-      !columns.every((key) => typeof key === 'string' && CARD_KEY_SET.has(key)) ||
-      new Set(columns).size !== columns.length
+      !columns.every((key) => typeof key === 'string' && (CARD_KEY_SET.has(key) || extensionKeys.has(key))) ||
+      new Set(columns).size !== columns.length ||
+      ![...extensionKeys].every((key) => columns.includes(key))
     ) {
       return null;
     }
@@ -165,6 +191,7 @@ export function parseChatQueryResponse(value: unknown, databaseId: string): Chat
     if (filters === null) return null;
     const answer: ChatQueryAnswer = { status, columns: columns as string[], rows: parsedRows, rowCount, limit, filters };
     if (hasSql) answer.sql = sql as string;
+    if (hasExtensions) answer.extensions = extensions;
     return answer;
   }
   if (status === 'UNSUPPORTED') {

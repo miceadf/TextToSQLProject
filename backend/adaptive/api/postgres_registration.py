@@ -22,6 +22,7 @@ from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
 from ..registration import postgres_dictionaries as dictionaries_store
+from ..registration import postgres_extensions as extensions_store
 from ..registration import postgres_registrations as pg
 from .registration_upload import _summarize_mapping, _summarize_schema
 
@@ -29,6 +30,9 @@ SOURCES_PATH = "/api/adaptive/v1/postgres/sources"
 SCHEMAS_PATH = "/api/adaptive/v1/postgres/schemas"
 REGISTER_PATH = "/api/adaptive/v1/postgres/registrations"
 DICTIONARIES_PATH = "/api/adaptive/v1/postgres/dictionaries"
+# Phase 8-19: this database's extension fields.
+EXTENSIONS_PATH = "/api/adaptive/v1/postgres/extensions"
+EXTENSIONS_VERSION = "postgres-extensions-v1"
 DICTIONARIES_VERSION = "postgres-dictionaries-v1"
 SOURCES_VERSION = "postgres-sources-v1"
 REGISTER_VERSION = "private-postgres-registration-v1"
@@ -46,6 +50,7 @@ _STATUS = {
     "ALIAS_CONFLICT": 409,
     "ALIAS_LENGTH": 400,
     "SOURCE_CHANGED": 409,
+    "EXTENSION_CONFLICT": 409,
 }
 
 
@@ -324,6 +329,7 @@ class PostgresRegistrationService:
             validate=validate,
             read_values=read_values,
             dictionaries=value_dictionaries,
+            extensions=extensions_store.load_extensions(repository_root=root, database_id=database_id),
         )
         if context is None:
             return _publish_blocked_response(blocking)
@@ -338,6 +344,48 @@ class PostgresRegistrationService:
             "registry_eligible": True,
         })
 
+
+    # -- extension fields (Phase 8-19) ----------------------------------------------------
+
+    def extensions(self, database_id: Any) -> dict[str, Any]:
+        if not isinstance(database_id, str):
+            raise pg.PostgresRegistrationError("INVALID_INPUT")
+        loaded = pg.load_postgres_registration(repository_root=self.repository_root, database_id=database_id)
+        stored = extensions_store.load_extensions(repository_root=self.repository_root, database_id=database_id)
+        return {
+            "version": EXTENSIONS_VERSION,
+            "database_id": database_id,
+            "fields": [
+                {key: getattr(item, key) for key in ("key", "label", "entity", "table", "column", "data_type")}
+                for item in stored
+            ],
+            "tables": extensions_store.columns(loaded),
+        }
+
+    def extension_action(self, body: dict[str, Any]) -> dict[str, Any]:
+        action = body.get("action")
+        allowed = {
+            "SET": {"action", "database_id", "key", "label", "entity", "table", "column", "data_type", "reviewer"},
+            "REMOVE": {"action", "database_id", "key", "reviewer"},
+        }
+        if action not in allowed or set(body) != allowed[action]:
+            raise pg.PostgresRegistrationError("INVALID_INPUT")
+        database_id = body["database_id"]
+        reviewer = body["reviewer"]
+        if not isinstance(database_id, str) or not isinstance(reviewer, str) or not 1 <= len(reviewer.strip()) <= 64 or len(reviewer) > 64:
+            raise pg.PostgresRegistrationError("INVALID_INPUT")
+        with self._lock:
+            if action == "SET":
+                extensions_store.set_extension(
+                    repository_root=self.repository_root, database_id=database_id, key=body["key"],
+                    label=body["label"], entity=body["entity"], table=body["table"], column=body["column"],
+                    data_type=body["data_type"], reviewer=reviewer,
+                )
+            else:
+                extensions_store.remove_extension(
+                    repository_root=self.repository_root, database_id=database_id, key=body["key"]
+                )
+        return self.extensions(database_id)
 
     # -- value dictionaries (Phase 8-07) ---------------------------------------------------
 
@@ -581,6 +629,35 @@ def register_postgres_registration_routes(app: FastAPI, service: PostgresRegistr
             if not isinstance(body, dict):
                 return _error("INVALID_INPUT")
             return _json(await run_in_threadpool(service.dictionary_action, body))
+        except pg.PostgresRegistrationError as exc:
+            return _error(exc.code)
+        except Exception:
+            return _error("INTERNAL_ERROR")
+
+    @app.get(EXTENSIONS_PATH)
+    async def get_extensions(http_request: Request) -> JSONResponse:
+        try:
+            params = dict(http_request.query_params)
+            if set(params) != {"database_id"}:
+                return _error("INVALID_INPUT")
+            return _json(await run_in_threadpool(service.extensions, params["database_id"]))
+        except pg.PostgresRegistrationError as exc:
+            return _error(exc.code)
+        except Exception:
+            return _error("INTERNAL_ERROR")
+
+    @app.post(EXTENSIONS_PATH)
+    async def post_extensions(http_request: Request) -> JSONResponse:
+        try:
+            raw = await http_request.body()
+            if not raw or len(raw) > _MAX_BODY_BYTES:
+                return _error("INVALID_INPUT")
+            from .review_publish import _parse_strict_body
+
+            body = _parse_strict_body(bytes(raw))
+            if not isinstance(body, dict):
+                return _error("INVALID_INPUT")
+            return _json(await run_in_threadpool(service.extension_action, body))
         except pg.PostgresRegistrationError as exc:
             return _error(exc.code)
         except Exception:

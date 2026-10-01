@@ -238,15 +238,22 @@ def domain_nouns(ontology: DomainOntology) -> frozenset[str]:
 
 
 def hint_fields(context: Any, ontology: DomainOntology) -> list[str]:
-    """Mapped text fields without transforms that do not identify rows."""
+    """Mapped text fields without transforms that do not identify rows.
+
+    Phase 8-19: a database's text extension fields count too.
+    """
     mapped = context.published_mapping().fields
     transforms = context.field_transforms()
     fields = ontology.fields
+    reader = getattr(context, "extension_fields", None)
+    extensions = reader() if callable(reader) else {}
     return sorted(
         name
         for name in mapped
-        if name in fields
-        and fields[name].data_type is DataType.STRING
+        if (
+            (name in fields and fields[name].data_type is DataType.STRING)
+            or (name in extensions and extensions[name].data_type == "string")
+        )
         and name not in transforms
         and name not in IDENTITY_FIELDS
     )
@@ -349,7 +356,8 @@ def repair_output(
     """
     if not isinstance(output, dict):
         return output
-    known = set(ontology.fields)
+    # Phase 8-19: a database's extension fields are known, never "repaired".
+    known = set(ontology.fields) | set(available_fields or [])
     by_word = _field_repairs(ontology)
     entities = {entity.name for entity in ontology.entities}
     repaired = dict(output)

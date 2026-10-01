@@ -40,6 +40,9 @@ from ..ontology.loader import load_default_ontology
 from .postgres_runtime import DatabaseRoutingExecutor, is_postgres_context_current
 from .value_hints import ChatValueIndexes, repair_output
 from .review_publish import _parse_strict_body, _read_limited_body
+from ..mapping.extensions import DATA_TYPES as EXTENSION_TYPES
+from ..mapping.extensions import dto_key as extension_dto_key
+from ..mapping.extensions import operators_for as extension_operators
 from .synthetic_registry import _REF_TO_DTO_KEY, CARD_FIELDS, is_valid_database_id
 
 CHAT_QUERY_PATH = "/api/adaptive/v1/chat/query"
@@ -103,19 +106,37 @@ def _domain_ontology() -> Any:
     return load_default_ontology()
 
 
-def _runtime_ontology() -> tuple[Ontology, dict[str, str]]:
+def _runtime_ontology(extensions: dict[str, Any] | None = None) -> tuple[Ontology, dict[str, str]]:
+    """Common fields plus this database's extension fields (Phase 8-19)."""
     domain = load_default_ontology()
-    ontology = Ontology(
-        entities={entity.name for entity in domain.entities},
-        fields={
-            name: OntologyField(
-                name=name, data_type=field.data_type, allowed_operators=field.allowed_operators
-            )
-            for name, field in domain.fields.items()
-        },
-    )
+    fields = {
+        name: OntologyField(
+            name=name, data_type=field.data_type, allowed_operators=field.allowed_operators
+        )
+        for name, field in domain.fields.items()
+    }
     labels = {name: field.label for name, field in domain.fields.items()}
+    for name, extension in (extensions or {}).items():
+        # Only extension fields carry a label into the prompt: the model has
+        # no other way to tie "강의실" to Schedule.ext_room.
+        fields[name] = OntologyField(
+            name=name,
+            data_type=EXTENSION_TYPES[extension.data_type],
+            allowed_operators=set(extension_operators(extension.data_type)),
+            label=extension.label,
+        )
+        labels[name] = extension.label
+    ontology = Ontology(entities={entity.name for entity in domain.entities}, fields=fields)
     return ontology, labels
+
+
+def _extensions_of(context: Any) -> dict[str, Any]:
+    reader = getattr(context, "extension_fields", None)
+    return dict(reader()) if callable(reader) else {}
+
+
+def _card_key(field: str) -> str:
+    return _REF_TO_DTO_KEY.get(field) or extension_dto_key(field)
 
 
 class _FixedOutputModel:
@@ -287,7 +308,8 @@ def answer_chat_query(
     if current is not True:
         raise ChatQueryError(ChatQueryErrorCode.CONTEXT_UNAVAILABLE)
     try:
-        ontology, labels = _runtime_ontology()
+        extensions = _extensions_of(context)
+        ontology, labels = _runtime_ontology(extensions)
         mapping = context.harness_mapping()
         unsupported = set(context.unsupported_fields())
         request = HarnessRequest(
@@ -327,7 +349,10 @@ def answer_chat_query(
             _domain_ontology(),
             index=index,
             hints=hints,
-            available_fields=[field for field in CARD_FIELDS if field in mapping.fields],
+            available_fields=[
+                *(field for field in CARD_FIELDS if field in mapping.fields),
+                *sorted(name for name in extensions if name in mapping.fields),
+            ],
         )
     except Exception:
         pass  # repairs are optional; validation below decides
@@ -383,7 +408,9 @@ def answer_chat_query(
         except ValueError:
             return _not_understood(database_id, "INVALID_VALUE_TYPE")
 
-    card_fields = [field for field in CARD_FIELDS if field in mapping.fields]
+    extension_cards = sorted(name for name in extensions if name in mapping.fields)
+    card_fields = [*(field for field in CARD_FIELDS if field in mapping.fields), *extension_cards]
+    text_extensions = {name for name in extension_cards if extensions[name].data_type == "string"}
     rewritten = query_ir.model_dump(mode="json")
     rewritten["select"] = card_fields
     rewritten["limit"] = CHAT_ROW_LIMIT
@@ -393,7 +420,9 @@ def answer_chat_query(
             # A recognised value names one stored value exactly; containment
             # would also match longer codes ("01" in "101").
             continue
-        if item["field"] in CONTAINS_FIELDS and item["operator"] == Operator.EQUALS.value:
+        if (
+            item["field"] in CONTAINS_FIELDS or item["field"] in text_extensions
+        ) and item["operator"] == Operator.EQUALS.value:
             item["operator"] = Operator.CONTAINS.value
     executed = QueryIR.model_validate(rewritten)
 
@@ -418,12 +447,12 @@ def answer_chat_query(
 
     if list(result.columns) != card_fields:
         raise ChatQueryError(ChatQueryErrorCode.EXECUTION_FAILED, "RESULT_SHAPE_MISMATCH")
-    columns = [_REF_TO_DTO_KEY[field] for field in card_fields]
+    columns = [_card_key(field) for field in card_fields]
     rows: list[dict[str, Any]] = []
     for row in result.rows:
         if not isinstance(row, dict) or set(row) != set(card_fields):
             raise ChatQueryError(ChatQueryErrorCode.EXECUTION_FAILED, "RESULT_SHAPE_MISMATCH")
-        rows.append({_REF_TO_DTO_KEY[field]: _json_value(row[field]) for field in card_fields})
+        rows.append({_card_key(field): _json_value(row[field]) for field in card_fields})
     answer: dict[str, Any] = {
         "version": CHAT_QUERY_VERSION,
         "database_id": database_id,
@@ -444,6 +473,10 @@ def answer_chat_query(
             ]
         },
     }
+    if extension_cards:
+        answer["extensions"] = [
+            {"key": extension_dto_key(name), "label": extensions[name].label} for name in extension_cards
+        ]
     if show_sql and recorder.compiled is not None:
         try:
             answer["sql"] = render_sql_preview(

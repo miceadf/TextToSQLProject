@@ -50,7 +50,7 @@ def test_physical_names_are_outside_the_ontology_hints():
 
 def test_every_question_has_a_small_nonempty_gold_or_a_decline():
     joined = school.joined_rows()
-    assert [question.qid for question in school.QUESTIONS] == [f"q{n:02d}" for n in range(1, 13)]
+    assert [question.qid for question in school.QUESTIONS] == [f"q{n:02d}" for n in range(1, 15)]
     for question in school.QUESTIONS:
         expected = school.gold(question)
         if question.predicate is None:

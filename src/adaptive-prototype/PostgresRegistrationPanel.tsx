@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import MappingReviewPanel from './MappingReviewPanel.tsx';
 import ValueDictionaryPanel from './ValueDictionaryPanel.tsx';
+import ExtensionFieldPanel from './ExtensionFieldPanel.tsx';
 import {
   fetchPostgresSchemas,
   fetchPostgresSources,
@@ -223,6 +224,7 @@ export default function PostgresRegistrationPanel({
           <div className="font-semibold text-slate-700">검토: {opened}</div>
           <MappingReviewPanel key={opened} databaseId={opened} onPublished={published} />
           <ValueDictionaryPanel key={`dictionary-${opened}`} databaseId={opened} onPublished={published} />
+          <ExtensionFieldPanel key={`extension-${opened}`} databaseId={opened} onPublished={published} />
         </div>
       ) : null}
     </fieldset>

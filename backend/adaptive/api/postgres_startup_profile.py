@@ -34,6 +34,8 @@ _PROFILE_VERSION_V2 = "postgres-runtime-profile-v2"
 _PROFILE_VERSION_V3 = "postgres-runtime-profile-v3"
 # Phase 8-06: v4 is v2 plus a nullable anchor and reviewed value dictionaries.
 _PROFILE_VERSION_V4 = "postgres-runtime-profile-v4"
+# Phase 8-19: v4 plus this database's extension fields.
+_PROFILE_VERSION_V5 = "postgres-runtime-profile-v5"
 _MAX_PROFILE_FIELDS = 64
 _TABLE_NAME_PATTERN = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
 _SEMANTIC_FIELD_PATTERN = re.compile(r"^[A-Z][A-Za-z]{0,63}\.[a-z][a-z_]{0,63}$")
@@ -169,6 +171,23 @@ def _parse_value_dictionaries(payload: dict[str, Any]) -> None:
     payload["value_dictionaries"] = parsed
 
 
+def _parse_extension_fields(payload: dict[str, Any]) -> None:
+    from ..mapping.extensions import ExtensionField, valid_extension
+
+    extensions = payload["extension_fields"]
+    if not isinstance(extensions, dict):
+        raise _fail()
+    parsed: dict[str, Any] = {}
+    for name, raw in extensions.items():
+        if not isinstance(raw, dict) or set(raw) != {"label", "data_type"}:
+            raise _fail()
+        field = ExtensionField(label=raw["label"], data_type=raw["data_type"])
+        if not valid_extension(name, field):
+            raise _fail()
+        parsed[name] = field
+    payload["extension_fields"] = parsed
+
+
 def _parse_profile_payload(raw: bytes, *, expected_id: str) -> dict[str, Any]:
     content = _check_sized(raw)
     payload = _parse_strict_json(content)
@@ -186,6 +205,12 @@ def _parse_profile_payload(raw: bytes, *, expected_id: str) -> dict[str, Any]:
             expected_keys = set(
                 _PROFILE_KEYS | _PROFILE_V2_EXTRA_KEYS | {"anchor_table", "value_dictionaries"}
             )
+        elif version == _PROFILE_VERSION_V5:
+            expected_keys = set(
+                _PROFILE_KEYS
+                | _PROFILE_V2_EXTRA_KEYS
+                | {"anchor_table", "value_dictionaries", "extension_fields"}
+            )
         else:
             raise _fail()
         if set(payload.keys()) != expected_keys:
@@ -195,15 +220,17 @@ def _parse_profile_payload(raw: bytes, *, expected_id: str) -> dict[str, Any]:
                 raise _fail()
         if version != _PROFILE_VERSION:
             _parse_v2_extras(payload)
-        if version in (_PROFILE_VERSION_V3, _PROFILE_VERSION_V4):
+        if version in (_PROFILE_VERSION_V3, _PROFILE_VERSION_V4, _PROFILE_VERSION_V5):
             anchor = payload["anchor_table"]
-            nullable = version == _PROFILE_VERSION_V4
+            nullable = version in (_PROFILE_VERSION_V4, _PROFILE_VERSION_V5)
             if not (anchor is None and nullable) and (
                 not isinstance(anchor, str) or _TABLE_NAME_PATTERN.fullmatch(anchor) is None
             ):
                 raise _fail()
-        if version == _PROFILE_VERSION_V4:
+        if version in (_PROFILE_VERSION_V4, _PROFILE_VERSION_V5):
             _parse_value_dictionaries(payload)
+        if version == _PROFILE_VERSION_V5:
+            _parse_extension_fields(payload)
         if payload["database_id"] != expected_id:
             raise _fail()
         if not _valid_database_id(payload["database_id"]):
@@ -430,7 +457,8 @@ def load_postgres_startup_profiles(
                 raise _fail() from None
             if not isinstance(dsn, str) or not dsn or not dsn.strip():
                 raise _fail()
-            is_v4 = profile_doc["version"] == _PROFILE_VERSION_V4
+            is_v5 = profile_doc["version"] == _PROFILE_VERSION_V5
+            is_v4 = profile_doc["version"] == _PROFILE_VERSION_V4 or is_v5
             is_v3 = profile_doc["version"] == _PROFILE_VERSION_V3 or is_v4
             is_v2 = profile_doc["version"] == _PROFILE_VERSION_V2 or is_v3
             try:
@@ -455,6 +483,7 @@ def load_postgres_startup_profiles(
                         else None
                     ),
                     value_dictionaries=dict(profile_doc["value_dictionaries"]) if is_v4 else None,
+                    extension_fields=dict(profile_doc["extension_fields"]) if is_v5 else None,
                 )
             except Exception:
                 raise _fail() from None

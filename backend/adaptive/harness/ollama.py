@@ -147,6 +147,7 @@ def _prompt(
                 "name": name,
                 "type": ontology.fields[name].data_type.value,
                 "operators": sorted(item.value for item in ontology.fields[name].allowed_operators),
+                **({"label": ontology.fields[name].label} if ontology.fields[name].label else {}),
             }
             for name in sorted(ontology.fields)
         ],

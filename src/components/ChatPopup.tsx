@@ -108,7 +108,7 @@ function readStringList(row: QueryRow, keys: string[]) {
     .filter((part) => part && !ignored.has(part.toLowerCase()))
 }
 
-function readDetails(row: QueryRow): CourseDetail[] {
+function readDetails(row: QueryRow, extraLabels: Array<[string, string]> = []): CourseDetail[] {
   const labels: Array<[string, string]> = [
     ['course_year', '학년'],
     ['subject_code', '과목코드'],
@@ -132,6 +132,8 @@ function readDetails(row: QueryRow): CourseDetail[] {
     ['classroom', '강의실'],
     ['prereq_subject_codes', '선수과목 코드'],
     ['prereq_subject_names', '선수과목명'],
+    // Phase 8-19: this database's extension fields, with their labels.
+    ...extraLabels,
   ]
 
   return labels.flatMap(([key, label]) => {
@@ -203,7 +205,7 @@ function readFieldSlot(row: QueryRow): Course['slots'] {
   return [{ day, startHour, endHour }]
 }
 
-function rowToCourse(row: QueryRow, index: number): Course {
+function rowToCourse(row: QueryRow, index: number, extraLabels: Array<[string, string]> = []): Course {
   const subjectCode = readString(row, [
     'subject_code',
     'course_code',
@@ -253,7 +255,7 @@ function rowToCourse(row: QueryRow, index: number): Course {
     slots,
     prerequisiteCourseCodes: readStringList(row, ['prereq_subject_codes']),
     prerequisiteCourseNames: readStringList(row, ['prereq_subject_names']),
-    details: readDetails(row),
+    details: readDetails(row, extraLabels),
   }
 }
 
@@ -376,10 +378,10 @@ function mergeTextList(existing?: string, next?: string) {
   return parts.join(', ') || undefined
 }
 
-function rowsToCourses(rows: unknown[]) {
+function rowsToCourses(rows: unknown[], extraLabels: Array<[string, string]> = []) {
   const courses = new Map<string, Course>()
   rows.filter(isQueryRow).forEach((row, index) => {
-    const course = rowToCourse(row, index)
+    const course = rowToCourse(row, index, extraLabels)
     const existing = courses.get(course.id)
     courses.set(course.id, existing ? mergeCourses(existing, course) : course)
   })
@@ -668,7 +670,14 @@ export default function ChatPopup({
       )
       // The user may have switched databases while the model was answering.
       if (controller.signal.aborted || targetKeyRef.current !== requestKey) return
-      setDbCourses(answer.status === 'SUCCEEDED' ? rowsToCourses(chatRowsToLegacyRows(answer.rows)) : null)
+      setDbCourses(
+        answer.status === 'SUCCEEDED'
+          ? rowsToCourses(
+              chatRowsToLegacyRows(answer.rows),
+              (answer.extensions ?? []).map((item): [string, string] => [item.key, item.label]),
+            )
+          : null,
+      )
       setLastUnderstood(answer.status === 'SUCCEEDED' ? describeUnderstood(answer.filters) : '')
       setLastSql(answer.status === 'SUCCEEDED' ? (answer.sql ?? '') : '')
       if (answer.status !== 'SUCCEEDED') setLastWarning(describeAnswer(answer))

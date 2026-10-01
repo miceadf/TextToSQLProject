@@ -29,3 +29,26 @@ describe('phase8-18 target grade in chat cards', () => {
     assert.equal(parsed, null);
   });
 });
+
+describe('phase8-19 extension columns', () => {
+  const answer = (extra: Record<string, unknown>) => ({
+    ...base,
+    columns: ['course_code', 'ext_classroom'],
+    rows: [{ course_code: 'SW1001', ext_classroom: 'IT관 303호' }],
+    ...extra,
+  });
+
+  it('accepts an ext_ column named in the extensions list', () => {
+    const parsed = parseChatQueryResponse(answer({ extensions: [{ key: 'ext_classroom', label: '강의실' }] }), 'other-school');
+    assert.ok(parsed?.status === 'SUCCEEDED' && parsed.extensions?.[0]?.label === '강의실');
+  });
+
+  it('rejects ext_ columns without a label, unnamed labels, and bad keys', () => {
+    assert.equal(parseChatQueryResponse(answer({}), 'other-school'), null);
+    assert.equal(
+      parseChatQueryResponse(answer({ extensions: [{ key: 'ext_classroom', label: '강의실' }, { key: 'ext_other', label: '기타' }] }), 'other-school'),
+      null,
+    );
+    assert.equal(parseChatQueryResponse(answer({ extensions: [{ key: 'classroom', label: '강의실' }] }), 'other-school'), null);
+  });
+});
