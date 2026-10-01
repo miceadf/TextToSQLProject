@@ -5,7 +5,9 @@ QueryIR. The server keeps the model's entity, filters, and limit, replaces
 the projection with the fixed course-card fields the database maps, and
 runs it through the existing validation, compiler, AST policy, and
 read-only executor. Questions about canonical fields a profile declares
-unsupported are answered as UNSUPPORTED without execution.
+unsupported are answered as UNSUPPORTED without execution, and so are
+questions naming a concept outside the common ontology that the database
+declares no extension field for (Phase 8-20).
 
 Responses carry canonical course-card keys and semantic labels only: no
 SQL, physical identifier, DSN, or exception text. Nothing is logged.
@@ -37,7 +39,9 @@ from ..harness.recorded import RecordedFailureCode
 from ..mapping.values import ValueDictionary, bind_filter_value
 from ..ontology.contracts import Operator
 from ..ontology.loader import load_default_ontology
+from ..ontology.outside_concepts import default_outside_concepts
 from .postgres_runtime import DatabaseRoutingExecutor, is_postgres_context_current
+from .unknown_conditions import mentioned_fields, outside_concepts, output_filter_values
 from .value_hints import ChatValueIndexes, repair_output
 from .review_publish import _parse_strict_body, _read_limited_body
 from ..mapping.extensions import DATA_TYPES as EXTENSION_TYPES
@@ -60,6 +64,11 @@ CONTAINS_FIELDS = frozenset({"Course.name", "Department.name", "Instructor.name"
 # Phase 8-14 (user decision): a development option shows the executed SQL in
 # the chat, like the legacy chatbot. Off unless the server enables it.
 MAX_SQL_PREVIEW = 20000
+# Phase 8-20: an empty result re-runs each equality or containment condition
+# alone (one row, same compiler, policy and read-only executor) to say which
+# value the database does not hold.
+MAX_DIAGNOSIS_PROBES = 4
+_PROBED_OPERATORS = frozenset({Operator.EQUALS, Operator.CONTAINS})
 
 _REQUEST_KEYS = frozenset({"database_id", "query"})
 _NOT_UNDERSTOOD_STAGES = frozenset({HarnessStage.IR_GENERATED, HarnessStage.IR_VALIDATED})
@@ -281,6 +290,58 @@ def _not_understood(database_id: str, failure_code: str) -> dict[str, Any]:
     }
 
 
+def _unsupported(
+    database_id: str, fields: list[str], labels: dict[str, str], concepts: list[Any]
+) -> dict[str, Any]:
+    return {
+        "version": CHAT_QUERY_VERSION,
+        "database_id": database_id,
+        "status": "UNSUPPORTED",
+        "unsupported": [
+            *({"field": field, "label": labels.get(field, field)} for field in fields),
+            *({"concept": concept.key, "label": concept.label} for concept in concepts),
+        ],
+    }
+
+
+def _unmatched_filters(
+    context: Any, request: HarnessRequest, ontology: Ontology, mapping: Any, executed: QueryIR
+) -> list[Any]:
+    """Conditions that match no row even alone (Phase 8-20).
+
+    A lone condition is its own probe. Otherwise each equality or
+    containment condition runs alone with ``limit 1`` through the same
+    harness; any failure leaves that condition out (a diagnosis, not an
+    answer).
+    """
+    probed = [item for item in executed.filters if item.operator in _PROBED_OPERATORS]
+    if len(executed.filters) == 1:
+        return probed
+    if not probed or len(probed) > MAX_DIAGNOSIS_PROBES:
+        return []
+    executor = DatabaseRoutingExecutor(_NoSqlite(), {request.database_id: context})
+    unmatched = []
+    for item in probed:
+        probe = {
+            "entity": executed.entity,
+            "select": [item.field],
+            "filters": [item.model_dump(mode="json")],
+            "limit": 1,
+        }
+        try:
+            result = ExecutionHarness(
+                model=_FixedOutputModel(probe),
+                compiler=context.compiler(),
+                sql_policy=context.policy(),
+                executor=executor,
+            ).run(request, ontology, mapping)
+        except Exception:
+            continue
+        if result.status is HarnessStatus.SUCCEEDED and not result.rows:
+            unmatched.append(item)
+    return unmatched
+
+
 def answer_chat_query(
     *,
     database_id: str,
@@ -356,29 +417,42 @@ def answer_chat_query(
         )
     except Exception:
         pass  # repairs are optional; validation below decides
+
+    # Phase 8-20: a concept this database has no field for is answered as
+    # unsupported, whatever field the model put the condition into.
+    try:
+        outside = outside_concepts(
+            question,
+            default_outside_concepts(),
+            extensions=extensions,
+            filter_values=output_filter_values(output),
+            hint_texts=[hint.text for hint in hints],
+        )
+    except Exception:
+        outside = []  # the check is a guard on top; the answer path below is unchanged
     try:
         query_ir = QueryIR.model_validate(output)
     except Exception:
+        if outside:
+            return _unsupported(database_id, [], labels, outside)
         return _not_understood(database_id, "MODEL_INVALID_OUTPUT")
+
+
+    requested_unsupported = [
+        field for field in dict.fromkeys(_referenced_fields(query_ir)) if field in unsupported
+    ]
+    if outside:
+        # Common fields the model added on its own are not blamed beside the concept.
+        named = mentioned_fields(question, _domain_ontology(), requested_unsupported)
+        return _unsupported(database_id, named, labels, outside)
 
     # The card projection replaces ``select``; an unknown field must not
     # disappear silently with it.
     if any(field not in ontology.fields for field in _referenced_fields(query_ir)):
         return _not_understood(database_id, "UNKNOWN_FIELD")
 
-    requested_unsupported = [
-        field for field in dict.fromkeys(_referenced_fields(query_ir)) if field in unsupported
-    ]
     if requested_unsupported:
-        return {
-            "version": CHAT_QUERY_VERSION,
-            "database_id": database_id,
-            "status": "UNSUPPORTED",
-            "unsupported": [
-                {"field": field, "label": labels.get(field, field)}
-                for field in requested_unsupported
-            ],
-        }
+        return _unsupported(database_id, requested_unsupported, labels, [])
 
     semantic_names = {*ontology.entities, *ontology.fields}
     identifiers = {
@@ -473,6 +547,17 @@ def answer_chat_query(
             ]
         },
     }
+    if not rows:
+        unmatched = [
+            {
+                "field": item.field,
+                "label": labels.get(item.field, item.field),
+                "value": _display_value(transforms, dictionaries, item.field, item.value),
+            }
+            for item in _unmatched_filters(context, request, ontology, mapping, executed)
+        ]
+        if unmatched:
+            answer["unmatched"] = unmatched
     if extension_cards:
         answer["extensions"] = [
             {"key": extension_dto_key(name), "label": extensions[name].label} for name in extension_cards

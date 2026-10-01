@@ -18,6 +18,9 @@ const CARD_KEY_SET = new Set(CARD_KEYS);
 const EXTENSION_CARD_KEY = /^ext_[a-z][a-z0-9_]{0,30}$/;
 const MAX_EXTENSIONS = 10;
 const CANONICAL_FIELD = /^[A-Z][A-Za-z]{0,63}\.[a-z][a-z_]{0,63}$/;
+// Phase 8-20: a concept outside the common ontology (e.g. 'classroom').
+const CONCEPT_KEY = /^[a-z][a-z0-9_]{0,31}$/;
+const MAX_UNMATCHED = 20;
 const OPERATORS = new Set([
   'equals', 'not_equals', 'greater_than', 'greater_than_or_equal', 'less_than', 'less_than_or_equal', 'contains',
 ]);
@@ -45,6 +48,15 @@ export interface ChatFilter {
   value: string | number | boolean;
 }
 
+// Phase 8-20: a text condition whose value no stored value of the field holds.
+export interface ChatUnmatched {
+  field: string;
+  label: string;
+  value: string | number | boolean;
+}
+
+export type ChatUnsupported = { field: string; label: string } | { concept: string; label: string };
+
 export type ChatQueryAnswer =
   | {
       status: 'SUCCEEDED';
@@ -58,8 +70,10 @@ export type ChatQueryAnswer =
       sql?: string;
       // Phase 8-19: labels of the extension columns, when there are any.
       extensions?: { key: string; label: string }[];
+      // Phase 8-20: only on an empty result, when a condition's value is not in the DB.
+      unmatched?: ChatUnmatched[];
     }
-  | { status: 'UNSUPPORTED'; unsupported: { field: string; label: string }[] }
+  | { status: 'UNSUPPORTED'; unsupported: ChatUnsupported[] }
   | { status: 'NOT_UNDERSTOOD'; failureCode: string };
 
 /** Which chatbot path the selected database uses. */
@@ -150,6 +164,19 @@ function parseExtensions(value: unknown): { key: string; label: string }[] | nul
   return new Set(out.map((item) => item.key)).size === out.length ? out : null;
 }
 
+function parseUnmatched(value: unknown): ChatUnmatched[] | null {
+  if (!Array.isArray(value) || value.length === 0 || value.length > MAX_UNMATCHED) return null;
+  const out: ChatUnmatched[] = [];
+  for (const item of value) {
+    if (!isPlainObject(item) || !hasExactKeys(item, ['field', 'label', 'value'])) return null;
+    const { field, label, value: shown } = item;
+    if (typeof field !== 'string' || !CANONICAL_FIELD.test(field) || !isLabel(label)) return null;
+    if (shown === null || !isCell(shown)) return null;
+    out.push({ field, label, value: shown });
+  }
+  return out;
+}
+
 export function parseChatQueryResponse(value: unknown, databaseId: string): ChatQueryAnswer | null {
   if (!isPlainObject(value)) return null;
   if (value['version'] !== CHAT_QUERY_VERSION || value['database_id'] !== databaseId) return null;
@@ -158,9 +185,15 @@ export function parseChatQueryResponse(value: unknown, databaseId: string): Chat
     const keys = ['version', 'database_id', 'status', 'columns', 'rows', 'row_count', 'limit', 'understood'];
     const hasSql = Object.prototype.hasOwnProperty.call(value, 'sql');
     const hasExtensions = Object.prototype.hasOwnProperty.call(value, 'extensions');
-    if (!hasExactKeys(value, [...keys, ...(hasSql ? ['sql'] : []), ...(hasExtensions ? ['extensions'] : [])])) {
-      return null;
-    }
+    const hasUnmatched = Object.prototype.hasOwnProperty.call(value, 'unmatched');
+    const optional = [
+      ...(hasSql ? ['sql'] : []),
+      ...(hasExtensions ? ['extensions'] : []),
+      ...(hasUnmatched ? ['unmatched'] : []),
+    ];
+    if (!hasExactKeys(value, [...keys, ...optional])) return null;
+    const unmatched = hasUnmatched ? parseUnmatched(value['unmatched']) : [];
+    if (unmatched === null || (hasUnmatched && value['row_count'] !== 0)) return null;
     const sql = value['sql'];
     if (hasSql && (typeof sql !== 'string' || sql.length === 0 || sql.length > MAX_SQL_PREVIEW)) return null;
     const extensions = hasExtensions ? parseExtensions(value['extensions']) : [];
@@ -192,19 +225,25 @@ export function parseChatQueryResponse(value: unknown, databaseId: string): Chat
     const answer: ChatQueryAnswer = { status, columns: columns as string[], rows: parsedRows, rowCount, limit, filters };
     if (hasSql) answer.sql = sql as string;
     if (hasExtensions) answer.extensions = extensions;
+    if (hasUnmatched) answer.unmatched = unmatched;
     return answer;
   }
   if (status === 'UNSUPPORTED') {
     if (!hasExactKeys(value, ['version', 'database_id', 'status', 'unsupported'])) return null;
     const unsupported = value['unsupported'];
     if (!Array.isArray(unsupported) || unsupported.length === 0) return null;
-    const out: { field: string; label: string }[] = [];
+    const out: ChatUnsupported[] = [];
     for (const item of unsupported) {
-      if (!isPlainObject(item) || !hasExactKeys(item, ['field', 'label'])) return null;
-      if (typeof item['field'] !== 'string' || !CANONICAL_FIELD.test(item['field']) || !isLabel(item['label'])) {
+      if (!isPlainObject(item) || !isLabel(item['label'])) return null;
+      if (hasExactKeys(item, ['field', 'label'])) {
+        if (typeof item['field'] !== 'string' || !CANONICAL_FIELD.test(item['field'])) return null;
+        out.push({ field: item['field'], label: item['label'] });
+      } else if (hasExactKeys(item, ['concept', 'label'])) {
+        if (typeof item['concept'] !== 'string' || !CONCEPT_KEY.test(item['concept'])) return null;
+        out.push({ concept: item['concept'], label: item['label'] });
+      } else {
         return null;
       }
-      out.push({ field: item['field'], label: item['label'] });
     }
     return { status, unsupported: out };
   }
@@ -319,14 +358,23 @@ export function describeUnderstood(filters: readonly ChatFilter[]): string {
     .join(', ');
 }
 
+/** Phase 8-20: why an empty result is empty, when a condition's value is not in the DB. */
+export function describeUnmatched(unmatched: readonly ChatUnmatched[]): string {
+  if (unmatched.length === 0) return '';
+  const parts = unmatched.map((item) => `${item.label}에서 '${String(item.value)}'`).join(', ');
+  return `${parts} 값을 찾지 못했습니다. 이 DB에 없는 정보이거나 다른 항목으로 잘못 이해했을 수 있습니다.`;
+}
+
 export function describeAnswer(answer: ChatQueryAnswer): string {
   if (answer.status === 'SUCCEEDED') {
     const capped = answer.rowCount >= answer.limit ? ` (최대 ${answer.limit}건까지 표시)` : '';
-    return `QueryIR 실행 완료: ${answer.rowCount}건${capped}. 이해한 조건: ${describeUnderstood(answer.filters)}`;
+    const text = `QueryIR 실행 완료: ${answer.rowCount}건${capped}. 이해한 조건: ${describeUnderstood(answer.filters)}`;
+    const reason = describeUnmatched(answer.unmatched ?? []);
+    return reason === '' ? text : `${text}. ${reason}`;
   }
   if (answer.status === 'UNSUPPORTED') {
-    const labels = answer.unsupported.map((item) => item.label).join(', ');
-    return `이 DB에는 ${labels} 정보가 없어 답할 수 없습니다.`;
+    const labels = [...new Set(answer.unsupported.map((item) => item.label))].join(', ');
+    return `이 DB에는 ${labels} 정보가 없어 답할 수 없습니다. 그 조건을 빼고 다시 물어보세요.`;
   }
   return '질문을 이해하지 못했습니다. 조건을 조금 더 구체적으로 적어 주세요.';
 }

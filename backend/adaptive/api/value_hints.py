@@ -269,14 +269,23 @@ class ChatValueIndexes:
         self._clock = clock
         self._lock = threading.Lock()
         # key -> (index, rebuild after; None = complete, kept)
-        self._cache: dict[tuple[str, str], tuple[ValueIndex, float | None]] = {}
+        self._cache: dict[tuple[str, str, int], tuple[ValueIndex, float | None]] = {}
 
     def get(self, context: Any) -> ValueIndex | None:
         try:
-            key = (context.database_id, context.expected_fingerprint)
+            # Phase 8-20: a republish (new extension fields or dictionary
+            # aliases) keeps the schema fingerprint, so the mapping version
+            # is part of the key.
+            key = (
+                context.database_id,
+                context.expected_fingerprint,
+                int(context.published_mapping().version),
+            )
         except Exception:
             return None
         with self._lock:
+            for old in [item for item in self._cache if item[0] == key[0] and item != key]:
+                del self._cache[old]  # an earlier version of this database is never asked again
             cached = self._cache.get(key)
             if cached is not None and (cached[1] is None or self._clock() < cached[1]):
                 return cached[0]

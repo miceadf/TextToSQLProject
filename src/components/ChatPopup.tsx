@@ -3,6 +3,7 @@ import {
   chatErrorMessage,
   chatRowsToLegacyRows,
   describeAnswer,
+  describeUnmatched,
   describeUnderstood,
   postChatQuery,
 } from '../adaptive-prototype/chatQuery.ts'
@@ -681,6 +682,7 @@ export default function ChatPopup({
       setLastUnderstood(answer.status === 'SUCCEEDED' ? describeUnderstood(answer.filters) : '')
       setLastSql(answer.status === 'SUCCEEDED' ? (answer.sql ?? '') : '')
       if (answer.status !== 'SUCCEEDED') setLastWarning(describeAnswer(answer))
+      else if (answer.unmatched !== undefined) setLastWarning(describeUnmatched(answer.unmatched))
       setMessages((prev) => [...prev, { id: makeId('sys'), role: 'system', text: describeAnswer(answer) }])
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') return

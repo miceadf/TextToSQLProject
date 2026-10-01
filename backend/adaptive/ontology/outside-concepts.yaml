@@ -1,0 +1,41 @@
+# Phase 8-20: course-domain concepts outside the common ontology.
+# A question naming one is answered "this database has no such information"
+# unless the database declares an extension field for it (Phase 8-19).
+# Aliases are matched without spaces or case. Plain words that course names
+# often contain (건물, 원격, 온라인, 실시간) only appear joined to a noun.
+version: 1
+concepts:
+  - key: classroom
+    label: 강의실
+    aliases: [강의실, 강의장, 교실, 호실, 수업장소, 강의장소, 강의동]
+    patterns: ['(?<![0-9])[0-9]{3,4}\s*호(?![선수])']
+  - key: class_mode
+    label: 수업 방식
+    aliases: [수업방식, 강의방식, 수업형태, 강의형태, 비대면, 대면수업, 대면강의, 온라인수업, 온라인강의, 원격수업, 원격강의, 실시간수업, 실시간강의, 녹화강의, 콘텐츠수업, 블렌디드]
+  - key: college
+    label: 단과대학
+    aliases: [단과대학, 단과대]
+  - key: lecture_language
+    label: 강의 언어
+    aliases: [강의언어, 원어강의, 영어강의, 영어수업, 외국어강의]
+  - key: grading
+    label: 성적 평가 방식
+    aliases: [성적평가, 평가방식, 절대평가, 상대평가, 패스페일]
+  - key: exam
+    label: 시험
+    aliases: [중간고사, 기말고사, 시험일정]
+  - key: campus
+    label: 캠퍼스
+    aliases: [캠퍼스]
+  - key: prerequisite
+    label: 선수 과목
+    aliases: [선수과목, 선이수, 선수강]
+  - key: course_rating
+    label: 강의 평가
+    aliases: [강의평가, 강의평점, 수강평]
+  - key: seats_left
+    label: 여석
+    aliases: [여석, 빈자리, 남은자리, 잔여석]
+  - key: syllabus
+    label: 강의계획서
+    aliases: [강의계획서, 수업계획서, 강의계획]
