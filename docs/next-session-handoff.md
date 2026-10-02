@@ -2,7 +2,7 @@
 
 사람 관문(2026-10-01 사용자 결정, ADR-086): 실제 학교 DB는 없다는 전제로 재정의했다. 개발을 막는 관문은 없다. 세부는 `human-validation-checkpoints.md`의 2026-10-01 절에 있다. 남은 사람 작업은 L1/L3 검토(Phase 9 진입 때 표 준비), L4, 팀원의 평가용 모사 DB 제작이다.
 
-현재 기준: 2026-10-01, Phase 8-20 모르는 조건 처리까지 완료(ADR-088). 사용자가 정한 순서(8-18 → 8-19 → 8-20)는 끝났다. 다음 개발은 사용자 결정이 필요하다(아래 후보). 프로토타입 완성 단계(ADR-078) 종료. 시연은 [`demo-procedure.md`](demo-procedure.md) 참고(8-07 값 사전, 8-15 PostgreSQL 등록, 8-14 챗봇 SQL 표시, 8-13 챗봇 값 힌트, 8-12 업로드 AI 제안, 8-10 AI 제안 v2, 8-09 AI 제안, 8-08 benchmark, 8-06 값 사전, 7-17 LEFT JOIN, 8-05까지의 관리자 기능 포함). 사용자 결정으로 benchmark 개선과 8-11은 프로토타입 이후로 미뤘다(ADR-078). 최신 상태는 항상 Git과 코드로 다시 확인한다. 설계와 로드맵의 원본은 [`schema-adaptive-text-to-sql-plan.md`](schema-adaptive-text-to-sql-plan.md), 독립 평가 세트 설계 기준은 [`independent-evaluation-set-design.md`](independent-evaluation-set-design.md), 안전한 잠정 비교는 [`phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md`](phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md)다.
+현재 기준: 2026-10-01, Phase 8-20 모르는 조건 처리까지 완료(ADR-088). 사용자가 정한 순서(8-18 → 8-19 → 8-20)는 끝났다. 2026-10-02 사용자 결정(ADR-089): PostgreSQL 전용, 다른 PostgreSQL DB에 대한 적응성만 범위다(업로드 SQLite 확장 안 함). 다음: 8-21 형식이 다른 PostgreSQL DB 대응 점검(지침 `docs/prompts/phase8-21-postgres-format-variety.md`). 프로토타입 완성 단계(ADR-078) 종료. 시연은 [`demo-procedure.md`](demo-procedure.md) 참고(8-07 값 사전, 8-15 PostgreSQL 등록, 8-14 챗봇 SQL 표시, 8-13 챗봇 값 힌트, 8-12 업로드 AI 제안, 8-10 AI 제안 v2, 8-09 AI 제안, 8-08 benchmark, 8-06 값 사전, 7-17 LEFT JOIN, 8-05까지의 관리자 기능 포함). 사용자 결정으로 benchmark 개선과 8-11은 프로토타입 이후로 미뤘다(ADR-078). 최신 상태는 항상 Git과 코드로 다시 확인한다. 설계와 로드맵의 원본은 [`schema-adaptive-text-to-sql-plan.md`](schema-adaptive-text-to-sql-plan.md), 독립 평가 세트 설계 기준은 [`independent-evaluation-set-design.md`](independent-evaluation-set-design.md), 안전한 잠정 비교는 [`phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md`](phase5-14-versioned-queryir-prompt-trial-results-2026-09-19.md)다.
 
 ## 프로젝트와 현재 경계
 
@@ -138,7 +138,7 @@
     - 0건이면 같음·포함 조건을 하나씩 1행 query로 다시 실행해, 혼자서도 0행인 조건을 `unmatched`로 알린다.
     - 값 힌트 cache key에 게시 mapping 버전을 넣었다. 그전에는 다시 게시해도 서버 재시작 전까지 예전 힌트를 썼다.
     - 결과: [`phase8-20-unknown-conditions-results-2026-10-01.md`](phase8-20-unknown-conditions-results-2026-10-01.md).
-  - 다음 후보(사용자 결정 필요): 업로드 SQLite DB 확장(QueryIR 챗봇·값 사전·부분 게시), PostgreSQL 버전 되돌리기·test query, 확장 항목의 변환·값 사전, 개념 목록 보강, L1 질문 세트 확보 뒤 prompt·별칭, Phase 9 진입(L1 검토 표 준비, 팀원 모사 DB).
+  - 다음 순서(ADR-089): 8-21 형식이 다른 PostgreSQL DB 대응 점검 → 팀원 DB 평가 실행 도구 → Phase 9 진입(L1 검토 표 준비, 팀원 모사 DB). 뒤로 미룬 것: PostgreSQL 버전 되돌리기·test query, 확장 항목의 변환·값 사전, 개념 목록 보강. 업로드 SQLite DB 확장은 범위 밖이다.
   - 후속: 업로드 SQLite DB 확장, PostgreSQL 버전 되돌리기·test query, 공통 약어 묶음·사용 기록 제안.
     - 8-07 축소판 범위: 검토, 코드표→값 사전, test query 미리보기, 버전. 업로드 DB의 변환·값 사전·부분 게시(`unsupported`)도 포함한다.
     - 8-13 뒤 추가: 값 사전 별칭(약어) 입력. 업로드한 SQLite DB도 QueryIR 챗봇·값 힌트를 쓰도록 연결한다(지금은 PostgreSQL profile만).
