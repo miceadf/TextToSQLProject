@@ -304,6 +304,14 @@ class PostgresRegistrationService:
             if field_name not in editable:
                 stale.append(field_name)
                 continue
+            if dictionaries_store.is_period_field(field_name):
+                # Phase 8-21: a period table may list periods no class uses.
+                if not all(
+                    dictionaries_store.valid_period_entry(entry.stored, entry.label, list(entry.aliases))
+                    for entry in field_entries
+                ):
+                    stale.append(field_name)
+                continue
             table, column = editable[field_name]
             stored = [entry.stored for entry in field_entries]
             present = reader.present(database_id, table, column, stored)
@@ -421,7 +429,10 @@ class PostgresRegistrationService:
         labels = {name: field.label for name, field in load_default_ontology().fields.items()}
         fields = []
         for name, (table, column) in editable.items():
-            values = self._values(reader, database_id, table, column, dictionaries_store.MAX_LISTED_VALUES)
+            if dictionaries_store.is_period_field(name):
+                values = None  # Phase 8-21: any period of the timetable, typed freely
+            else:
+                values = self._values(reader, database_id, table, column, dictionaries_store.MAX_LISTED_VALUES)
             fields.append({
                 "field": name,
                 "label": labels.get(name, name),
@@ -474,8 +485,15 @@ class PostgresRegistrationService:
                 if not all(isinstance(body[key], str) for key in ("stored", "label", "reviewer")):
                     raise pg.PostgresRegistrationError("INVALID_INPUT")
                 table, column = editable[field_name]
-                known = self._values(reader, database_id, table, column, dictionaries_store.MAX_LISTED_VALUES)
-                if known is None:
+                if dictionaries_store.is_period_field(field_name):
+                    # Phase 8-21: a period table lists the school's whole
+                    # timetable, including periods no class uses yet.
+                    if not dictionaries_store.valid_period_entry(body["stored"], body["label"], aliases):
+                        raise pg.PostgresRegistrationError("INVALID_INPUT")
+                    known = None
+                else:
+                    known = self._values(reader, database_id, table, column, dictionaries_store.MAX_LISTED_VALUES)
+                if known is None and not dictionaries_store.is_period_field(field_name):
                     present = reader.present(database_id, table, column, [body["stored"]])
                     if present is None or body["stored"] not in present:
                         raise pg.PostgresRegistrationError("INVALID_INPUT")

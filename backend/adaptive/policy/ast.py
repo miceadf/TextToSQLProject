@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import NoReturn
+from typing import Any, NoReturn
 
 import sqlglot
 from sqlglot import exp
@@ -15,7 +15,7 @@ from backend.adaptive.mapping.transforms import (
     render_postgres_transform,
     transform_operators,
 )
-from backend.adaptive.mapping.values import bind_filter_value, contains_label_values
+from backend.adaptive.mapping.values import bind_filter_value, contains_label_values, time_label_values
 from backend.adaptive.ontology.contracts import Operator
 from backend.adaptive.relations.contracts import JoinPlan, JoinPlanStatus
 
@@ -418,6 +418,29 @@ class AstReadOnlyPolicy:
                 value_dictionaries=context.value_dictionaries,
             )
             in_list: exp.In | None = None
+            periods = self._periods(filter_ir, context)
+            if periods is not None:
+                if not isinstance(predicate, exp.In):
+                    self._fail(
+                        HarnessErrorCode.UNSAFE_SQL_NODE,
+                        f"filter operator for '{filter_ir.field}' does not match QueryIR",
+                    )
+                self._check_in_list(predicate, len(periods), filter_ir.field)
+                mapping = context.mapping.fields.get(filter_ir.field)
+                if mapping is None or filter_ir.field in context.field_transforms:
+                    self._fail(
+                        HarnessErrorCode.UNAUTHORIZED_COLUMN,
+                        f"filter field '{filter_ir.field}' has no period table",
+                    )
+                self._validate_exact_column(
+                    predicate.this,
+                    mapping.table,
+                    mapping.column,
+                    alias_by_table,
+                    legacy_compatible=legacy_compatible,
+                    code=HarnessErrorCode.UNAUTHORIZED_COLUMN,
+                )
+                continue
             if labelled:
                 predicate, in_list = self._split_labelled(predicate, len(labelled), filter_ir.field)
             elif isinstance(predicate, (exp.Paren, exp.Or, exp.In)):
@@ -489,14 +512,31 @@ class AstReadOnlyPolicy:
                 f"filter operator for '{field}' does not match QueryIR",
             )
         in_list = inner.expression
+        self._check_in_list(in_list, count, field)
+        return inner.this, in_list
+
+    def _check_in_list(self, in_list: exp.In, count: int, field: str) -> None:
         extra = {key for key, value in in_list.args.items() if value and key not in ("this", "expressions")}
         values = in_list.expressions
-        if extra or len(values) != count or not all(self._is_anonymous_placeholder(item) for item in values):
+        if extra or count < 1 or len(values) != count or not all(self._is_anonymous_placeholder(item) for item in values):
             self._fail(
                 HarnessErrorCode.INVALID_PLACEHOLDER,
-                f"label values for '{field}' must be anonymous placeholders",
+                f"listed values for '{field}' must be anonymous placeholders",
             )
-        return inner.this, in_list
+
+    def _periods(self, filter_ir: Any, context: AstPolicyContext) -> tuple[str, ...] | None:
+        try:
+            return time_label_values(
+                filter_ir.field,
+                filter_ir.operator,
+                filter_ir.value,
+                value_dictionaries=context.value_dictionaries,
+            )
+        except ValueError:
+            self._fail(
+                HarnessErrorCode.INVALID_PLACEHOLDER,
+                f"value for field '{filter_ir.field}' is not representable",
+            )
 
     def _validate_limit(self, root: exp.Select) -> None:
         limit = root.args.get("limit")
@@ -524,15 +564,17 @@ class AstReadOnlyPolicy:
     ) -> None:
         placeholders = list(root.find_all(exp.Placeholder))
         # Phase 8-21: a labelled contains filter binds its label values too.
-        expected_count = 1 + sum(
-            1
-            + len(
+        expected_count = 1
+        for item in context.query_ir.filters:
+            periods = self._periods(item, context)
+            if periods is not None:
+                expected_count += len(periods)
+                continue
+            expected_count += 1 + len(
                 contains_label_values(
                     item.field, item.operator, item.value, value_dictionaries=context.value_dictionaries
                 )
             )
-            for item in context.query_ir.filters
-        )
         if (
             len(placeholders) != expected_count
             or len(context.query.parameters) != expected_count
@@ -544,6 +586,10 @@ class AstReadOnlyPolicy:
             )
         expected_parameters: list[str | int | float | bool] = []
         for filter_ir in context.query_ir.filters:
+            periods = self._periods(filter_ir, context)
+            if periods is not None:
+                expected_parameters.extend(periods)
+                continue
             try:
                 value = bind_filter_value(
                     filter_ir.field,

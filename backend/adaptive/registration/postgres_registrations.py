@@ -660,6 +660,21 @@ def plan_publish(
     stray = sorted(name for name in dictionaries if name not in mapped)
     if stray:
         return None, stray
+    # Phase 8-21: a time field on a period-number column needs its period table.
+    from .postgres_dictionaries import INTEGER_TYPE
+
+    declared = {(t.name, c.name): str(c.declared_type or "").lower() for t in loaded.catalog.tables for c in t.columns}
+    ontology_fields = load_default_ontology().fields
+    periods_missing = sorted(
+        name
+        for name, target in mapped.items()
+        if name in ontology_fields
+        and ontology_fields[name].data_type is DataType.TIME
+        and INTEGER_TYPE.fullmatch(declared.get((target.table, target.column), "")) is not None
+        and name not in dictionaries
+    )
+    if periods_missing:
+        return None, periods_missing
     unsupported = tuple(sorted(name for name in draft.fields if name not in mapped))
     mapping = PublishedMappingProfile(
         database_id=draft.database_id,

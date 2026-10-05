@@ -303,6 +303,8 @@ def _copy_dictionaries(value: Any) -> dict[str, ValueDictionary]:
 _TEXT_TYPE_PATTERN = re.compile(
     r"^(?:character varying|varchar|character|char|bpchar|text)(?:\(\d{1,5}\))?$"
 )
+# Phase 8-21: period numbers.
+_INTEGER_TYPE_PATTERN = re.compile(r"^(?:integer|int|int2|int4|int8|smallint|bigint)$")
 # Values that identify a row in results (the chat's course key and codes)
 # must reach the user unchanged, so they cannot carry a value dictionary.
 _IDENTITY_FIELDS = frozenset({"Course.code", "CourseOffering.section", "Department.code"})
@@ -616,25 +618,38 @@ def _validate_one(
                     transform, declared_types.get((target.table, target.column), "")
                 ):
                     raise PostgresRuntimeError()
-        if dictionaries:
-            from ..ontology.contracts import DataType
-            from ..ontology.loader import load_default_ontology
+        from ..ontology.contracts import DataType
+        from ..ontology.loader import load_default_ontology
 
-            ontology_types = {
-                field.name: field.data_type
-                for entity in load_default_ontology().entities
-                for field in entity.fields
-            }
-            for semantic in dictionaries:
-                # Stored values are compared as text, so both sides must be text.
-                target = published.fields[semantic]
-                declared = declared_types.get((target.table, target.column), "").lower()
-                if (
-                    ontology_types.get(semantic) != DataType.STRING
-                    or _TEXT_TYPE_PATTERN.fullmatch(declared) is None
-                    or semantic in _IDENTITY_FIELDS
-                ):
-                    raise PostgresRuntimeError()
+        ontology_types = {
+            field.name: field.data_type
+            for entity in load_default_ontology().entities
+            for field in entity.fields
+        }
+        for semantic in dictionaries:
+            # Stored values are compared as text, so both sides must be text;
+            # Phase 8-21: or a period table (HH:MM labels) on an integer column.
+            target = published.fields[semantic]
+            declared = declared_types.get((target.table, target.column), "").lower()
+            kind = ontology_types.get(semantic)
+            text = kind == DataType.STRING and _TEXT_TYPE_PATTERN.fullmatch(declared) is not None
+            periods = (
+                kind == DataType.TIME
+                and _INTEGER_TYPE_PATTERN.fullmatch(declared) is not None
+                and dictionaries[semantic].time_labels()
+            )
+            if not (text or periods) or semantic in _IDENTITY_FIELDS:
+                raise PostgresRuntimeError()
+        for semantic, target in published.fields.items():
+            # A time compared with an integer column fails in SQL: only a
+            # period table makes such a mapping usable.
+            declared = declared_types.get((target.table, target.column), "").lower()
+            if (
+                ontology_types.get(semantic) == DataType.TIME
+                and _INTEGER_TYPE_PATTERN.fullmatch(declared) is not None
+                and semantic not in dictionaries
+            ):
+                raise PostgresRuntimeError()
         from ..relations.physical import build_physical_relation_graph
 
         graph = build_physical_relation_graph(catalog)

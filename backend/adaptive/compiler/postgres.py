@@ -22,6 +22,7 @@ from backend.adaptive.mapping.values import (
     ValueDictionary,
     bind_filter_value,
     contains_label_values,
+    time_label_values,
 )
 from backend.adaptive.ontology.contracts import Operator
 from backend.adaptive.relations.contracts import JoinPlan, JoinPlanStatus, PhysicalRelationGraph
@@ -141,6 +142,29 @@ class JoinCapablePostgresCompiler:
                     f"operator '{item.operator.value}' is not allowed on transformed field "
                     f"'{item.field}'",
                 )
+            try:
+                periods = time_label_values(
+                    item.field,
+                    item.operator,
+                    item.value,
+                    value_dictionaries=request.value_dictionaries,
+                )
+            except ValueError:
+                self._fail(
+                    HarnessErrorCode.INVALID_VALUE_TYPE,
+                    f"value for field '{item.field}' is not representable",
+                )
+            if periods is not None:
+                # Phase 8-21: a period column compared through its period table.
+                if not periods:
+                    self._fail(
+                        HarnessErrorCode.INVALID_VALUE_TYPE,
+                        f"no stored value of '{item.field}' satisfies the condition",
+                    )
+                placeholders = ", ".join(POSTGRES_PLACEHOLDER for _ in periods)
+                predicates.append(f"{value_sql(item.field)} IN ({placeholders})")
+                parameters.extend(periods)
+                continue
             labelled = contains_label_values(
                 item.field,
                 item.operator,

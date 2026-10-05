@@ -706,7 +706,8 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 - [ ] Phase 8-21 형식이 다른 PostgreSQL DB 대응 점검(공통코드 table, 교시 시간표, 한 칸에 묶인 시간표, 넓은 단일 table; 지침 `docs/prompts/phase8-21-postgres-format-variety.md`)
   - [x] D 넓은 단일 table: 코드 수정 없이 동작, 고정 질문 11/12(q11은 모델 흔들림), `wide_school` schema(2026-10-02)
   - [x] A 공통코드 table: 코드 column + 관리자 값 사전으로 q01~q12 12/12. 이름 일부("교양")로 코드 여러 개 찾기(`LIKE OR IN`, compiler·policy 공통 함수)와 공유 앞부분 힌트 추가 뒤 14/14, 레거시 SQL 불변(ADR-090, 2026-10-05)
-  - [ ] B 교시 시간표, C 한 칸에 묶인 시간표
+  - [x] B 교시 시간표: 교시표 = `HH:MM` 이름의 값 사전, 시간 비교 → 교시 `IN` 목록(compiler·policy 공통 함수), 교시표 없이 정수 column에 연결한 시간 항목은 게시 차단, 고정 질문 11/13(틀린 2개는 모델 이해)(ADR-091, 2026-10-06)
+  - [ ] C 한 칸에 묶인 시간표
 - [x] Phase 8-15 화면에서 PostgreSQL 등록(서버 소유 연결 목록 `DATABASE_URL`·`PG_SOURCE_*`, schema 선택, 규칙/AI 제안, 같은 검토 API의 PostgreSQL 분기와 `IGNORE`, 게시 때 변환·기준 table·미지원 field 고정 규칙 결정, runtime 검증 뒤 profile 쌍 저장, 재시작 없이 추가하는 `LivePostgresContexts`, 재시작 시 재로드; 실제 PostgreSQL smoke 2개·브라우저 확인; ADR-081)
 - [x] Phase 8-14 챗봇 실행 SQL 표시 개발 옵션(executor가 받은 문장 + bound 값 literal 보기용, 성공 답에만 `sql`, 옵션 끔이면 응답 불변, CLI `--show-sql`·launcher 기본 켬 `SHOW_SQL=0`; ADR-080)
 - [ ] 후속: 공통 약어 묶음(대상 값이 있을 때만 적용), 이해 실패 질문에서 약어 후보 제안(ADR-080)
@@ -2232,6 +2233,24 @@ SQLite DB 입력
 - 이유: 공통코드 table을 쓰는 학교에서 "교양 과목"처럼 이름 일부로 묻는 질문이 0건이었다(8-21 A 첫 실행). 코드 column은 이름의 글자를 담지 않는다.
 - 결과: `code_school` 14/14. 레거시 결과·SQL 불변. 공통코드 table에서 값 사전 자동 가져오기와 코드형 column AI 제안(9/16)은 후속이다.
 
+### ADR-091: 교시 번호는 관리자가 값 사전으로 넣은 교시표로 시각에 연결한다
+
+- 날짜: 2026-10-06
+- 상태: 채택(8-21 진행, 사용자 결정 범위 안)
+- 결정:
+  - 시간 항목의 값 사전에서 이름이 모두 `HH:MM`이면 교시표다(1 → 09:00). 새 변환 종류나 profile 항목을 만들지 않는다.
+  - 시간 비교는 `column IN (조건에 맞는 교시)`로 바꾼다. 모양은 `time_label_values` 하나가 정하고 compiler와 AST policy가 같이 쓴다.
+  - 맞는 교시가 없으면 SQL 없이 0건과 이유를 답한다.
+  - 시간 항목을 교시표 없이 정수 column에 연결하면 게시를 막는다(runtime도 거부).
+  - 교시표 항목은 DB에 있는 값 대신 형식(0 없는 정수, `HH:MM`, 별칭 없음)으로 검사한다.
+- 이유:
+  - 8-21 B 첫 실행에서 정수 교시 column이 그대로 게시되었고, "오후 3시 이후"가 HTTP 500이었다.
+  - 값 사전을 쓰면 저장·게시·관리자 화면·카드 표시를 그대로 쓸 수 있다. 변환을 매개변수형으로 만드는 것보다 바뀌는 곳이 적다.
+- 결과:
+  - `period_school` 11/13. 교시 계산은 정확했고, 틀린 2개는 모델 이해 문제다.
+  - 레거시 결과는 그대로다.
+  - 교시 번호로 묻는 질문("1교시 수업")은 다루지 않는다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -2498,3 +2517,4 @@ SQLite DB 입력
 - 2026-10-02 사용자 결정으로 개발 범위를 PostgreSQL DB 간 적응성으로 좁혔다(ADR-089). 업로드 SQLite DB 확장은 범위 밖으로 표시했다. 기존 SQLite 기능은 그대로 둔다. 다음 단계 8-21(형식이 다른 PostgreSQL DB 대응 점검)을 로드맵에 추가했다. 문서 변경만이라 테스트는 생략했다. ADR-089 추가
 - 2026-10-02 Phase 8-21 지침(`docs/prompts/phase8-21-postgres-format-variety.md`)을 쓰고 형식 D(넓은 단일 table)를 확인했다. 합성 DB에 `other_school` 내용을 한 table로 모은 `wide_school` schema를 만들고 화면 API로 등록·검토·게시했다. 코드 수정 없이 동작했고 AI 첫 후보 14/16, 고정 질문 11/12였다(q11은 같은 질문에서 맞는 답과 시간 조건을 뺀 답이 번갈아 나오는 모델 흔들림). 결과는 `docs/phase8-21-wide-table-results-2026-10-02.md`. 코드 변경이 없어 테스트는 생략했다. 형식 A·B·C는 다음 사용량 주기에 한다
 - 2026-10-05 Phase 8-21 형식 A(공통코드 table) 완료(ADR-090). 합성 DB `code_school`(이수구분·요일·학기를 공통코드 table 하나에, FK 없음)을 화면 API로 등록했다. 관리자가 코드 column에 연결하고 값 사전을 입력하면 q01~q12 12/12였다. 실행 전에 고정한 a01 "소웨 전공 과목"·a02 "교양 과목"은 실패했다. 이름 일부가 코드 column에서 `LIKE`로 0건이었고, 모델이 "전공"을 뺐다. `contains_label_values`로 compiler·AST policy가 같은 `(LIKE OR IN)` 모양을 쓰게 하고, 공유 앞부분 값 힌트를 더해 14/14가 되었다. `gpt-6-luna` high 지적 1건(별칭 일부로 레거시 결과가 늘어남)을 재현해, 코드 항목만·이름만 찾도록 고쳤다. 레거시 SQL과 결과(82·33건)는 그대로다. AI mapping 첫 후보는 9/16이었다(코드 column 후보 없음). 결과는 `docs/phase8-21-code-table-results-2026-10-05.md`. 전체 pytest 1804개 통과·6 skip·611 subtests(Luna 수정 전), 수정 뒤 관련 테스트 250개 재실행 통과, 8-21 테스트 13개, compileall·diff check 통과. 코드 변경이 backend뿐이라 frontend 검사는 생략했다
+- 2026-10-06 Phase 8-21 형식 B(교시 시간표) 완료(ADR-091). 합성 DB `period_school`(시간표를 30분 교시 번호로 저장)을 화면 API로 등록했다. 첫 실행에서 정수 교시 column이 변환 없이 게시되었고, "오후 3시 이후"는 SQL 오류로 HTTP 500이었다. 시간 항목의 값 사전 중 이름이 모두 `HH:MM`인 것을 교시표로 보고, 시간 비교를 `IN (교시 목록)`으로 바꿨다(`time_label_values`, compiler·policy 공통). 맞는 교시가 없으면 SQL 없이 0건과 이유를 답한다. 교시표가 없으면 게시를 막고 항목을 알린다. 교시표 항목은 형식으로 검사하며, 값 사전 패널은 교시표 항목에 자유 입력을 준다. 값 읽기는 column을 글자로 읽는다. 고정 질문 11/13(q11 시간 조건 누락, b01 종료 시간으로 이해: 모두 모델 이해). "금요일 12시 이전에 시작하는 수업"은 정답 7개였다. 레거시 82·200·33건은 그대로다. `gpt-6-luna` high 지적 1건(0을 붙인 교시 번호가 카드 표시를 깨뜨림)을 재현해 고쳤다. 결과는 `docs/phase8-21-period-results-2026-10-06.md`. 전체 pytest 1826개 통과·6 skip·611 subtests(Luna 수정 전), 수정 뒤 관련 테스트 180개 재실행 통과, 8-21 B 테스트 21개, compileall·diff check 통과. 코드 변경이 backend뿐이라 frontend 검사는 생략했다

@@ -36,7 +36,7 @@ from ..harness.contracts import (
 )
 from ..harness.engine import ExecutionHarness
 from ..harness.recorded import RecordedFailureCode
-from ..mapping.values import ValueDictionary, bind_filter_value
+from ..mapping.values import ValueDictionary, bind_filter_value, time_label_values
 from ..ontology.contracts import Operator
 from ..ontology.loader import load_default_ontology
 from ..ontology.outside_concepts import default_outside_concepts
@@ -304,6 +304,43 @@ def _unsupported(
     }
 
 
+def _empty_answer(
+    database_id: str,
+    card_fields: list[str],
+    executed: QueryIR,
+    labels: dict[str, str],
+    transforms: dict[str, Any],
+    dictionaries: dict[str, ValueDictionary],
+) -> dict[str, Any]:
+    return {
+        "version": CHAT_QUERY_VERSION,
+        "database_id": database_id,
+        "status": "SUCCEEDED",
+        "columns": [_card_key(field) for field in card_fields],
+        "rows": [],
+        "row_count": 0,
+        "limit": executed.limit,
+        "understood": {
+            "filters": [
+                {
+                    "field": item.field,
+                    "label": labels.get(item.field, item.field),
+                    "operator": item.operator.value,
+                    "value": _display_value(transforms, dictionaries, item.field, item.value),
+                }
+                for item in executed.filters
+            ]
+        },
+    }
+
+
+def _add_extensions(answer: dict[str, Any], extension_cards: list[str], extensions: dict[str, Any]) -> None:
+    if extension_cards:
+        answer["extensions"] = [
+            {"key": extension_dto_key(name), "label": extensions[name].label} for name in extension_cards
+        ]
+
+
 def _unmatched_filters(
     context: Any, request: HarnessRequest, ontology: Ontology, mapping: Any, executed: QueryIR
 ) -> list[Any]:
@@ -479,6 +516,7 @@ def answer_chat_query(
                 field_transforms=transforms,
                 value_dictionaries=dictionaries,
             )
+            time_label_values(item.field, item.operator, item.value, value_dictionaries=dictionaries)
         except ValueError:
             return _not_understood(database_id, "INVALID_VALUE_TYPE")
 
@@ -499,6 +537,26 @@ def answer_chat_query(
         ) and item["operator"] == Operator.EQUALS.value:
             item["operator"] = Operator.CONTAINS.value
     executed = QueryIR.model_validate(rewritten)
+
+    # Phase 8-21: a time no period of the period table satisfies matches no
+    # row; there is no SQL for an empty list, so the answer is empty as is.
+    no_period = [
+        item
+        for item in executed.filters
+        if time_label_values(item.field, item.operator, item.value, value_dictionaries=dictionaries) == ()
+    ]
+    if no_period:
+        answer = _empty_answer(database_id, card_fields, executed, labels, transforms, dictionaries)
+        answer["unmatched"] = [
+            {
+                "field": item.field,
+                "label": labels.get(item.field, item.field),
+                "value": _display_value(transforms, dictionaries, item.field, item.value),
+            }
+            for item in no_period
+        ]
+        _add_extensions(answer, extension_cards, extensions)
+        return answer
 
     recorder = _RecordingExecutor(DatabaseRoutingExecutor(_NoSqlite(), {database_id: context}))
     try:
@@ -558,10 +616,7 @@ def answer_chat_query(
         ]
         if unmatched:
             answer["unmatched"] = unmatched
-    if extension_cards:
-        answer["extensions"] = [
-            {"key": extension_dto_key(name), "label": extensions[name].label} for name in extension_cards
-        ]
+    _add_extensions(answer, extension_cards, extensions)
     if show_sql and recorder.compiled is not None:
         try:
             answer["sql"] = render_sql_preview(

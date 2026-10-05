@@ -9,18 +9,22 @@ one stored value, and maps stored values back to a display label.
 Only whole values are looked up; there is no substring rewriting.
 Phase 8-21: a ``contains`` condition also matches the coded stored values
 whose label holds the word (``교양`` → ``21``, ``22``), because a coded
-column cannot hold the label's words.
+column cannot hold the label's words. A dictionary whose labels are all
+``HH:MM`` times is a period table (period ``1`` → ``09:00``): a time
+comparison matches the periods whose time satisfies it.
 """
 
 from __future__ import annotations
 
+import operator as _op
+import re
 import unicodedata
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..ontology.contracts import Operator
-from .transforms import FieldTransform, normalize_filter_value
+from .transforms import TRANSFORM_OPERATORS, FieldTransform, normalize_filter_value
 
 MAX_ENTRIES = 64
 MAX_ALIASES = 16
@@ -32,7 +36,18 @@ __all__ = [
     "bind_filter_value",
     "contains_label_values",
     "lookup_key",
+    "time_label_values",
 ]
+
+_HHMM_LABEL = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+_COMPARE = {
+    Operator.EQUALS: _op.eq,
+    Operator.NOT_EQUALS: _op.ne,
+    Operator.GREATER_THAN: _op.gt,
+    Operator.GREATER_THAN_OR_EQUAL: _op.ge,
+    Operator.LESS_THAN: _op.lt,
+    Operator.LESS_THAN_OR_EQUAL: _op.le,
+}
 
 
 def lookup_key(value: str) -> str:
@@ -103,6 +118,10 @@ class ValueDictionary(BaseModel):
             raise ValueError("value is not in the dictionary")
         return value
 
+    def time_labels(self) -> bool:
+        """Every label is an ``HH:MM`` time: a period table (Phase 8-21)."""
+        return all(_HHMM_LABEL.fullmatch(entry.label) for entry in self.entries)
+
     def containing(self, value: Any) -> tuple[str, ...]:
         """Coded stored values whose label holds the value (Phase 8-21).
 
@@ -111,7 +130,7 @@ class ValueDictionary(BaseModel):
         exactly their previous SQL. Aliases are whole spellings, never searched
         by parts.
         """
-        if not isinstance(value, str):
+        if not isinstance(value, str) or self.time_labels():
             return ()
         key = lookup_key(value)
         if not key:
@@ -125,10 +144,17 @@ class ValueDictionary(BaseModel):
         )
 
     def label_for(self, stored: Any) -> Any:
-        """Display label for a stored value; other values unchanged."""
-        if isinstance(stored, str):
+        """Display label for a stored value; other values unchanged.
+
+        Phase 8-21: an integer column (period numbers) returns ints, which
+        match the stored text of the entry."""
+        if isinstance(stored, int) and not isinstance(stored, bool):
+            stored_text: Any = str(stored)
+        else:
+            stored_text = stored
+        if isinstance(stored_text, str):
             for entry in self.entries:
-                if entry.stored == stored:
+                if entry.stored == stored_text:
                     return entry.label
         return stored
 
@@ -172,3 +198,25 @@ def contains_label_values(
     if dictionary is None or operator is not Operator.CONTAINS or dictionary.knows(value):
         return ()
     return dictionary.containing(value)
+
+
+def time_label_values(
+    field: str,
+    operator: Any,
+    value: Any,
+    *,
+    value_dictionaries: dict[str, ValueDictionary],
+) -> tuple[str, ...] | None:
+    """Stored periods whose time satisfies a comparison (Phase 8-21).
+
+    ``None`` unless the field's dictionary is a period table and the operator
+    compares; otherwise the matching stored values (possibly none). Raises
+    ``ValueError`` for a value that is not a time. The compiler and the SQL
+    policy both call this, so they agree on ``column IN (values)``.
+    """
+    dictionary = value_dictionaries.get(field)
+    if dictionary is None or operator not in TRANSFORM_OPERATORS or not dictionary.time_labels():
+        return None
+    wanted = normalize_filter_value(FieldTransform.TIME_TO_HHMM, value)
+    compare = _COMPARE[operator]
+    return tuple(sorted(entry.stored for entry in dictionary.entries if compare(entry.label, wanted)))

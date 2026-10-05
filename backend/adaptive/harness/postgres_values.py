@@ -72,8 +72,9 @@ class PostgresDistinctValueReader:
         try:
             quoted = _quote(column)
             query = (
-                f"SELECT DISTINCT {quoted} FROM {_quote(config.schema)}.{_quote(table)} "
-                f"WHERE {quoted} = ANY(%s)"
+                # Phase 8-21: as text, so integer period columns compare too.
+                f"SELECT DISTINCT CAST({quoted} AS text) FROM {_quote(config.schema)}.{_quote(table)} "
+                f"WHERE CAST({quoted} AS text) = ANY(%s)"
             )
             connection = self._connector(config)
             set_encoding = getattr(connection, "set_client_encoding", None)
@@ -104,7 +105,7 @@ class PostgresDistinctValueReader:
         try:
             quoted = _quote(column)
             query = (
-                f"SELECT DISTINCT {quoted} FROM {_quote(config.schema)}.{_quote(table)} "
+                f"SELECT DISTINCT CAST({quoted} AS text) FROM {_quote(config.schema)}.{_quote(table)} "
                 f"WHERE {quoted} IS NOT NULL LIMIT %s"
             )
             connection = self._connector(config)

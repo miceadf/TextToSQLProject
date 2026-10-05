@@ -24,6 +24,9 @@ from . import postgres_registrations as pg
 DICTIONARY_VERSION = "private-postgres-dictionaries-v1"
 IDENTITY_FIELDS = frozenset({"Course.code", "CourseOffering.section", "Department.code"})
 TEXT_TYPE = re.compile(r"^(?:character varying|varchar|character|char|bpchar|text)(?:\(\d{1,5}\))?$")
+# Phase 8-21: a time field stored as period numbers takes a period table
+# (stored period → "HH:MM" label).
+INTEGER_TYPE = re.compile(r"^(?:integer|int|int2|int4|int8|smallint|bigint)$")
 MAX_LISTED_VALUES = 500
 MAX_OTHER_TEXT_VALUES = 5000
 AI_BATCH = 60
@@ -79,7 +82,8 @@ def build_dictionaries(fields: dict[str, list[ValueEntry]], reviewer: str) -> di
 
 
 def editable_fields(loaded: pg.LoadedPostgresRegistration, draft: Any) -> dict[str, tuple[str, str]]:
-    """field → (table, column) for mapped text fields that may carry a dictionary."""
+    """field → (table, column) for mapped text fields that may carry a dictionary,
+    and time fields mapped to integer period columns (Phase 8-21)."""
     ontology = load_default_ontology().fields
     declared = {(t.name, c.name): str(c.declared_type or "").lower() for t in loaded.catalog.tables for c in t.columns}
     out: dict[str, tuple[str, str]] = {}
@@ -88,15 +92,37 @@ def editable_fields(loaded: pg.LoadedPostgresRegistration, draft: Any) -> dict[s
             continue
         field = ontology.get(name)
         target = (entry.table or "", entry.column or "")
-        if (
-            field is None
-            or field.data_type is not DataType.STRING
-            or name in IDENTITY_FIELDS
-            or TEXT_TYPE.fullmatch(declared.get(target, "")) is None
-        ):
+        if field is None or name in IDENTITY_FIELDS:
+            continue
+        declared_type = declared.get(target, "")
+        text = field.data_type is DataType.STRING and TEXT_TYPE.fullmatch(declared_type) is not None
+        periods = field.data_type is DataType.TIME and INTEGER_TYPE.fullmatch(declared_type) is not None
+        if not (text or periods):
             continue
         out[name] = target
     return out
+
+
+# Plain integers only: the column returns 1, never "01" (Luna 8-21 B review).
+_PERIOD = re.compile(r"^(?:0|[1-9][0-9]{0,2})$")
+_HHMM = re.compile(r"^(?:[01][0-9]|2[0-3]):[0-5][0-9]$")
+
+
+def is_period_field(name: str) -> bool:
+    """Time fields take period tables (Phase 8-21); text fields take ordinary dictionaries."""
+    field = load_default_ontology().fields.get(name)
+    return field is not None and field.data_type is DataType.TIME
+
+
+def valid_period_entry(stored: Any, label: Any, aliases: Any) -> bool:
+    """A period number, its ``HH:MM`` time, and no aliases."""
+    return (
+        isinstance(stored, str)
+        and _PERIOD.fullmatch(stored) is not None
+        and isinstance(label, str)
+        and _HHMM.fullmatch(label) is not None
+        and aliases == []
+    )
 
 
 def text_columns(loaded: pg.LoadedPostgresRegistration) -> list[tuple[str, str]]:

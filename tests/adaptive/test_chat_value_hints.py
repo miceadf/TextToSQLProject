@@ -384,10 +384,11 @@ def test_reader_is_bounded_and_fails_quietly() -> None:
     assert connection.closed
     [(query, params)] = connection.cursor_obj.executed
     assert params == (11,)  # one more than the limit, to detect overflow
-    assert query == 'SELECT DISTINCT "dept_name" FROM "public"."department" WHERE "dept_name" IS NOT NULL LIMIT %s'
+    # Phase 8-21: read as text, so integer period columns list their values too
+    assert query == 'SELECT DISTINCT CAST("dept_name" AS text) FROM "public"."department" WHERE "dept_name" IS NOT NULL LIMIT %s'
     odd = FakeConnection([])
     PostgresDistinctValueReader({"db": config}, connector=lambda _config: odd).read("db", 'a"b', "c", 3)
-    assert odd.cursor_obj.executed[0][0].startswith('SELECT DISTINCT "c" FROM "public"."a""b"')
+    assert odd.cursor_obj.executed[0][0].startswith('SELECT DISTINCT CAST("c" AS text) FROM "public"."a""b"')
     too_many = PostgresDistinctValueReader(
         {"db": config}, connector=lambda _config: FakeConnection([(str(i),) for i in range(4)])
     )
@@ -420,7 +421,7 @@ def test_reader_presence_check_is_exact_and_bounded() -> None:
     reader = PostgresDistinctValueReader({"db": config}, connector=lambda _config: connection)
     assert reader.present("db", "t", "day", ["MON", "XYZ"]) == {"MON"}
     [(query, params)] = connection.cursor_obj.executed
-    assert query == 'SELECT DISTINCT "day" FROM "public"."t" WHERE "day" = ANY(%s)'
+    assert query == 'SELECT DISTINCT CAST("day" AS text) FROM "public"."t" WHERE CAST("day" AS text) = ANY(%s)'
     assert params == (["MON", "XYZ"],)
     assert reader.present("db", "t", "day", []) is None
     assert reader.present("db", "t", "day", ["x"] * 65) is None
