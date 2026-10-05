@@ -78,6 +78,22 @@ def _variants(word: str) -> list[str]:
     return variants
 
 
+def _shared_prefixes(dictionary: ValueDictionary) -> dict[str, set[str]]:
+    """Phase 8-21: the start shared by two or more one-word labels names their
+    group (``전공`` for ``전공필수`` and ``전공선택``) when the column stores codes.
+    Stored names already give their word pieces, so only coded entries count."""
+    labels = [
+        (lookup_key(entry.label), entry.stored)
+        for entry in dictionary.entries
+        if len(entry.label.split()) == 1 and entry.label != entry.stored
+    ]
+    shared: dict[str, set[str]] = {}
+    for key, stored in labels:
+        for end in range(MIN_KEY_LENGTH, len(key)):
+            shared.setdefault(key[:end], set()).add(stored)
+    return {prefix: stored for prefix, stored in shared.items() if len(stored) >= 2}
+
+
 class ValueIndex:
     """Match keys of one database's indexed values (immutable after build)."""
 
@@ -106,6 +122,9 @@ class ValueIndex:
             for entry in dictionary.entries:
                 for text in (entry.stored, entry.label, *entry.aliases):
                     self._add(field, text, entry.stored, piece=False, display=entry.stored)
+            for prefix, stored in _shared_prefixes(dictionary).items():
+                for value in stored:
+                    self._add(field, prefix, value, piece=True, display=prefix)
 
     def _add(self, field: str, text: str, stored: str, *, piece: bool, display: str | None = None) -> None:
         key = lookup_key(text)

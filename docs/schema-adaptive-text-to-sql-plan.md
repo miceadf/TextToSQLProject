@@ -705,7 +705,8 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 - [ ] 후속: PostgreSQL 등록의 버전 되돌리기·test query·대기 등록 목록(업로드 SQLite DB 확장은 2026-10-02 사용자 결정으로 범위 밖, ADR-089)
 - [ ] Phase 8-21 형식이 다른 PostgreSQL DB 대응 점검(공통코드 table, 교시 시간표, 한 칸에 묶인 시간표, 넓은 단일 table; 지침 `docs/prompts/phase8-21-postgres-format-variety.md`)
   - [x] D 넓은 단일 table: 코드 수정 없이 동작, 고정 질문 11/12(q11은 모델 흔들림), `wide_school` schema(2026-10-02)
-  - [ ] A 공통코드 table, B 교시 시간표, C 한 칸에 묶인 시간표
+  - [x] A 공통코드 table: 코드 column + 관리자 값 사전으로 q01~q12 12/12. 이름 일부("교양")로 코드 여러 개 찾기(`LIKE OR IN`, compiler·policy 공통 함수)와 공유 앞부분 힌트 추가 뒤 14/14, 레거시 SQL 불변(ADR-090, 2026-10-05)
+  - [ ] B 교시 시간표, C 한 칸에 묶인 시간표
 - [x] Phase 8-15 화면에서 PostgreSQL 등록(서버 소유 연결 목록 `DATABASE_URL`·`PG_SOURCE_*`, schema 선택, 규칙/AI 제안, 같은 검토 API의 PostgreSQL 분기와 `IGNORE`, 게시 때 변환·기준 table·미지원 field 고정 규칙 결정, runtime 검증 뒤 profile 쌍 저장, 재시작 없이 추가하는 `LivePostgresContexts`, 재시작 시 재로드; 실제 PostgreSQL smoke 2개·브라우저 확인; ADR-081)
 - [x] Phase 8-14 챗봇 실행 SQL 표시 개발 옵션(executor가 받은 문장 + bound 값 literal 보기용, 성공 답에만 `sql`, 옵션 끔이면 응답 불변, CLI `--show-sql`·launcher 기본 켬 `SHOW_SQL=0`; ADR-080)
 - [ ] 후속: 공통 약어 묶음(대상 값이 있을 때만 적용), 이해 실패 질문에서 약어 후보 제안(ADR-080)
@@ -2219,6 +2220,18 @@ SQLite DB 입력
 - 이유: 화면 등록의 주 경로가 PostgreSQL이고, 팀원의 평가 DB도 PostgreSQL로 만든다. 남은 사용량을 적응성 검증에 쓴다.
 - 결과: 다음 단계는 8-21 형식이 다른 PostgreSQL DB 대응 점검, 팀원 DB 평가 실행 도구, Phase 9 순서다.
 
+### ADR-090: 코드로 저장된 항목은 이름 일부로도 찾고, SQL 모양은 compiler와 policy가 같은 함수로 정한다
+
+- 날짜: 2026-10-05
+- 상태: 채택(8-21 진행, 사용자 결정 범위 안)
+- 결정:
+  - 값 사전이 있는 항목의 "포함" 조건은 이름(저장 값과 다른 것)에 그 말이 들어 있는 코드도 찾는다. SQL은 `(column LIKE %s OR column IN (%s, ...))`이다.
+  - 모양은 `contains_label_values` 하나가 정하고, compiler와 AST policy가 모두 이 함수를 부른다. policy는 그 조건에서만, 같은 column과 정확한 개수의 placeholder로만 이 모양을 허용한다.
+  - 별칭은 일부로 찾지 않는다. 이름을 저장한 DB는 SQL이 바뀌지 않는다.
+  - 공유 앞부분("전공")은 값 힌트로 준다.
+- 이유: 공통코드 table을 쓰는 학교에서 "교양 과목"처럼 이름 일부로 묻는 질문이 0건이었다(8-21 A 첫 실행). 코드 column은 이름의 글자를 담지 않는다.
+- 결과: `code_school` 14/14. 레거시 결과·SQL 불변. 공통코드 table에서 값 사전 자동 가져오기와 코드형 column AI 제안(9/16)은 후속이다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -2484,3 +2497,4 @@ SQLite DB 입력
 - 2026-10-01 Phase 8-20 모르는 조건 처리 완료(ADR-088). 공통 항목 밖 개념 목록 `backend/adaptive/ontology/outside-concepts.yaml`(데이터 11개, 공통 ontology 이름·별칭과 겹침 거부)과 `api/unknown_conditions.py`를 추가했다. 질문이 그 DB에 확장 항목이 없는 개념을 말하면 모델 출력과 상관없이 실행하지 않고 `UNSUPPORTED`(`{concept, label}`)로 답한다. 모델이 찾은 더 긴 값의 일부인 말은 제외한다. 결과가 0건이면 같음·포함 조건을 하나씩 `limit 1`로 같은 실행 경로에서 다시 돌려 `unmatched`로 알린다. 처음에는 값 힌트 값 목록으로 판단했으나, 레거시에서 모델이 "교111"을 과목 코드(값 500개 초과)에 넣어 판단할 수 없어 바꿨다. 화면은 두 경우의 문구를 보인다. 실측 중 값 힌트 cache가 schema fingerprint로만 key를 잡아, 다시 게시해 확장 항목·약어를 더해도 서버 재시작 전까지 예전 힌트를 쓰는 버그(8-07·8-19부터)를 찾아 mapping 버전을 key에 넣었다. 레거시 개발자 profile 고정 기대 9/9(개념 7개 UNSUPPORTED, 0건 진단 2개), 기존 질문 결과 불변. 가상 학교는 확장 항목 없이 "IT관 303호" UNSUPPORTED, 확장 항목 선언 뒤 고정 질문 14/14. `gpt-6-luna` high review-only 지적 3건(호실 패턴의 공백, 여러 단어 값 면제, 숫자 진단과 지침 불일치)을 재현해 앞의 둘은 코드를, 셋째는 지침을 고쳤다. 결과는 `docs/phase8-20-unknown-conditions-results-2026-10-01.md`에 두었다. 전체 pytest 1789개 통과·6 skip·611 subtests(Luna 수정 전), Luna 수정 뒤 관련 테스트 169개 재실행 통과. 8-20 테스트 47개, frontend Node 125개·ESLint(src·tests/frontend)·tsc·vite build 통과, compileall, diff check 통과. legacy DB는 읽기만 했다. ADR-088 추가
 - 2026-10-02 사용자 결정으로 개발 범위를 PostgreSQL DB 간 적응성으로 좁혔다(ADR-089). 업로드 SQLite DB 확장은 범위 밖으로 표시했다. 기존 SQLite 기능은 그대로 둔다. 다음 단계 8-21(형식이 다른 PostgreSQL DB 대응 점검)을 로드맵에 추가했다. 문서 변경만이라 테스트는 생략했다. ADR-089 추가
 - 2026-10-02 Phase 8-21 지침(`docs/prompts/phase8-21-postgres-format-variety.md`)을 쓰고 형식 D(넓은 단일 table)를 확인했다. 합성 DB에 `other_school` 내용을 한 table로 모은 `wide_school` schema를 만들고 화면 API로 등록·검토·게시했다. 코드 수정 없이 동작했고 AI 첫 후보 14/16, 고정 질문 11/12였다(q11은 같은 질문에서 맞는 답과 시간 조건을 뺀 답이 번갈아 나오는 모델 흔들림). 결과는 `docs/phase8-21-wide-table-results-2026-10-02.md`. 코드 변경이 없어 테스트는 생략했다. 형식 A·B·C는 다음 사용량 주기에 한다
+- 2026-10-05 Phase 8-21 형식 A(공통코드 table) 완료(ADR-090). 합성 DB `code_school`(이수구분·요일·학기를 공통코드 table 하나에, FK 없음)을 화면 API로 등록했다. 관리자가 코드 column에 연결하고 값 사전을 입력하면 q01~q12 12/12였다. 실행 전에 고정한 a01 "소웨 전공 과목"·a02 "교양 과목"은 실패했다. 이름 일부가 코드 column에서 `LIKE`로 0건이었고, 모델이 "전공"을 뺐다. `contains_label_values`로 compiler·AST policy가 같은 `(LIKE OR IN)` 모양을 쓰게 하고, 공유 앞부분 값 힌트를 더해 14/14가 되었다. `gpt-6-luna` high 지적 1건(별칭 일부로 레거시 결과가 늘어남)을 재현해, 코드 항목만·이름만 찾도록 고쳤다. 레거시 SQL과 결과(82·33건)는 그대로다. AI mapping 첫 후보는 9/16이었다(코드 column 후보 없음). 결과는 `docs/phase8-21-code-table-results-2026-10-05.md`. 전체 pytest 1804개 통과·6 skip·611 subtests(Luna 수정 전), 수정 뒤 관련 테스트 250개 재실행 통과, 8-21 테스트 13개, compileall·diff check 통과. 코드 변경이 backend뿐이라 frontend 검사는 생략했다

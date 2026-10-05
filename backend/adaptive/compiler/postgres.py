@@ -18,7 +18,11 @@ from backend.adaptive.mapping.transforms import (
     render_postgres_transform,
     transform_operators,
 )
-from backend.adaptive.mapping.values import ValueDictionary, bind_filter_value
+from backend.adaptive.mapping.values import (
+    ValueDictionary,
+    bind_filter_value,
+    contains_label_values,
+)
 from backend.adaptive.ontology.contracts import Operator
 from backend.adaptive.relations.contracts import JoinPlan, JoinPlanStatus, PhysicalRelationGraph
 from backend.adaptive.relations.errors import RelationGraphError
@@ -137,10 +141,24 @@ class JoinCapablePostgresCompiler:
                     f"operator '{item.operator.value}' is not allowed on transformed field "
                     f"'{item.field}'",
                 )
-            predicates.append(
-                f"{value_sql(item.field)} "
-                f"{SQL_OPERATORS[item.operator]} {POSTGRES_PLACEHOLDER}"
+            labelled = contains_label_values(
+                item.field,
+                item.operator,
+                item.value,
+                value_dictionaries=request.value_dictionaries,
             )
+            if labelled:
+                # Phase 8-21: a coded column also matches through its labels.
+                column = value_sql(item.field)
+                placeholders = ", ".join(POSTGRES_PLACEHOLDER for _ in labelled)
+                predicates.append(
+                    f"({column} LIKE {POSTGRES_PLACEHOLDER} OR {column} IN ({placeholders}))"
+                )
+            else:
+                predicates.append(
+                    f"{value_sql(item.field)} "
+                    f"{SQL_OPERATORS[item.operator]} {POSTGRES_PLACEHOLDER}"
+                )
             try:
                 value = bind_filter_value(
                     item.field,
@@ -156,6 +174,7 @@ class JoinCapablePostgresCompiler:
             if item.operator is Operator.CONTAINS:
                 value = postgres_contains_pattern(value)
             parameters.append(value)
+            parameters.extend(labelled)
 
         if predicates:
             sql += " WHERE " + " AND ".join(predicates)

@@ -7,6 +7,9 @@ lookup table instead. A dictionary maps every spelling a user may type onto
 one stored value, and maps stored values back to a display label.
 
 Only whole values are looked up; there is no substring rewriting.
+Phase 8-21: a ``contains`` condition also matches the coded stored values
+whose label holds the word (``교양`` → ``21``, ``22``), because a coded
+column cannot hold the label's words.
 """
 
 from __future__ import annotations
@@ -16,6 +19,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from ..ontology.contracts import Operator
 from .transforms import FieldTransform, normalize_filter_value
 
 MAX_ENTRIES = 64
@@ -26,6 +30,7 @@ __all__ = [
     "ValueDictionary",
     "ValueEntry",
     "bind_filter_value",
+    "contains_label_values",
     "lookup_key",
 ]
 
@@ -98,6 +103,27 @@ class ValueDictionary(BaseModel):
             raise ValueError("value is not in the dictionary")
         return value
 
+    def containing(self, value: Any) -> tuple[str, ...]:
+        """Coded stored values whose label holds the value (Phase 8-21).
+
+        Only entries whose label differs from the stored value count: a stored
+        name is already found by ``LIKE``, so databases that store names keep
+        exactly their previous SQL. Aliases are whole spellings, never searched
+        by parts.
+        """
+        if not isinstance(value, str):
+            return ()
+        key = lookup_key(value)
+        if not key:
+            return ()
+        return tuple(
+            sorted(
+                entry.stored
+                for entry in self.entries
+                if entry.label != entry.stored and key in lookup_key(entry.label)
+            )
+        )
+
     def label_for(self, stored: Any) -> Any:
         """Display label for a stored value; other values unchanged."""
         if isinstance(stored, str):
@@ -126,3 +152,23 @@ def bind_filter_value(
     if dictionary is not None:
         return dictionary.resolve(value)
     return value
+
+
+def contains_label_values(
+    field: str,
+    operator: Any,
+    value: Any,
+    *,
+    value_dictionaries: dict[str, ValueDictionary],
+) -> tuple[str, ...]:
+    """Stored values a ``contains`` condition also matches through labels (Phase 8-21).
+
+    Empty unless the field has a dictionary, the operator is ``contains`` and
+    the value is not itself a declared spelling (that one binds exactly).
+    The compiler and the SQL policy both call this, so they agree on the
+    predicate ``(column LIKE pattern OR column IN (values))``.
+    """
+    dictionary = value_dictionaries.get(field)
+    if dictionary is None or operator is not Operator.CONTAINS or dictionary.knows(value):
+        return ()
+    return dictionary.containing(value)

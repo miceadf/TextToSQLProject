@@ -15,7 +15,7 @@ from backend.adaptive.mapping.transforms import (
     render_postgres_transform,
     transform_operators,
 )
-from backend.adaptive.mapping.values import bind_filter_value
+from backend.adaptive.mapping.values import bind_filter_value, contains_label_values
 from backend.adaptive.ontology.contracts import Operator
 from backend.adaptive.relations.contracts import JoinPlan, JoinPlanStatus
 
@@ -42,6 +42,11 @@ _ALLOWED_NODE_TYPES = (
     exp.Like,
     exp.Placeholder,
     exp.Limit,
+    # Phase 8-21: only inside "(column LIKE %s OR column IN (%s, ...))",
+    # which _validate_where checks exactly.
+    exp.Paren,
+    exp.Or,
+    exp.In,
 )
 
 _FILTER_NODE_TYPES: dict[Operator, type[exp.Expression]] = {
@@ -406,6 +411,20 @@ class AstReadOnlyPolicy:
                 "WHERE predicate count does not match QueryIR filters",
             )
         for predicate, filter_ir in zip(predicates, context.query_ir.filters):
+            labelled = contains_label_values(
+                filter_ir.field,
+                filter_ir.operator,
+                filter_ir.value,
+                value_dictionaries=context.value_dictionaries,
+            )
+            in_list: exp.In | None = None
+            if labelled:
+                predicate, in_list = self._split_labelled(predicate, len(labelled), filter_ir.field)
+            elif isinstance(predicate, (exp.Paren, exp.Or, exp.In)):
+                self._fail(
+                    HarnessErrorCode.UNSAFE_SQL_NODE,
+                    f"filter operator for '{filter_ir.field}' does not match QueryIR",
+                )
             expected_type = _FILTER_NODE_TYPES[filter_ir.operator]
             if not isinstance(predicate, expected_type):
                 self._fail(
@@ -419,6 +438,11 @@ class AstReadOnlyPolicy:
                     f"filter field '{filter_ir.field}' has no published mapping",
                 )
             if filter_ir.field in context.field_transforms:
+                if in_list is not None:
+                    self._fail(
+                        HarnessErrorCode.UNSAFE_SQL_NODE,
+                        f"transformed field '{filter_ir.field}' has no label list",
+                    )
                 if filter_ir.operator not in transform_operators(
                     context.field_transforms[filter_ir.field]
                 ):
@@ -435,19 +459,44 @@ class AstReadOnlyPolicy:
                     code=HarnessErrorCode.UNAUTHORIZED_COLUMN,
                 )
             else:
-                self._validate_exact_column(
-                    predicate.this,
-                    mapping.table,
-                    mapping.column,
-                    alias_by_table,
-                    legacy_compatible=legacy_compatible,
-                    code=HarnessErrorCode.UNAUTHORIZED_COLUMN,
-                )
+                for column in (predicate.this, *(() if in_list is None else (in_list.this,))):
+                    self._validate_exact_column(
+                        column,
+                        mapping.table,
+                        mapping.column,
+                        alias_by_table,
+                        legacy_compatible=legacy_compatible,
+                        code=HarnessErrorCode.UNAUTHORIZED_COLUMN,
+                    )
             if not self._is_anonymous_placeholder(predicate.expression):
                 self._fail(
                     HarnessErrorCode.INVALID_PLACEHOLDER,
                     "filter values must use anonymous placeholders",
                 )
+
+    def _split_labelled(
+        self, predicate: exp.Expression, count: int, field: str
+    ) -> tuple[exp.Expression, exp.In]:
+        """``(column LIKE %s OR column IN (%s × count))`` → (the LIKE, the IN)."""
+        inner = predicate.this if isinstance(predicate, exp.Paren) else None
+        if (
+            not isinstance(inner, exp.Or)
+            or not isinstance(inner.this, exp.Like)
+            or not isinstance(inner.expression, exp.In)
+        ):
+            self._fail(
+                HarnessErrorCode.UNSAFE_SQL_NODE,
+                f"filter operator for '{field}' does not match QueryIR",
+            )
+        in_list = inner.expression
+        extra = {key for key, value in in_list.args.items() if value and key not in ("this", "expressions")}
+        values = in_list.expressions
+        if extra or len(values) != count or not all(self._is_anonymous_placeholder(item) for item in values):
+            self._fail(
+                HarnessErrorCode.INVALID_PLACEHOLDER,
+                f"label values for '{field}' must be anonymous placeholders",
+            )
+        return inner.this, in_list
 
     def _validate_limit(self, root: exp.Select) -> None:
         limit = root.args.get("limit")
@@ -474,7 +523,16 @@ class AstReadOnlyPolicy:
         context: AstPolicyContext,
     ) -> None:
         placeholders = list(root.find_all(exp.Placeholder))
-        expected_count = len(context.query_ir.filters) + 1
+        # Phase 8-21: a labelled contains filter binds its label values too.
+        expected_count = 1 + sum(
+            1
+            + len(
+                contains_label_values(
+                    item.field, item.operator, item.value, value_dictionaries=context.value_dictionaries
+                )
+            )
+            for item in context.query_ir.filters
+        )
         if (
             len(placeholders) != expected_count
             or len(context.query.parameters) != expected_count
@@ -506,6 +564,14 @@ class AstReadOnlyPolicy:
                 else:
                     value = f"%{value}%"
             expected_parameters.append(value)
+            expected_parameters.extend(
+                contains_label_values(
+                    filter_ir.field,
+                    filter_ir.operator,
+                    filter_ir.value,
+                    value_dictionaries=context.value_dictionaries,
+                )
+            )
         expected_parameters.append(context.query_ir.limit)
         actual_signature = [
             (type(value), value) for value in context.query.parameters
