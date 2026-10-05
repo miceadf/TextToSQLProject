@@ -696,6 +696,7 @@ Ollama, PostgreSQL, 기존 fine-tuned 모델처럼 데스크톱 환경이 필요
 - [x] Phase 8-09 AI mapping 제안(`ai-mapping-v1.1`: 로컬 `qwen2.5-coder:7b-instruct`, schema 제한 출력, runtime 규칙 검증기, 분반 table anchor 규칙)과 규칙 기반 비교(질문 AI 223/240, 규칙 205, 규칙+anchor 206; 값 사전 0/3·의미 함정 0/2는 미해결; 합성·L1/L3 전)
 - [x] Phase 8-10 AI mapping 제안 v2(저장 값 일치 검사, 값 사전 전용 단계, 관리자 column 설명 `admin-notes-v1`·코드표 직접 사전, 보류 변형 6개·사전 등록 hash; 기존 세트 223→232→235/240, 보류 세트 104→116/120; 자연어 설명은 의미 함정 미해결)
 - [ ] Phase 8-11 DB별 ontology 확장 field와 매개변수형 변환(공통 ontology는 팀 관리, DB별 확장은 관리자가 데이터로 선언, 변환은 닫힌 목록을 매개변수형으로 확장; 첫 사례 이론·실습 시간; 챗봇 응답·화면의 field 목록 일반화) — 프로토타입 이후로 보류(ADR-078)
+- [x] Phase 8-22 팀원 DB 평가 실행 도구(`blind_eval check|run|report`): 질문 파일 형식, 내용 비출력 형식 검사, 첫 실행 해시 잠금·실행 번호 선점·덮어쓰기 금지, loopback 전용(proxy·redirect 없음), 팀원용 안내 `docs/teammate-evaluation-db-guide.md`(ADR-093)
 - [x] Phase 8-20 모르는 조건 처리: 공통 항목 밖 개념 목록(데이터 11개)과 확장 항목 대조로 `UNSUPPORTED`(`{concept, label}`), 0건이면 조건별 1행 probe로 `unmatched` 진단, 값 힌트 cache key에 mapping 버전(레거시 고정 9/9, 가상 학교 14/14)(ADR-088)
 - [x] Phase 8-19 DB별 확장 항목(8-11 축소판): 관리자 선언(화면 패널), profile v5, runtime 검사, 챗봇 항목 목록·카드·값 힌트, 가상 학교 강의실(14/14)·레거시 강의실·수업방식 확인(ADR-087)
 - [x] Phase 8-18 공통 항목 대상 학년(ontology 버전 2, 추가형 호환), 챗봇 카드 항목 일반화, SQLite 게시 필수 항목을 강의 목록 15개로, carry-over `NOT_IN_BASE`, 레거시 profile `target_year`(ADR-085)
@@ -741,6 +742,7 @@ Phase 8 분할 계획(상세는 [`docs/prompts/phase8-01-mapping-version-rollbac
 4k. 8-19 DB별 확장 항목(완료, ADR-087).
 4l. 8-20 모르는 조건 처리(완료, ADR-088). 사용자가 정한 순서(8-18 → 8-19 → 8-20) 끝.
 4m. 2026-10-02 사용자 결정(ADR-089): PostgreSQL 전용으로 개발하고, 다른 PostgreSQL DB에 대한 적응성만 범위로 삼는다. 업로드 SQLite DB 확장은 하지 않는다. 다음: 8-21 형식이 다른 PostgreSQL DB 대응 점검 → 팀원 DB 평가 실행 도구 → Phase 9.
+4n. 8-22 팀원 DB 평가 실행 도구(완료, ADR-093). 다음: Phase 9(팀원 모사 DB와 질문 파일, L1 검토 표 준비).
 5a. 8-07 축소판에 약어 입력·규칙/AI 약어 후보·충돌 검사·관리자 승인과 업로드 DB의 QueryIR 챗봇 연결을 포함한다(ADR-080). 업로드 DB 부분은 ADR-089로 범위 밖.
 5. 8-07 관리자 화면 통합 축소판(검토·코드표→값 사전·test query 미리보기·버전; 업로드 DB 변환·값 사전·부분 게시 포함)과 처음부터 끝까지 browser smoke·시연 절차.
 6. prompt·field 별칭 개선은 L1 질문 세트 확보 뒤.
@@ -2267,6 +2269,21 @@ SQLite DB 입력
   - ②는 문자열 해석 SQL이 복잡하고 위험해서, 필요할 때 사용자 결정으로 미룬다.
 - 결과: `packed_school` 13/13. 기존 변환은 지금처럼 전체 값으로만 정한다.
 
+### ADR-093: 팀원 DB 평가는 질문 파일을 잠그고 첫 실행을 지우지 않는 도구로 한다
+
+- 날짜: 2026-10-06
+- 상태: 채택(ADR-086 규칙의 구현, ADR-089 순서)
+- 결정:
+  - 팀원이 질문과 정답(과목 코드 또는 거절)을 `.schema-adaptive/blind-evals/<ID>/questions.json`에 고정한다.
+  - `check`는 내용을 출력하지 않는다.
+  - `run`은 화면과 같은 챗봇 API로 묻는다. 첫 실행 때 질문 해시를 잠그고, 실행마다 번호를 먼저 잡아 따로 저장한다.
+  - 해시가 다르면 실행을 거부한다. 기록에는 결과 행 대신 상태와 개수만 남긴다.
+  - 도구는 DB에 직접 접속하지 않고, loopback 밖으로 요청하지 않는다.
+- 이유: "AI는 평가 전까지 보지 않는다", "첫 실행을 그대로 남긴다"는 규칙을 사람의 주의가 아니라 도구가 지키게 한다.
+- 결과:
+  - 개발용 `code_school`로 동작을 확인했다(15/15, 평가 수치 아님).
+  - 팀원용 안내 문서를 추가했다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -2535,3 +2552,4 @@ SQLite DB 입력
 - 2026-10-05 Phase 8-21 형식 A(공통코드 table) 완료(ADR-090). 합성 DB `code_school`(이수구분·요일·학기를 공통코드 table 하나에, FK 없음)을 화면 API로 등록했다. 관리자가 코드 column에 연결하고 값 사전을 입력하면 q01~q12 12/12였다. 실행 전에 고정한 a01 "소웨 전공 과목"·a02 "교양 과목"은 실패했다. 이름 일부가 코드 column에서 `LIKE`로 0건이었고, 모델이 "전공"을 뺐다. `contains_label_values`로 compiler·AST policy가 같은 `(LIKE OR IN)` 모양을 쓰게 하고, 공유 앞부분 값 힌트를 더해 14/14가 되었다. `gpt-6-luna` high 지적 1건(별칭 일부로 레거시 결과가 늘어남)을 재현해, 코드 항목만·이름만 찾도록 고쳤다. 레거시 SQL과 결과(82·33건)는 그대로다. AI mapping 첫 후보는 9/16이었다(코드 column 후보 없음). 결과는 `docs/phase8-21-code-table-results-2026-10-05.md`. 전체 pytest 1804개 통과·6 skip·611 subtests(Luna 수정 전), 수정 뒤 관련 테스트 250개 재실행 통과, 8-21 테스트 13개, compileall·diff check 통과. 코드 변경이 backend뿐이라 frontend 검사는 생략했다
 - 2026-10-06 Phase 8-21 형식 B(교시 시간표) 완료(ADR-091). 합성 DB `period_school`(시간표를 30분 교시 번호로 저장)을 화면 API로 등록했다. 첫 실행에서 정수 교시 column이 변환 없이 게시되었고, "오후 3시 이후"는 SQL 오류로 HTTP 500이었다. 시간 항목의 값 사전 중 이름이 모두 `HH:MM`인 것을 교시표로 보고, 시간 비교를 `IN (교시 목록)`으로 바꿨다(`time_label_values`, compiler·policy 공통). 맞는 교시가 없으면 SQL 없이 0건과 이유를 답한다. 교시표가 없으면 게시를 막고 항목을 알린다. 교시표 항목은 형식으로 검사하며, 값 사전 패널은 교시표 항목에 자유 입력을 준다. 값 읽기는 column을 글자로 읽는다. 고정 질문 11/13(q11 시간 조건 누락, b01 종료 시간으로 이해: 모두 모델 이해). "금요일 12시 이전에 시작하는 수업"은 정답 7개였다. 레거시 82·200·33건은 그대로다. `gpt-6-luna` high 지적 1건(0을 붙인 교시 번호가 카드 표시를 깨뜨림)을 재현해 고쳤다. 결과는 `docs/phase8-21-period-results-2026-10-06.md`. 전체 pytest 1826개 통과·6 skip·611 subtests(Luna 수정 전), 수정 뒤 관련 테스트 180개 재실행 통과, 8-21 B 테스트 21개, compileall·diff check 통과. 코드 변경이 backend뿐이라 frontend 검사는 생략했다
 - 2026-10-06 Phase 8-21 형식 C(한 칸에 묶인 시간표) ① 완료(ADR-092). 합성 DB `packed_school`(강좌마다 `월 13:30-14:45, 수 …` 글자 한 칸)을 화면 API로 등록했다. 시작·종료 시간은 "이 DB에 없음"으로 두었다. 첫 실행 12/13이었고, q05 "월요일 수업"이 같음 비교로 0건이었다. 닫힌 변환 `PACKED_WEEKDAY`를 추가했다. 요일은 포함으로 찾고, 엄격한 값 형식일 때만 서버 규칙이 이 변환을 붙인다. 게시 때 값이 50종 넘는 column은 표본으로 이 변환만 판단한다. 결과는 13/13이다(q11·b01 시간 질문은 기대대로 거절). `gpt-6-luna` high 지적 1건(표본이 숫자 변환 결정에도 쓰여 실패할 수 있음)을 재현해, 표본으로는 이 변환만 고르게 고쳤다. 레거시 82·200건은 그대로다. 결과는 `docs/phase8-21-packed-results-2026-10-06.md`. 8-21의 형식 A·B·C·D 점검을 마쳤다. 전체 pytest 1838개 통과·6 skip·611 subtests(Luna 수정 전), 수정 뒤 관련 테스트 64개 재실행 통과, 8-21 C 테스트 13개, compileall·diff check 통과. 코드 변경이 backend뿐이라 frontend 검사는 생략했다
+- 2026-10-06 Phase 8-22 팀원 DB 평가 실행 도구 완료(ADR-093). `backend/adaptive/evaluation/blind_eval.py`(`check|run|report`)를 추가했다. 질문 파일 형식은 `blind-eval-questions-v1`이고 정답은 과목 코드 또는 거절이다. check는 내용을 출력하지 않는다. run은 첫 실행 때 해시를 잠그고 실행 번호를 먼저 잡으며, 실행을 덮어쓰지 않는다. 기록에는 commit·모델·게시 버전·결과 개수가 남는다. report는 빠진·다른·미완료 실행을 경고한다. 요청은 loopback 전용이고 proxy·redirect를 쓰지 않는다. 팀원용 안내는 `docs/teammate-evaluation-db-guide.md`다. 개발용 `code_school`로 첫 실행·재실행 15/15를 확인했고, 평가 폴더와 등록은 지웠다. `gpt-6-luna` high 지적 5건(proxy·redirect, 잠금 삭제, 동시 실행, 링크 폴더, 빠진 실행 보고)을 재현해 모두 고쳤다. 결과는 `docs/phase8-22-blind-evaluation-results-2026-10-06.md`. 전체 pytest 1863개 통과·6 skip·611 subtests(Luna 수정 전), 수정 뒤 평가 도구 테스트 28개 통과·1 skip(symlink 권한 없음), compileall·diff check 통과
