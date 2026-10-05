@@ -744,6 +744,7 @@ Phase 8 분할 계획(상세는 [`docs/prompts/phase8-01-mapping-version-rollbac
 4m. 2026-10-02 사용자 결정(ADR-089): PostgreSQL 전용으로 개발하고, 다른 PostgreSQL DB에 대한 적응성만 범위로 삼는다. 업로드 SQLite DB 확장은 하지 않는다. 다음: 8-21 형식이 다른 PostgreSQL DB 대응 점검 → 팀원 DB 평가 실행 도구 → Phase 9.
 4n. 8-22 팀원 DB 평가 실행 도구(완료, ADR-093).
 4o. Phase 9 진입: L1 검토 표 준비(완료, ADR-094). 판정은 사용자 → 팀원. 다음: 사용자의 L1 판정, 팀원 모사 DB·질문 파일.
+4p. 8-23 AI mapping 제안 개선(완료, ADR-095; 개발용 schema 5개 55→75/80, 개발 수치).
 5a. 8-07 축소판에 약어 입력·규칙/AI 약어 후보·충돌 검사·관리자 승인과 업로드 DB의 QueryIR 챗봇 연결을 포함한다(ADR-080). 업로드 DB 부분은 ADR-089로 범위 밖.
 5. 8-07 관리자 화면 통합 축소판(검토·코드표→값 사전·test query 미리보기·버전; 업로드 DB 변환·값 사전·부분 게시 포함)과 처음부터 끝까지 browser smoke·시연 절차.
 6. prompt·field 별칭 개선은 L1 질문 세트 확보 뒤.
@@ -2298,6 +2299,26 @@ SQLite DB 입력
 - 이유: L1은 사람의 판정이다. AI는 판정에 필요한 자료와 형식만 준비하고, 오래된 표나 내용 없는 표가 승인으로 기록되지 않게 막는다.
 - 결과: `docs/l1-review/fixture-v1-review.md`·`.csv`(70행, 지문 `a7ff9d8f45b0…`).
 
+### ADR-095: 화면 등록의 AI mapping 제안은 예시 값 표본, 로마자 이름, 수강편람 관례를 쓰는 v3로 한다
+
+- 날짜: 2026-10-06
+- 상태: 채택(사용자 결정: 진행)
+- 결정:
+  - 예시 값은 값 종류가 많아도 10개 표본을 넣는다. 저장하지 않고 loopback 모델 prompt에만 넣는다.
+  - prompt v3(`ai-mapping-v3`, 화면 등록용)는 항목 이름·별칭을 한국어와 로마자(국어 로마자 표기법 계산)로 함께 보인다.
+  - 한국 수강편람 DB 관례 4줄(로마자·줄임말 이름, 코드 table, 교시 번호, 묶인 시간표)을 넣는다.
+  - 예시 값은 JSON 목록으로 보여 지시처럼 읽히지 않게 한다.
+  - FK가 하나도 없는 table의 선택은, 과반이 한 FK 묶음에 있을 때만 버린다.
+  - benchmark용 v1.1·v2 prompt는 그대로 둔다. 관리자 검토는 그대로 필수다.
+- 이유: 8-21에서 형식이 다른 DB마다 AI 첫 후보가 8~14/16으로 흔들렸다. 원인은 세 가지였다.
+  - 예시 값이 빠졌다.
+  - 로마자 이름을 못 읽었다.
+  - 코드·교시·묶인 시간표 관례를 몰랐다.
+- 결과:
+  - 개발용 schema 5개에서 1회당 55→75/80(3회·2회 반복 같은 결과).
+  - 레거시 화면 등록 제안은 8-19와 같다.
+  - 개발자가 만든 schema·정답이므로 적응성 근거가 아니다. 팀원 DB 평가(Phase 9)에서 다시 본다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -2568,3 +2589,4 @@ SQLite DB 입력
 - 2026-10-06 Phase 8-21 형식 C(한 칸에 묶인 시간표) ① 완료(ADR-092). 합성 DB `packed_school`(강좌마다 `월 13:30-14:45, 수 …` 글자 한 칸)을 화면 API로 등록했다. 시작·종료 시간은 "이 DB에 없음"으로 두었다. 첫 실행 12/13이었고, q05 "월요일 수업"이 같음 비교로 0건이었다. 닫힌 변환 `PACKED_WEEKDAY`를 추가했다. 요일은 포함으로 찾고, 엄격한 값 형식일 때만 서버 규칙이 이 변환을 붙인다. 게시 때 값이 50종 넘는 column은 표본으로 이 변환만 판단한다. 결과는 13/13이다(q11·b01 시간 질문은 기대대로 거절). `gpt-6-luna` high 지적 1건(표본이 숫자 변환 결정에도 쓰여 실패할 수 있음)을 재현해, 표본으로는 이 변환만 고르게 고쳤다. 레거시 82·200건은 그대로다. 결과는 `docs/phase8-21-packed-results-2026-10-06.md`. 8-21의 형식 A·B·C·D 점검을 마쳤다. 전체 pytest 1838개 통과·6 skip·611 subtests(Luna 수정 전), 수정 뒤 관련 테스트 64개 재실행 통과, 8-21 C 테스트 13개, compileall·diff check 통과. 코드 변경이 backend뿐이라 frontend 검사는 생략했다
 - 2026-10-06 Phase 8-22 팀원 DB 평가 실행 도구 완료(ADR-093). `backend/adaptive/evaluation/blind_eval.py`(`check|run|report`)를 추가했다. 질문 파일 형식은 `blind-eval-questions-v1`이고 정답은 과목 코드 또는 거절이다. check는 내용을 출력하지 않는다. run은 첫 실행 때 해시를 잠그고 실행 번호를 먼저 잡으며, 실행을 덮어쓰지 않는다. 기록에는 commit·모델·게시 버전·결과 개수가 남는다. report는 빠진·다른·미완료 실행을 경고한다. 요청은 loopback 전용이고 proxy·redirect를 쓰지 않는다. 팀원용 안내는 `docs/teammate-evaluation-db-guide.md`다. 개발용 `code_school`로 첫 실행·재실행 15/15를 확인했고, 평가 폴더와 등록은 지웠다. `gpt-6-luna` high 지적 5건(proxy·redirect, 잠금 삭제, 동시 실행, 링크 폴더, 빠진 실행 보고)을 재현해 모두 고쳤다. 결과는 `docs/phase8-22-blind-evaluation-results-2026-10-06.md`. 전체 pytest 1863개 통과·6 skip·611 subtests(Luna 수정 전), 수정 뒤 평가 도구 테스트 28개 통과·1 skip(symlink 권한 없음), compileall·diff check 통과
 - 2026-10-06 Phase 9 진입: L1 검토 표 준비 완료(ADR-094). `backend/adaptive/evaluation/l1_review.py`(`build`, `record`, `--blind`)와 `docs/l1-review/fixture-v1-review.md`·`.csv`(합성 benchmark 70개, seed 표, 한국어 gold 조건, 정답 행, 자동 확인 메모: 빈 결과·같은 내용 행·질문 표현과 조건 값의 차이·경계값·같은 뜻 묶음)를 추가했다. 판정은 사용자 먼저, 그다음 팀원이 한다. `record`는 형식만 확인해 기록하고 gold의 review_status는 바꾸지 않는다. 팀원 질문 파일의 표는 private 폴더에만 만들고 출력하지 않는다. `gpt-6-luna` high 지적 5건(다른 gold의 표 기록, 내용 없는 표 승인, 링크로 private 밖 쓰기, Excel 수식 주입, 검토일 누락)을 재현해 모두 고쳤다. 지침은 `docs/prompts/phase9-01-l1-review-table.md`. 전체 pytest 1878개 통과·7 skip·611 subtests(Luna 수정 전), 수정 뒤 L1 도구 테스트 15개 통과·1 skip(symlink 권한 없음), compileall·diff check 통과
+- 2026-10-06 Phase 8-23 AI mapping 제안 개선(ADR-095). 측정 도구 `backend/adaptive/evaluation/school_mapping_check.py`(화면 등록과 같은 경로, 개발용 schema 5개, FK로 이어진 column은 같은 정답)를 추가했다. 기준선은 1회당 55/80(규칙만 5/80)이었다. 예시 값 표본(10개)으로 65/80, prompt v3(한국어·로마자 항목 이름, 수강편람 관례 4줄)로 75/80이 되었다. join할 수 없는 선택 제거와 리뷰 수정 뒤에도 75/80이다. 남은 틀림은 코드형 학기, 교시 시작·종료, 묶인 시간표 요일/시작 위치다. 레거시 public 제안은 8-19와 같다(14개, 알려진 함정 2개). `gpt-6-luna` high 지적 3건(예시 값 prompt 주입, 숫자 column 검사의 정당한 선택 제거, FK 묶음 검사의 view·동률 문제)을 재현해 고쳤다. benchmark v1.1·v2 prompt는 그대로다. 결과는 `docs/phase8-23-ai-mapping-results-2026-10-06.md`. 전체 pytest 1898개 통과·8 skip·611 subtests(Luna 수정 전), 수정 뒤 관련 테스트 204개 재실행 통과, compileall·diff check 통과

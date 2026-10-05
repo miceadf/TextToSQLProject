@@ -354,7 +354,12 @@ def _sampled_catalog(catalog: DatabaseCatalog, reader: Any, database_id: str) ->
     for table in catalog.tables:
         new_columns = []
         for column in table.columns:
-            values = reader.read(database_id, table.name, column.name, SAMPLE_LIMIT)
+            # Phase 8-23: a sample, so columns with many values (names, codes)
+            # still show examples instead of none.
+            try:
+                values = reader.read(database_id, table.name, column.name, SAMPLE_LIMIT, sample=True)
+            except TypeError:  # a reader without samples: all values or nothing, as before
+                values = reader.read(database_id, table.name, column.name, SAMPLE_LIMIT)
             examples = [value for value in values if isinstance(value, str)] if isinstance(values, list) else []
             new_columns.append(column.model_copy(update={"sample_values": examples}))
         tables.append(table.model_copy(update={"columns": new_columns}))

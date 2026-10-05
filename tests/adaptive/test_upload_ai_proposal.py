@@ -145,7 +145,7 @@ def test_ai_choice_is_first_with_rule_score_and_ai_evidence(tmp_path: Path) -> N
     model = FakeModel()
     proposal = propose_upload_mapping(catalog, ontology, rules, model=model)
     assert proposal is not None and len(model.prompts) == 1
-    assert model.prompts[0].startswith("Prompt version: ai-mapping-v2/columns")
+    assert model.prompts[0].startswith("Prompt version: ai-mapping-v3/columns")  # Phase 8-23
     table = next(t for t in catalog.tables if t.name == "lect")
     for field, ref in CORRECT.items():
         first = proposal.candidates[field][0]
