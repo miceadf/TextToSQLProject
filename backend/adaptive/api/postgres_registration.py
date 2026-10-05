@@ -21,6 +21,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
+from ..harness.postgres_values import OVER_LIMIT
 from ..registration import postgres_dictionaries as dictionaries_store
 from ..registration import postgres_extensions as extensions_store
 from ..registration import postgres_registrations as pg
@@ -293,6 +294,11 @@ class PostgresRegistrationService:
 
         def read_values(table: str, column: str) -> list[str]:
             values = reader.read(database_id, table, column, pg.TRANSFORM_SAMPLE_LIMIT)
+            if values is OVER_LIMIT:
+                # Phase 8-21: a column with many values (a packed timetable) is
+                # judged on a sample, which only PACKED_WEEKDAY accepts.
+                sampled = reader.read(database_id, table, column, pg.TRANSFORM_SAMPLE_LIMIT, sample=True)
+                return pg.SampledValues(v for v in sampled if isinstance(v, str)) if isinstance(sampled, list) else []
             return [value for value in values if isinstance(value, str)] if isinstance(values, list) else []
 
         # Phase 8-07: the edited dictionaries, re-checked against the stored values.

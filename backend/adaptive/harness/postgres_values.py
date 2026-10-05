@@ -97,7 +97,9 @@ class PostgresDistinctValueReader:
                     pass
         return {row[0] for row in rows if isinstance(row, (tuple, list)) and len(row) == 1 and isinstance(row[0], str)}
 
-    def read(self, database_id: str, table: str, column: str, limit: int) -> Any:
+    def read(self, database_id: str, table: str, column: str, limit: int, *, sample: bool = False) -> Any:
+        """``sample`` (Phase 8-21): up to ``limit`` values even when the column
+        holds more, for format checks that only need examples."""
         config = self._configs.get(database_id)
         if config is None or not isinstance(limit, int) or not 1 <= limit <= 5000:
             return None
@@ -128,7 +130,9 @@ class PostgresDistinctValueReader:
                 except Exception:
                     pass
         if len(rows) > limit:
-            return OVER_LIMIT
+            if not sample:
+                return OVER_LIMIT
+            rows = rows[:limit]
         values = {
             row[0]
             for row in rows

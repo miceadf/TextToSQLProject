@@ -39,6 +39,9 @@ class FieldTransform(str, Enum):
     # Four-digit text time ("0900") -> "HH:MM" text (Phase 8-17); comparing
     # "1230" with "12:00" as raw text would misorder them.
     HHMM_TEXT_TO_HHMM = "HHMM_TEXT_TO_HHMM"
+    # Phase 8-21: a whole timetable in one text column ("월 09:00-10:15, 수 ...");
+    # a weekday is found by containment ("월요일" -> contains "월").
+    PACKED_WEEKDAY = "PACKED_WEEKDAY"
 
 
 _POSTGRES_TEMPLATES = {
@@ -47,6 +50,7 @@ _POSTGRES_TEMPLATES = {
     # The column already holds the canonical form; only filter values change.
     FieldTransform.KOREAN_WEEKDAY: "{column}",
     FieldTransform.HHMM_TEXT_TO_HHMM: "(SUBSTRING({column} FROM 1 FOR 2) || ':' || SUBSTRING({column} FROM 3 FOR 2))",
+    FieldTransform.PACKED_WEEKDAY: "{column}",
 }
 
 _DATA_TYPES = {
@@ -54,6 +58,7 @@ _DATA_TYPES = {
     FieldTransform.TIME_TO_HHMM: frozenset({DataType.TIME}),
     FieldTransform.KOREAN_WEEKDAY: frozenset({DataType.STRING}),
     FieldTransform.HHMM_TEXT_TO_HHMM: frozenset({DataType.TIME}),
+    FieldTransform.PACKED_WEEKDAY: frozenset({DataType.STRING}),
 }
 
 # Transformed values are compared, never pattern-matched.
@@ -76,6 +81,8 @@ _TRANSFORM_OPERATORS = {
         {Operator.EQUALS, Operator.NOT_EQUALS, Operator.CONTAINS}
     ),
     FieldTransform.HHMM_TEXT_TO_HHMM: TRANSFORM_OPERATORS,
+    # Only containment means something inside a packed timetable.
+    FieldTransform.PACKED_WEEKDAY: frozenset({Operator.CONTAINS}),
 }
 
 
@@ -101,6 +108,7 @@ def column_type_supports(transform: FieldTransform, declared_type: str) -> bool:
         FieldTransform.SLASH_FIRST_NUMERIC,
         FieldTransform.KOREAN_WEEKDAY,
         FieldTransform.HHMM_TEXT_TO_HHMM,
+        FieldTransform.PACKED_WEEKDAY,
     ):
         return normalized.startswith(("character varying", "varchar", "text", "character", "char"))
     if transform is FieldTransform.TIME_TO_HHMM:
@@ -133,7 +141,7 @@ def normalize_filter_value(transform: FieldTransform, value: Any) -> Any:
     ``KOREAN_WEEKDAY`` maps ``"월요일"``, ``"Mon"``, ``"monday"`` and ``"월"``
     to ``"월"``; any other value (``"주말"``) raises ``ValueError``.
     """
-    if FieldTransform(transform) is FieldTransform.KOREAN_WEEKDAY:
+    if FieldTransform(transform) in (FieldTransform.KOREAN_WEEKDAY, FieldTransform.PACKED_WEEKDAY):
         day = _WEEKDAY_ALIASES.get(value.strip().lower()) if isinstance(value, str) else None
         if day is None:
             raise ValueError("weekday filter value is not a weekday")

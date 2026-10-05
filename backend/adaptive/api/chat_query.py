@@ -36,6 +36,7 @@ from ..harness.contracts import (
 )
 from ..harness.engine import ExecutionHarness
 from ..harness.recorded import RecordedFailureCode
+from ..mapping.transforms import FieldTransform
 from ..mapping.values import ValueDictionary, bind_filter_value, time_label_values
 from ..ontology.contracts import Operator
 from ..ontology.loader import load_default_ontology
@@ -532,8 +533,9 @@ def answer_chat_query(
             # A recognised value names one stored value exactly; containment
             # would also match longer codes ("01" in "101").
             continue
+        packed = transforms.get(item["field"]) == FieldTransform.PACKED_WEEKDAY  # Phase 8-21
         if (
-            item["field"] in CONTAINS_FIELDS or item["field"] in text_extensions
+            item["field"] in CONTAINS_FIELDS or item["field"] in text_extensions or packed
         ) and item["operator"] == Operator.EQUALS.value:
             item["operator"] = Operator.CONTAINS.value
     executed = QueryIR.model_validate(rewritten)

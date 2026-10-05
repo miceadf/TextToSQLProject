@@ -285,6 +285,10 @@ def values_fit(transform: FieldTransform, values: list[str]) -> bool:
         return all(_SLASH_VALUE.fullmatch(value) for value in values)
     if transform is FieldTransform.HHMM_TEXT_TO_HHMM:
         return all(re.fullmatch(r"(?:[01]\d|2[0-3])[0-5]\d", value) for value in values)
+    if transform is FieldTransform.PACKED_WEEKDAY:
+        from ..registration.postgres_registrations import packed_weekdays_fit
+
+        return packed_weekdays_fit(values)
     return True
 
 

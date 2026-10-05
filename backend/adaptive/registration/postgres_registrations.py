@@ -559,12 +559,40 @@ def load_published(*, repository_root: str | Path, database_id: str) -> Publishe
     return record
 
 
+# Phase 8-21: "월 09:00-10:15, 수 09:00-10:15" or "월1-2/수3": weekdays with
+# times or periods, and nothing else (a course name never matches).
+_PACKED_SLOT = r"[월화수목금토일]\s*[0-9:~\-\s]*"
+_PACKED_VALUE = re.compile(rf"^\s*{_PACKED_SLOT}(?:[,/]\s*{_PACKED_SLOT})*$")
+
+
+class SampledValues(list):
+    """Some of a column's values, not all of them (Phase 8-21).
+
+    Only ``PACKED_WEEKDAY`` may be chosen from a sample: it searches by
+    ``LIKE`` and cannot fail on an unseen value, while a cast such as
+    ``SLASH_FIRST_NUMERIC`` would (Luna 8-21 C review).
+    """
+
+
+def packed_weekdays_fit(values: list[str]) -> bool:
+    """Every value is a packed timetable, and not all are bare weekdays (those are KOREAN_WEEKDAY)."""
+    return (
+        bool(values)
+        and all(_PACKED_VALUE.fullmatch(value) for value in values)
+        and any(value not in WEEKDAYS for value in values)
+    )
+
+
 def transform_fits(transform: FieldTransform, declared_type: str, data_type: DataType, values: list[str]) -> bool:
     """The fixed publish rule: type rules plus stored examples in the transform's format."""
     if not transform_supports_data_type(transform, data_type) or not column_type_supports(transform, declared_type):
         return False
+    if isinstance(values, SampledValues) and transform is not FieldTransform.PACKED_WEEKDAY:
+        return False
     if transform is FieldTransform.KOREAN_WEEKDAY:
         return bool(values) and all(value in WEEKDAYS for value in values)
+    if transform is FieldTransform.PACKED_WEEKDAY:
+        return packed_weekdays_fit(values)
     if transform is FieldTransform.SLASH_FIRST_NUMERIC:
         return bool(values) and all(_SLASH_VALUE.fullmatch(value) for value in values)
     if transform is FieldTransform.HHMM_TEXT_TO_HHMM:
