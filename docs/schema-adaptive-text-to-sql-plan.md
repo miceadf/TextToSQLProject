@@ -742,7 +742,8 @@ Phase 8 분할 계획(상세는 [`docs/prompts/phase8-01-mapping-version-rollbac
 4k. 8-19 DB별 확장 항목(완료, ADR-087).
 4l. 8-20 모르는 조건 처리(완료, ADR-088). 사용자가 정한 순서(8-18 → 8-19 → 8-20) 끝.
 4m. 2026-10-02 사용자 결정(ADR-089): PostgreSQL 전용으로 개발하고, 다른 PostgreSQL DB에 대한 적응성만 범위로 삼는다. 업로드 SQLite DB 확장은 하지 않는다. 다음: 8-21 형식이 다른 PostgreSQL DB 대응 점검 → 팀원 DB 평가 실행 도구 → Phase 9.
-4n. 8-22 팀원 DB 평가 실행 도구(완료, ADR-093). 다음: Phase 9(팀원 모사 DB와 질문 파일, L1 검토 표 준비).
+4n. 8-22 팀원 DB 평가 실행 도구(완료, ADR-093).
+4o. Phase 9 진입: L1 검토 표 준비(완료, ADR-094). 판정은 사용자 → 팀원. 다음: 사용자의 L1 판정, 팀원 모사 DB·질문 파일.
 5a. 8-07 축소판에 약어 입력·규칙/AI 약어 후보·충돌 검사·관리자 승인과 업로드 DB의 QueryIR 챗봇 연결을 포함한다(ADR-080). 업로드 DB 부분은 ADR-089로 범위 밖.
 5. 8-07 관리자 화면 통합 축소판(검토·코드표→값 사전·test query 미리보기·버전; 업로드 DB 변환·값 사전·부분 게시 포함)과 처음부터 끝까지 browser smoke·시연 절차.
 6. prompt·field 별칭 개선은 L1 질문 세트 확보 뒤.
@@ -2284,6 +2285,19 @@ SQLite DB 입력
   - 개발용 `code_school`로 동작을 확인했다(15/15, 평가 수치 아님).
   - 팀원용 안내 문서를 추가했다.
 
+### ADR-094: L1 검토 표는 도구로 만들고, 판정은 사람만 하며 gold는 도구가 바꾸지 않는다
+
+- 날짜: 2026-10-06
+- 상태: 채택(ADR-086 "L1 표는 Phase 9 진입 때 준비"의 구현)
+- 결정:
+  - 합성 benchmark 70개의 검토 표를 Markdown(읽기)과 CSV(판정 입력)로 만든다. 내용은 seed 표, 질문, gold 조건(한국어 이름), 정답 행, 자동 확인 메모다.
+  - CSV의 모든 행에 gold 지문을 넣는다.
+  - `record`는 판정 형식을 확인한다. 열과 질문·gold 내용이 현재 gold와 같아야 하고, 판정에는 검토자·검토일이, 수정·보류에는 의견이 있어야 한다. 확인한 판정은 기록 파일로 남긴다.
+  - gold의 `review_status`는 바꾸지 않는다. 기록을 gold에 반영할지는 사용자가 정한다.
+  - 팀원 질문 파일의 표는 그 private 폴더에만 만들고 내용을 출력하지 않는다.
+- 이유: L1은 사람의 판정이다. AI는 판정에 필요한 자료와 형식만 준비하고, 오래된 표나 내용 없는 표가 승인으로 기록되지 않게 막는다.
+- 결과: `docs/l1-review/fixture-v1-review.md`·`.csv`(70행, 지문 `a7ff9d8f45b0…`).
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -2553,3 +2567,4 @@ SQLite DB 입력
 - 2026-10-06 Phase 8-21 형식 B(교시 시간표) 완료(ADR-091). 합성 DB `period_school`(시간표를 30분 교시 번호로 저장)을 화면 API로 등록했다. 첫 실행에서 정수 교시 column이 변환 없이 게시되었고, "오후 3시 이후"는 SQL 오류로 HTTP 500이었다. 시간 항목의 값 사전 중 이름이 모두 `HH:MM`인 것을 교시표로 보고, 시간 비교를 `IN (교시 목록)`으로 바꿨다(`time_label_values`, compiler·policy 공통). 맞는 교시가 없으면 SQL 없이 0건과 이유를 답한다. 교시표가 없으면 게시를 막고 항목을 알린다. 교시표 항목은 형식으로 검사하며, 값 사전 패널은 교시표 항목에 자유 입력을 준다. 값 읽기는 column을 글자로 읽는다. 고정 질문 11/13(q11 시간 조건 누락, b01 종료 시간으로 이해: 모두 모델 이해). "금요일 12시 이전에 시작하는 수업"은 정답 7개였다. 레거시 82·200·33건은 그대로다. `gpt-6-luna` high 지적 1건(0을 붙인 교시 번호가 카드 표시를 깨뜨림)을 재현해 고쳤다. 결과는 `docs/phase8-21-period-results-2026-10-06.md`. 전체 pytest 1826개 통과·6 skip·611 subtests(Luna 수정 전), 수정 뒤 관련 테스트 180개 재실행 통과, 8-21 B 테스트 21개, compileall·diff check 통과. 코드 변경이 backend뿐이라 frontend 검사는 생략했다
 - 2026-10-06 Phase 8-21 형식 C(한 칸에 묶인 시간표) ① 완료(ADR-092). 합성 DB `packed_school`(강좌마다 `월 13:30-14:45, 수 …` 글자 한 칸)을 화면 API로 등록했다. 시작·종료 시간은 "이 DB에 없음"으로 두었다. 첫 실행 12/13이었고, q05 "월요일 수업"이 같음 비교로 0건이었다. 닫힌 변환 `PACKED_WEEKDAY`를 추가했다. 요일은 포함으로 찾고, 엄격한 값 형식일 때만 서버 규칙이 이 변환을 붙인다. 게시 때 값이 50종 넘는 column은 표본으로 이 변환만 판단한다. 결과는 13/13이다(q11·b01 시간 질문은 기대대로 거절). `gpt-6-luna` high 지적 1건(표본이 숫자 변환 결정에도 쓰여 실패할 수 있음)을 재현해, 표본으로는 이 변환만 고르게 고쳤다. 레거시 82·200건은 그대로다. 결과는 `docs/phase8-21-packed-results-2026-10-06.md`. 8-21의 형식 A·B·C·D 점검을 마쳤다. 전체 pytest 1838개 통과·6 skip·611 subtests(Luna 수정 전), 수정 뒤 관련 테스트 64개 재실행 통과, 8-21 C 테스트 13개, compileall·diff check 통과. 코드 변경이 backend뿐이라 frontend 검사는 생략했다
 - 2026-10-06 Phase 8-22 팀원 DB 평가 실행 도구 완료(ADR-093). `backend/adaptive/evaluation/blind_eval.py`(`check|run|report`)를 추가했다. 질문 파일 형식은 `blind-eval-questions-v1`이고 정답은 과목 코드 또는 거절이다. check는 내용을 출력하지 않는다. run은 첫 실행 때 해시를 잠그고 실행 번호를 먼저 잡으며, 실행을 덮어쓰지 않는다. 기록에는 commit·모델·게시 버전·결과 개수가 남는다. report는 빠진·다른·미완료 실행을 경고한다. 요청은 loopback 전용이고 proxy·redirect를 쓰지 않는다. 팀원용 안내는 `docs/teammate-evaluation-db-guide.md`다. 개발용 `code_school`로 첫 실행·재실행 15/15를 확인했고, 평가 폴더와 등록은 지웠다. `gpt-6-luna` high 지적 5건(proxy·redirect, 잠금 삭제, 동시 실행, 링크 폴더, 빠진 실행 보고)을 재현해 모두 고쳤다. 결과는 `docs/phase8-22-blind-evaluation-results-2026-10-06.md`. 전체 pytest 1863개 통과·6 skip·611 subtests(Luna 수정 전), 수정 뒤 평가 도구 테스트 28개 통과·1 skip(symlink 권한 없음), compileall·diff check 통과
+- 2026-10-06 Phase 9 진입: L1 검토 표 준비 완료(ADR-094). `backend/adaptive/evaluation/l1_review.py`(`build`, `record`, `--blind`)와 `docs/l1-review/fixture-v1-review.md`·`.csv`(합성 benchmark 70개, seed 표, 한국어 gold 조건, 정답 행, 자동 확인 메모: 빈 결과·같은 내용 행·질문 표현과 조건 값의 차이·경계값·같은 뜻 묶음)를 추가했다. 판정은 사용자 먼저, 그다음 팀원이 한다. `record`는 형식만 확인해 기록하고 gold의 review_status는 바꾸지 않는다. 팀원 질문 파일의 표는 private 폴더에만 만들고 출력하지 않는다. `gpt-6-luna` high 지적 5건(다른 gold의 표 기록, 내용 없는 표 승인, 링크로 private 밖 쓰기, Excel 수식 주입, 검토일 누락)을 재현해 모두 고쳤다. 지침은 `docs/prompts/phase9-01-l1-review-table.md`. 전체 pytest 1878개 통과·7 skip·611 subtests(Luna 수정 전), 수정 뒤 L1 도구 테스트 15개 통과·1 skip(symlink 권한 없음), compileall·diff check 통과

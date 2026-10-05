@@ -49,6 +49,8 @@ Phase 8-10(2026-09-30): 보류 변형과 관리자 설명(`admin-notes-v1`)은 �
 
 이 표는 사용자가 결정한 것을 기록한 것이다. AI가 스스로 관문을 승인한 것이 아니다. 개인정보 보호 장치(접속 정보 비노출 등)는 이미 만든 것을 유지하되 추가 투자는 하지 않는다. 아래의 이전 기록에 있는 "E3/L5 판단 필요", "L2 아님", "SQL 표시를 끈다" 같은 문구는 이 결정으로 대체된다.
 
+Phase 9 진입(2026-10-06): L1 검토 표를 준비했다. 대상은 합성 benchmark 70개다. 파일은 [l1-review/fixture-v1-review.md](l1-review/fixture-v1-review.md)(읽기)와 같은 이름의 CSV(판정 입력)다. 판정은 사용자 먼저, 그다음 팀원이 한다. 기록 명령은 판정 형식만 확인한다. gold의 `NEEDS_HUMAN_REVIEW`는 사람이 정하기 전까지 그대로 둔다. 아직 아무 사례도 판정되지 않았다.
+
 Phase 8-22(2026-10-06): 독립 학교 평가(E4/L6) 규칙 ②~④를 지키는 실행 도구와 팀원용 안내([teammate-evaluation-db-guide.md](teammate-evaluation-db-guide.md))를 만들었다. 팀원 DB와 질문 파일은 아직 없다. AI는 질문 파일을 평가 실행 전까지 열지 않는다.
 
 Phase 8-21(2026-10-02~06): `wide_school`·`code_school`·`period_school`·`packed_school`은 AI가 만든 개발용 합성 DB이며 팀원 평가 DB를 대신하지 않는다(ADR-086). 결과(11/12, 14/14, 11/13, 13/13)는 L1/L3 전 잠정치다.
