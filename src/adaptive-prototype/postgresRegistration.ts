@@ -164,6 +164,8 @@ const MESSAGES: Record<string, string> = {
   POSTGRES_REGISTRATION_ALIAS_LENGTH: '약어는 2~20자여야 합니다. 한 글자 표기는 뜻(표시)에 넣으세요.',
   POSTGRES_REGISTRATION_LIMIT_REACHED: '한도를 넘었습니다 (DB 수, 또는 확장 항목 10개).',
   POSTGRES_REGISTRATION_EXTENSION_CONFLICT: '이미 다른 항목에 연결된 column이거나 같은 이름의 확장 항목이 있습니다.',
+  POSTGRES_REGISTRATION_IMPORT_CONFLICT: '코드표에서 두 코드가 같은 이름이거나, 한 코드에 이름이 둘입니다. 구분 column을 확인해 주세요.',
+  POSTGRES_REGISTRATION_TOO_MANY_CODES: '코드가 너무 많습니다(한 항목에 64개까지). 구분 column과 값으로 좁혀 주세요.',
 };
 
 export function toPostgresMessage(error: unknown): string {
@@ -179,6 +181,7 @@ export function toPostgresMessage(error: unknown): string {
 
 export const POSTGRES_DICTIONARIES_PATH = '/api/adaptive/v1/postgres/dictionaries';
 export const POSTGRES_DICTIONARIES_VERSION = 'postgres-dictionaries-v1';
+const MAX_IMPORTED_PAIRS = 64;
 const FIELD_REF = /^[A-Z][A-Za-z]*\.[a-z_]+$/;
 const MAX_VALUE = 200;
 
@@ -198,6 +201,8 @@ export interface DictionaryField {
 export interface DictionaryDetail {
   fields: DictionaryField[];
   warnings: { alias: string; warning: string }[];
+  // Phase 8-24: counts of a code-table import.
+  imported?: { added: number; updated: number; skipped: number };
 }
 
 export interface AliasCandidate {
@@ -223,7 +228,8 @@ function parseEntry(value: unknown): DictionaryEntry | null {
 export function parseDictionaryDetail(value: unknown, databaseId: string): DictionaryDetail | null {
   if (!isPlainObject(value)) return null;
   const withWarnings = Object.prototype.hasOwnProperty.call(value, 'warnings');
-  const keys = ['version', 'database_id', 'fields', ...(withWarnings ? ['warnings'] : [])];
+  const withImported = Object.prototype.hasOwnProperty.call(value, 'imported');
+  const keys = ['version', 'database_id', 'fields', ...(withWarnings ? ['warnings'] : []), ...(withImported ? ['imported'] : [])];
   if (!hasExactKeys(value, keys)) return null;
   if (value['version'] !== POSTGRES_DICTIONARIES_VERSION || value['database_id'] !== databaseId) return null;
   if (!Array.isArray(value['fields'])) return null;
@@ -251,7 +257,18 @@ export function parseDictionaryDetail(value: unknown, databaseId: string): Dicti
       warnings.push({ alias: item['alias'] as string, warning: item['warning'] as string });
     }
   }
-  return { fields, warnings };
+  if (!withImported) return { fields, warnings };
+  const imported = value['imported'];
+  if (!isPlainObject(imported) || !hasExactKeys(imported, ['added', 'updated', 'skipped'])) return null;
+  const counts = [imported['added'], imported['updated'], imported['skipped']];
+  // One import reads at most 64 (code, name) pairs (Luna 8-24 review).
+  if (!counts.every((count) => typeof count === 'number' && Number.isInteger(count) && count >= 0)) return null;
+  if ((counts as number[]).reduce((sum, count) => sum + count, 0) > MAX_IMPORTED_PAIRS) return null;
+  return {
+    fields,
+    warnings,
+    imported: { added: counts[0] as number, updated: counts[1] as number, skipped: counts[2] as number },
+  };
 }
 
 export function parseCandidates(value: unknown, databaseId: string, field: string): AliasCandidate[] | null {
@@ -303,6 +320,42 @@ export async function setDictionaryEntry(
   const parsed = parseDictionaryDetail(payload, input.databaseId);
   if (parsed === null) throw new PostgresRegistrationClientError('contract');
   return parsed;
+}
+
+/** Phase 8-24: entries for one field from a code table's (code, name) rows. */
+export async function importDictionaryFromTable(
+  fetchFn: PgFetchLike,
+  input: {
+    databaseId: string;
+    field: string;
+    table: string;
+    codeColumn: string;
+    nameColumn: string;
+    group: { column: string; value: string } | null;
+    reviewer: string;
+  },
+): Promise<DictionaryDetail> {
+  const payload = await postDictionary(fetchFn, {
+    action: 'IMPORT',
+    database_id: input.databaseId,
+    field: input.field,
+    table: input.table,
+    code_column: input.codeColumn,
+    name_column: input.nameColumn,
+    group_column: input.group?.column ?? null,
+    group_value: input.group?.value ?? null,
+    reviewer: input.reviewer,
+  });
+  const parsed = parseDictionaryDetail(payload, input.databaseId);
+  if (parsed === null || parsed.imported === undefined) throw new PostgresRegistrationClientError('contract');
+  return parsed;
+}
+
+/** The message after a code-table import (Phase 8-24). */
+export function describeImport(imported: NonNullable<DictionaryDetail['imported']>): string {
+  const parts = [`새 항목 ${imported.added}개`, `이름 바뀐 항목 ${imported.updated}개`];
+  if (imported.skipped > 0) parts.push(`이 field의 데이터에 없는 코드 ${imported.skipped}개는 뺐음`);
+  return `코드표에서 가져왔습니다: ${parts.join(', ')}. 게시해야 챗봇에 적용됩니다.`;
 }
 
 export async function removeDictionaryEntry(
@@ -390,7 +443,17 @@ export const EXTENSION_ENTITY_LABELS: Record<string, string> = {
   Schedule: '강의 시간',
 };
 export const EXTENSION_TYPE_LABELS: Record<string, string> = { string: '글자', integer: '정수', number: '숫자' };
-const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_$]{0,62}$/;
+// Any PostgreSQL name the catalog returns (quoted names may hold Korean or
+// spaces; Luna 8-24 review): 1-63 characters without control characters.
+function isIdentifier(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length < 1 || value.length > 63) return false;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code < 0x20 || code === 0x7f) return false;
+  }
+  return true;
+}
+const IDENTIFIER = { test: isIdentifier };
 
 export interface ExtensionFieldEntry {
   key: string;

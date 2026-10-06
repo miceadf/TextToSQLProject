@@ -267,6 +267,66 @@ def set_entry(
     return fields
 
 
+def import_entries(
+    *,
+    repository_root: Any,
+    database_id: str,
+    field: str,
+    pairs: list[tuple[str, str]],
+    present: set[str],
+    reviewer: str,
+    allowed_fields: set[str],
+) -> tuple[dict[str, list[ValueEntry]], dict[str, int]]:
+    """Phase 8-24: entries from a code table, merged into the field's dictionary.
+
+    Only codes the field's column holds are taken. An existing entry keeps
+    its aliases and takes the table's name as its label. Raises
+    ``INVALID_INPUT`` for a field that takes no ordinary dictionary,
+    ``IMPORT_CONFLICT`` when two codes would share one spelling (or a code
+    has two names), and ``LIMIT_REACHED`` past the entry limit.
+    """
+    if field not in allowed_fields or is_period_field(field):
+        raise pg.PostgresRegistrationError("INVALID_INPUT")
+    names: dict[str, set[str]] = {}
+    for code, name in pairs:
+        names.setdefault(code, set()).add(name)
+    # Codes the field never holds are skipped before any conflict check: a
+    # common-code table without a group may reuse a code in other groups.
+    skipped = sum(1 for code in names if code not in present)
+    names = {code: found for code, found in names.items() if code in present}
+    if any(len(found) > 1 for found in names.values()):
+        raise pg.PostgresRegistrationError("IMPORT_CONFLICT")
+    fields = load_entries(repository_root=repository_root, database_id=database_id)
+    current = {entry.stored: entry for entry in fields.get(field, [])}
+    added = updated = 0
+    for code, found in sorted(names.items()):
+        label = next(iter(found))
+        existing = current.get(code)
+        if existing is not None and existing.label == label:
+            continue
+        try:
+            current[code] = ValueEntry(stored=code, label=label, aliases=existing.aliases if existing else ())
+        except Exception:
+            raise pg.PostgresRegistrationError("INVALID_INPUT") from None
+        if existing is None:
+            added += 1
+        else:
+            updated += 1
+    counts = {"added": added, "updated": updated, "skipped": skipped}
+    if added == 0 and updated == 0:
+        return fields, counts  # nothing to write (all codes skipped or already there; Luna 8-24 review)
+    entries = sorted(current.values(), key=lambda item: item.stored)
+    if len(entries) > MAX_ENTRIES:
+        raise pg.PostgresRegistrationError("LIMIT_REACHED")
+    try:
+        ValueDictionary(entries=tuple(entries), unknown="pass", reviewer=reviewer, reason=REVIEW_REASON)
+    except Exception:
+        raise pg.PostgresRegistrationError("IMPORT_CONFLICT") from None  # one spelling, two codes
+    fields[field] = entries
+    _save(repository_root, database_id, reviewer, fields)
+    return fields, counts
+
+
 def remove_entry(*, repository_root: Any, database_id: str, field: str, stored: str, reviewer: str) -> dict[str, list[ValueEntry]]:
     fields = load_entries(repository_root=repository_root, database_id=database_id)
     remaining = [item for item in fields.get(field, []) if item.stored != stored]

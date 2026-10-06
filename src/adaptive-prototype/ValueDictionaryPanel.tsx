@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import CodeTableImport from './CodeTableImport.tsx';
 import { publishReview, toReviewMessage, type ReviewFetchLike } from './mappingReview.ts';
 import {
   fetchDictionaries,
@@ -173,6 +174,18 @@ export default function ValueDictionaryPanel({
               </div>
             ))}
           </div>
+          <CodeTableImport
+            key={fieldName}
+            databaseId={databaseId}
+            field={fieldName}
+            reviewer={reviewer}
+            disabled={busy}
+            fetchFn={fetchFn}
+            onImported={(updated, text) => {
+              setDetail(updated);
+              setMessage(text);
+            }}
+          />
           <div className="flex flex-wrap items-center gap-2">
             <label className="flex items-center gap-1">
               저장 값

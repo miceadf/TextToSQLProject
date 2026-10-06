@@ -52,6 +52,8 @@ _STATUS = {
     "ALIAS_LENGTH": 400,
     "SOURCE_CHANGED": 409,
     "EXTENSION_CONFLICT": 409,
+    "IMPORT_CONFLICT": 409,
+    "TOO_MANY_CODES": 400,
 }
 
 
@@ -461,6 +463,10 @@ class PostgresRegistrationService:
             "SET": {"action", "database_id", "field", "stored", "label", "aliases", "reviewer"},
             "REMOVE": {"action", "database_id", "field", "stored", "reviewer"},
             "SUGGEST": {"action", "database_id", "field", "ai"},
+            "IMPORT": {
+                "action", "database_id", "field", "table", "code_column", "name_column",
+                "group_column", "group_value", "reviewer",
+            },
         }
         if action not in allowed or set(body) != allowed[action]:
             raise pg.PostgresRegistrationError("INVALID_INPUT")
@@ -483,6 +489,8 @@ class PostgresRegistrationService:
                 return self.dictionaries(database_id)
         if not isinstance(field_name, str) or field_name not in editable:
             raise pg.PostgresRegistrationError("INVALID_INPUT")
+        if action == "IMPORT":
+            return self._import_codes(body, loaded, editable, reader)
         with self._lock:
             if action == "SET":
                 aliases = body["aliases"]
@@ -566,6 +574,52 @@ class PostgresRegistrationService:
             "ai_used": bool(body["ai"] and self._alias_model is not None),
             "candidates": out[:200],
         }
+
+    def _import_codes(self, body: dict[str, Any], loaded: Any, editable: dict[str, tuple[str, str]], reader: Any) -> dict[str, Any]:
+        """Phase 8-24: a code table's (code, name) rows become dictionary entries."""
+        database_id, field_name = body["database_id"], body["field"]
+        names = ("table", "code_column", "name_column", "reviewer")
+        if not all(isinstance(body[key], str) and body[key] for key in names):
+            raise pg.PostgresRegistrationError("INVALID_INPUT")
+        group_column, group_value = body["group_column"], body["group_value"]
+        if (group_column is None) != (group_value is None):
+            raise pg.PostgresRegistrationError("INVALID_INPUT")
+        if group_column is not None and not (
+            isinstance(group_column, str) and isinstance(group_value, str) and 1 <= len(group_value) <= 100
+        ):
+            raise pg.PostgresRegistrationError("INVALID_INPUT")
+        reviewer = body["reviewer"]
+        if not 1 <= len(reviewer.strip()) <= 64 or len(reviewer) > 64:
+            raise pg.PostgresRegistrationError("INVALID_INPUT")
+        declared = {(table.name, column.name) for table in loaded.catalog.tables for column in table.columns}
+        columns = [body["code_column"], body["name_column"], *([group_column] if group_column else [])]
+        if any((body["table"], column) not in declared for column in columns):
+            raise pg.PostgresRegistrationError("INVALID_INPUT")
+        pairs = reader.pairs(
+            database_id, body["table"], body["code_column"], body["name_column"],
+            None if group_column is None else (group_column, group_value), dictionaries_store.MAX_ENTRIES,
+        )
+        if pairs is None:
+            raise pg.PostgresRegistrationError("SOURCE_UNAVAILABLE")
+        if not isinstance(pairs, list):
+            raise pg.PostgresRegistrationError("TOO_MANY_CODES")
+        # Only codes the field's own column holds are taken.
+        table, column = editable[field_name]
+        codes = sorted({code for code, _name in pairs})
+        present: set[str] = set()
+        for start in range(0, len(codes), 64):
+            found = reader.present(database_id, table, column, codes[start : start + 64]) if codes else set()
+            if found is None:
+                raise pg.PostgresRegistrationError("SOURCE_UNAVAILABLE")
+            present |= found
+        with self._lock:
+            _fields, counts = dictionaries_store.import_entries(
+                repository_root=self.repository_root, database_id=database_id, field=field_name,
+                pairs=pairs, present=present, reviewer=reviewer, allowed_fields=set(editable),
+            )
+        result = self.dictionaries(database_id)
+        result["imported"] = counts
+        return result
 
     def _big_field_collision(
         self,

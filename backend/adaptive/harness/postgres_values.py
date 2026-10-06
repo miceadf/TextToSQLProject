@@ -97,6 +97,65 @@ class PostgresDistinctValueReader:
                     pass
         return {row[0] for row in rows if isinstance(row, (tuple, list)) and len(row) == 1 and isinstance(row[0], str)}
 
+    def pairs(
+        self,
+        database_id: str,
+        table: str,
+        code_column: str,
+        name_column: str,
+        group: tuple[str, str] | None,
+        limit: int,
+    ) -> Any:
+        """Phase 8-24: distinct (code, name) rows of a code table as text.
+
+        ``group`` (column, value) keeps one kind of a common-code table.
+        Returns a list, ``OVER_LIMIT`` or ``None`` (unavailable).
+        """
+        config = self._configs.get(database_id)
+        if config is None or not isinstance(limit, int) or not 1 <= limit <= 5000:
+            return None
+        connection = None
+        try:
+            code, name = _quote(code_column), _quote(name_column)
+            query = (
+                f"SELECT DISTINCT CAST({code} AS text), CAST({name} AS text) "
+                f"FROM {_quote(config.schema)}.{_quote(table)} WHERE {code} IS NOT NULL AND {name} IS NOT NULL"
+            )
+            params: list[Any] = []
+            if group is not None:
+                query += f" AND CAST({_quote(group[0])} AS text) = %s"
+                params.append(group[1])
+            query += " LIMIT %s"
+            params.append(limit + 1)
+            connection = self._connector(config)
+            set_encoding = getattr(connection, "set_client_encoding", None)
+            if callable(set_encoding):
+                set_encoding("UTF8")
+            cursor = connection.cursor()
+            cursor.execute(query, tuple(params))
+            rows = cursor.fetchall()
+        except Exception:
+            return None
+        finally:
+            if connection is not None:
+                try:
+                    connection.rollback()
+                except Exception:
+                    pass
+                try:
+                    connection.close()
+                except Exception:
+                    pass
+        if len(rows) > limit:
+            return OVER_LIMIT
+        return sorted(
+            (row[0], row[1])
+            for row in rows
+            if isinstance(row, (tuple, list))
+            and len(row) == 2
+            and all(isinstance(item, str) and 0 < len(item) <= MAX_VALUE_LENGTH for item in row)
+        )
+
     def read(self, database_id: str, table: str, column: str, limit: int, *, sample: bool = False) -> Any:
         """``sample`` (Phase 8-21): up to ``limit`` values even when the column
         holds more, for format checks that only need examples."""
