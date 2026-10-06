@@ -9,6 +9,20 @@
 3. 개발자(AI 포함)는 평가 전까지 그 DB와 질문을 **보지 않는다**. 질문 파일을 채팅이나 저장소에 올리지 않는다.
 4. 첫 실행 결과는 그대로 남는다. 그 뒤 고친 결과는 "재실행"으로 따로 기록된다.
 
+## 1-1. 내 PC 환경 점검
+
+저장소 루트에서 아래 명령을 실행한다. 빠진 것과 해결 방법을 줄마다 보여 준다. 접속 정보와 비밀번호는 출력하지 않는다.
+
+```bash
+.venv\Scripts\python.exe -m backend.adaptive.env_check
+```
+
+- `.venv`가 아직 없으면 `python -m backend.adaptive.env_check`로 실행한다. 이때도 패키지는 `.venv`가 있으면 그 기준으로 본다.
+
+- `[FAIL]`이 있으면 그 줄의 해결 방법대로 고친 뒤 다시 실행한다.
+- `[WARN]`은 하려는 일에 따라 무시해도 된다. 예: 평가용 DB 연결(`PG_SOURCE_*`)은 DB를 만든 뒤 넣는다.
+- 이 명령의 통과는 L7(재현성) 통과가 아니다.
+
 ## 2. DB 만들기 (PostgreSQL)
 
 - 합성 DB(`schema_adaptive_synthetic`)에 학교마다 schema를 하나 만든다(예: `school_a`). 레거시 DB에는 만들지 않는다.
