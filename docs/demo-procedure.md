@@ -64,7 +64,7 @@
 | 4 | **사전 적용해 게시** → DB 선택 | 강의 목록에서 주 2회 수업이 한 줄에 두 시간으로 보인다. |
 | 5 | "소웨 전공필수 과목 보여줘", "금요일 오전 수업 보여줘", "소웨 1학년 과목 보여줘", "IT관 303호 수업 보여줘", "IT대학 과목 보여줘" | SQL 패널에 이 학교의 table 이름이 보인다. 시간은 `HH:MM`으로 바꿔 비교한다. 대상 학년이 카드 상세에 보인다. |
 
-지우기: `python -m backend.adaptive.fixtures.other_school drop`, 그리고 `.schema-adaptive/postgres-registrations/other-school`·`.schema-adaptive/postgres-profiles/other-school`.
+지우기(게시한 DB는 켜 있는 서버에 남으므로 서버를 끈 뒤): `python -m backend.adaptive.fixtures.other_school drop`, 그리고 `.schema-adaptive/postgres-registrations/other-school`·`.schema-adaptive/postgres-profiles/other-school`.
 
 ## 3. 되돌리기 (다시 시연하기 전)
 
