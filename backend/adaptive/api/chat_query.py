@@ -15,6 +15,7 @@ SQL, physical identifier, DSN, or exception text. Nothing is logged.
 
 from __future__ import annotations
 
+import inspect
 import json
 import re
 from decimal import Decimal
@@ -43,7 +44,8 @@ from ..ontology.loader import load_default_ontology
 from ..ontology.outside_concepts import default_outside_concepts
 from .postgres_runtime import DatabaseRoutingExecutor, is_postgres_context_current
 from .unknown_conditions import mentioned_fields, outside_concepts, output_filter_values
-from .value_hints import ChatValueIndexes, repair_output
+from .time_hints import apply_time_conditions, find_time_conditions
+from .value_hints import MAX_HINTS, ChatValueIndexes, repair_output
 from .review_publish import _parse_strict_body, _read_limited_body
 from ..mapping.extensions import DATA_TYPES as EXTENSION_TYPES
 from ..mapping.extensions import dto_key as extension_dto_key
@@ -380,6 +382,19 @@ def _unmatched_filters(
     return unmatched
 
 
+def _takes_hints(model: Any) -> bool:
+    """Whether ``generate_ir`` takes ``value_hints`` (a pre-8-13 model does not)."""
+    try:
+        parameters = inspect.signature(model.generate_ir).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(
+        (item.name == "value_hints" and item.kind is not inspect.Parameter.POSITIONAL_ONLY)
+        or item.kind is inspect.Parameter.VAR_KEYWORD
+        for item in parameters
+    )
+
+
 def answer_chat_query(
     *,
     database_id: str,
@@ -417,6 +432,19 @@ def answer_chat_query(
     except Exception:
         raise ChatQueryError(ChatQueryErrorCode.EXECUTION_FAILED, "CONTEXT_ERROR") from None
 
+    # Phase 8-25: time words are read by closed rules; a time field this
+    # database lacks makes the question unsupported whatever the model says.
+    try:
+        timed = find_time_conditions(question)
+    except Exception:
+        timed = []  # the rules are optional help, never a failure
+    missing_time = list(
+        dict.fromkeys(
+            item.field for item in timed if item.field not in mapping.fields or item.field in unsupported
+        )
+    )
+    timed = [item for item in timed if item.field not in missing_time]
+
     index = None
     hints: list[Any] = []
     if value_indexes is not None:
@@ -428,11 +456,11 @@ def answer_chat_query(
             index, hints = None, []  # hints are optional help, never a failure
 
     # The single model call. Provider failures carry only a fixed code.
+    time_payloads = [item.payload() for item in timed] if _takes_hints(model) else []
+    payloads = [*time_payloads, *(hint.payload() for hint in hints)][:MAX_HINTS]
     try:
-        if hints:
-            output = model.generate_ir(
-                request, ontology, mapping, value_hints=[hint.payload() for hint in hints]
-            )
+        if payloads:
+            output = model.generate_ir(request, ontology, mapping, value_hints=payloads)
         else:
             output = model.generate_ir(request, ontology, mapping)
     except Exception as exc:
@@ -455,6 +483,10 @@ def answer_chat_query(
         )
     except Exception:
         pass  # repairs are optional; validation below decides
+    try:
+        output = apply_time_conditions(output, timed)
+    except Exception:
+        pass
 
     # Phase 8-20: a concept this database has no field for is answered as
     # unsupported, whatever field the model put the condition into.
@@ -471,8 +503,8 @@ def answer_chat_query(
     try:
         query_ir = QueryIR.model_validate(output)
     except Exception:
-        if outside:
-            return _unsupported(database_id, [], labels, outside)
+        if outside or missing_time:
+            return _unsupported(database_id, missing_time, labels, outside)
         return _not_understood(database_id, "MODEL_INVALID_OUTPUT")
 
 
@@ -482,7 +514,11 @@ def answer_chat_query(
     if outside:
         # Common fields the model added on its own are not blamed beside the concept.
         named = mentioned_fields(question, _domain_ontology(), requested_unsupported)
-        return _unsupported(database_id, named, labels, outside)
+        return _unsupported(database_id, list(dict.fromkeys([*missing_time, *named])), labels, outside)
+    if missing_time:
+        return _unsupported(
+            database_id, list(dict.fromkeys([*missing_time, *requested_unsupported])), labels, []
+        )
 
     # The card projection replaces ``select``; an unknown field must not
     # disappear silently with it.

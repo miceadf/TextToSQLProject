@@ -108,27 +108,46 @@ def _finite_float(value: str) -> float:
 
 
 VALUE_HINTS_LABEL = "Value hints (text in the question and the field/value it refers to): "
+# Phase 8-25: a time hint also carries the operator; this label is used only then.
+CONDITION_HINTS_LABEL = (
+    "Value hints (text in the question and the field/value it refers to; "
+    "a hint with an operator is the exact condition that text means): "
+)
 MAX_VALUE_HINTS = 8
 _HINT_KEYS = frozenset({"text", "field", "value"})
+_CONDITION_HINT_KEYS = _HINT_KEYS | {"operator"}
+_HINT_OPERATORS = frozenset(
+    {"equals", "greater_than", "greater_than_or_equal", "less_than", "less_than_or_equal"}
+)
 
 
-def _hint_line(value_hints: object, available: list[str]) -> str:
+def _valid_hint(hint: object, available: list[str], operators: dict[str, set[str]] | None) -> bool:
+    if not isinstance(hint, dict) or set(hint) not in (_HINT_KEYS, _CONDITION_HINT_KEYS):
+        return False
+    if not all(isinstance(hint[key], str) and 0 < len(hint[key]) <= 200 for key in hint):
+        return False
+    if hint["field"] not in available:
+        return False
+    if "operator" not in hint:
+        return True
+    allowed = _HINT_OPERATORS if operators is None else _HINT_OPERATORS & operators.get(hint["field"], set())
+    return hint["operator"] in allowed
+
+
+def _hint_line(
+    value_hints: object, available: list[str], operators: dict[str, set[str]] | None = None
+) -> str:
     """Phase 8-13: optional grounded values, one line between Context and Question."""
     if value_hints is None:
         return ""
     if not isinstance(value_hints, list) or len(value_hints) > MAX_VALUE_HINTS:
         raise ValueError("INVALID_VALUE_HINTS")
-    for hint in value_hints:
-        if (
-            not isinstance(hint, dict)
-            or set(hint) != _HINT_KEYS
-            or not all(isinstance(hint[key], str) and 0 < len(hint[key]) <= 200 for key in _HINT_KEYS)
-            or hint["field"] not in available
-        ):
-            raise ValueError("INVALID_VALUE_HINTS")
+    if not all(_valid_hint(hint, available, operators) for hint in value_hints):
+        raise ValueError("INVALID_VALUE_HINTS")
     if not value_hints:
         return ""
-    return "\n" + VALUE_HINTS_LABEL + json.dumps(value_hints, ensure_ascii=False)
+    label = CONDITION_HINTS_LABEL if any("operator" in hint for hint in value_hints) else VALUE_HINTS_LABEL
+    return "\n" + label + json.dumps(value_hints, ensure_ascii=False)
 
 
 def _prompt(
@@ -156,7 +175,11 @@ def _prompt(
     encoded_context = json.dumps(
         context, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     )
-    hint_line = _hint_line(value_hints, semantic_fields)
+    hint_line = _hint_line(
+        value_hints,
+        semantic_fields,
+        {name: {item.value for item in ontology.fields[name].allowed_operators} for name in semantic_fields},
+    )
     prefix, _, remainder = _versioned_template(prompt_version).partition("{context}")
     between, _, suffix = remainder.partition("{question}")
     return prefix + encoded_context + hint_line + between + question + suffix

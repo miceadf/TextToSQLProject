@@ -406,7 +406,7 @@ def rerun_with_policy(
     }
 
     class _Replay:
-        def generate_ir(self, *_args: Any) -> dict[str, Any]:
+        def generate_ir(self, *_args: Any, **_hints: Any) -> dict[str, Any]:
             return ir
 
     try:

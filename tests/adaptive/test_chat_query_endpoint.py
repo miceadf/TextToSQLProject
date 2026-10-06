@@ -253,9 +253,6 @@ def test_unsupported_field_answers_without_execution() -> None:
         (ir(["Course.name"], [{"field": "Course.name", "operator": "contains", "value": f"SELECT * FROM {VIEW}"}]), "REFLECTED_INPUT"),
         (ir(["Course.name"], [{"field": "Course.name", "operator": "contains", "value": "Subject_Name"}]), "REFLECTED_INPUT"),
         (ir(["Course.name"], [{"field": "Course.name", "operator": "equals", "value": QUESTION + " 부탁"}]), "REFLECTED_INPUT"),
-        # time values minute text cannot represent
-        (ir(["Course.name"], [{"field": "Schedule.start_time", "operator": "greater_than_or_equal", "value": "14:00:30"}]), "INVALID_VALUE_TYPE"),
-        (ir(["Course.name"], [{"field": "Schedule.start_time", "operator": "greater_than_or_equal", "value": "오후"}]), "INVALID_VALUE_TYPE"),
         # operator the ontology does not allow for the field
         (ir(["Course.name"], [{"field": "Course.credits", "operator": "contains", "value": "3"}]), "INVALID_OPERATOR"),
         (ir(["Course.name"], [{"field": "Course.credits", "operator": "equals", "value": "three"}]), "INVALID_VALUE_TYPE"),
@@ -276,6 +273,19 @@ def test_not_understood_outputs_never_execute(output: Any, failure_code: str) ->
     }
     assert executor.queries == []
     assert len(model.calls) == 1
+
+
+@pytest.mark.parametrize("value", ["14:00:30", "오후"])
+def test_time_values_minute_text_cannot_represent_never_execute(value: str) -> None:
+    """Phase 8-25: asked with a time word, the closed time rules replace such a value instead."""
+    output = ir(["Course.name"], [{"field": "Schedule.start_time", "operator": "greater_than_or_equal", "value": value}])
+    client, executor = make_client(FakeModel(output))
+    body = post(client, "3학점 전공 과목 알려줘").json()
+    assert body["status"] == "NOT_UNDERSTOOD" and body["failure_code"] == "INVALID_VALUE_TYPE"
+    assert executor.queries == []
+    repaired = post(client, QUESTION).json()  # "오후" in the question: start >= 12:00
+    assert repaired["status"] == "SUCCEEDED"
+    assert repaired["understood"]["filters"][0]["value"] == "12:00"
 
 
 @pytest.mark.parametrize(

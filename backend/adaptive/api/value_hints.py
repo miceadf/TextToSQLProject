@@ -15,7 +15,8 @@ Hints go into the single model call. The model output is then repaired by
 closed, ontology-driven rules (an invented ``Course.department`` becomes
 ``Department.name``; a value that exists only in another hinted field moves
 there) and still passes the unchanged QueryIR validation, compiler, policy
-and executor. No condition is ever added.
+and executor. No condition is ever added here (Phase 8-25 time words, read by
+closed rules in ``time_hints``, are the one exception).
 """
 
 from __future__ import annotations
