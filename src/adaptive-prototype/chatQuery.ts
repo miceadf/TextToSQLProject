@@ -5,6 +5,10 @@ import type { RegistryDatabase } from './databases.ts';
 export const CHAT_QUERY_PATH = '/api/adaptive/v1/chat/query';
 export const CHAT_QUERY_VERSION = 'adaptive-chat-query-v1';
 export const MAX_CHAT_QUESTION_LENGTH = 500;
+// Phase 8-25: the QueryIR chat reads time words with closed rules (a bare
+// 1-7시 is the afternoon), so its guide line differs from the legacy one.
+export const QUERYIR_TIME_GUIDE =
+  '시간은 "오전 10시", "오후 3시 이후에 시작하는", "4시 전에 끝나는", "15:30"처럼 적을 수 있습니다. 오전·오후 없이 1~7시라고 쓰면 오후로 봅니다(예: 3시 → 15시).';
 
 // Canonical course-card keys, in server order. Values never carry SQL or physical names.
 // Phase 8-18: 'target_grade' (대상 학년) appears when the database maps it.

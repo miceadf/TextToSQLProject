@@ -6,6 +6,7 @@ import {
   describeUnmatched,
   describeUnderstood,
   postChatQuery,
+  QUERYIR_TIME_GUIDE,
 } from '../adaptive-prototype/chatQuery.ts'
 import type { ChatTarget } from '../adaptive-prototype/chatQuery.ts'
 import { getAccessToken } from '../services/apiClient'
@@ -854,7 +855,11 @@ export default function ChatPopup({
                     <li>과목명은 가능한 한 정확히 입력해 주세요. 줄임말이나 오타가 있으면 결과가 잘 나오지 않을 수 있습니다.</li>
                     <li>과목명과 학과명은 공식 명칭과 띄어쓰기에 가깝게 입력할수록 정확합니다. 띄어쓰기가 많이 다르면 결과가 누락될 수 있습니다.</li>
                     <li>학과, 학년, 이수구분, 요일처럼 원하는 조건을 함께 적으면 더 정확합니다.</li>
-                    <li>시간은 24시간 형식으로 적어 주세요. 예: 오전 2시는 2시, 오후 2시는 14시.</li>
+                    <li>
+                      {chatTarget.kind === 'queryir'
+                        ? QUERYIR_TIME_GUIDE
+                        : '시간은 24시간 형식으로 적어 주세요. 예: 오전 2시는 2시, 오후 2시는 14시.'}
+                    </li>
                     <li>현재는 SQL 질의문으로 조회 가능한 조건만 처리합니다.</li>
                     <li>현재 시간표의 빈 시간에 맞는 강의 추천, 남은 학점에 따른 자동 추천처럼 개인 상황을 해석하는 요청은 아직 지원하지 않습니다.</li>
                   </ul>
