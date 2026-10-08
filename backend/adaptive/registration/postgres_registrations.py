@@ -63,6 +63,9 @@ WEEKDAYS = frozenset("월화수목금토일")
 # Numbers may omit the leading zero ("1/.5/1" in the team's legacy data).
 _SLASH_VALUE = re.compile(r"^(?:\d+(?:\.\d+)?|\.\d+)(?:/(?:\d+(?:\.\d+)?|\.\d+))+$")
 _HHMM_VALUE = re.compile(r"^(?:[01]\d|2[0-3])[0-5]\d$")
+# Phase 9-05: a time field left as raw text is compared as text, so it must
+# already hold zero-padded "HH:MM" ("09:00-10:15" would silently misorder).
+_CLOCK_TEXT = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
 _SYSTEM_SCHEMAS = ("pg_catalog", "information_schema", "pg_toast")
 
 
@@ -652,6 +655,7 @@ def plan_publish(
     read_values: Callable[[str, str], list[str]],
     dictionaries: dict[str, Any] | None = None,
     extensions: list[Any] | None = None,
+    has_blank: Callable[[str, str], bool | None] | None = None,
 ) -> tuple[PublishPlan | None, list[str]]:
     """The publishable mapping, or the fields that block it.
 
@@ -708,6 +712,33 @@ def plan_publish(
     )
     if periods_missing:
         return None, periods_missing
+    transforms = {
+        name: transform
+        for name, transform in decide_transforms(mapped, loaded.catalog, read_values).items()
+        if name not in dictionaries
+    }
+    # Phase 9-05: a time field kept as raw text needs "HH:MM" values; a range
+    # such as "09:00-10:15" compared as text gave wrong rows without a warning.
+    # The value read leaves out empty text, which sorts before every time, so
+    # it is asked for on its own; an unreadable column blocks too (Luna 9-05).
+    def unreadable_time(target: PublishedFieldMapping) -> bool:
+        values = read_values(target.table, target.column)
+        if not values or not all(_CLOCK_TEXT.fullmatch(value) for value in values):
+            return True
+        return has_blank is not None and has_blank(target.table, target.column) is not False
+
+    unreadable_times = sorted(
+        name
+        for name, target in mapped.items()
+        if name in ontology_fields
+        and ontology_fields[name].data_type is DataType.TIME
+        and name not in transforms
+        and name not in dictionaries
+        and not declared.get((target.table, target.column), "").startswith("time")
+        and unreadable_time(target)
+    )
+    if unreadable_times:
+        return None, unreadable_times
     unsupported = tuple(sorted(name for name in draft.fields if name not in mapped))
     mapping = PublishedMappingProfile(
         database_id=draft.database_id,
@@ -719,11 +750,6 @@ def plan_publish(
         fields=mapped,
     )
     section = mapped.get("CourseOffering.section")
-    transforms = {
-        name: transform
-        for name, transform in decide_transforms(mapped, loaded.catalog, read_values).items()
-        if name not in dictionaries
-    }
     return (
         PublishPlan(
             mapping=mapping,
@@ -794,6 +820,7 @@ def publish_review(
     read_values: Callable[[str, str], list[str]],
     dictionaries: dict[str, Any] | None = None,
     extensions: list[Any] | None = None,
+    has_blank: Callable[[str, str], bool | None] | None = None,
 ) -> tuple[Any, list[str]]:
     """(validated runtime context or ``None``, blocking fields).
 
@@ -815,6 +842,7 @@ def publish_review(
         read_values=read_values,
         dictionaries=dictionaries,
         extensions=extensions,
+        has_blank=has_blank,
     )
     if plan is None:
         return None, blocking

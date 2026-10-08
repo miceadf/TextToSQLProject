@@ -382,6 +382,44 @@ def _unmatched_filters(
     return unmatched
 
 
+# Luna 9-05: words that ask for a field without its label or aliases. When the
+# question holds one, a missing field the model only selected is still
+# declined: dropping it would answer "지난해 ..." over every year.
+_UNLABELLED_REQUESTS = {
+    "CourseOffering.year": re.compile(r"작년|재작년|지난\s*해|올해|금년|내년|연도|년도|\d{2,4}\s*년"),
+}
+
+
+def _drop_unasked_select(
+    query_ir: QueryIR, question: str, unsupported: set[str], available: set[str]
+) -> QueryIR:
+    """Drop a missing field the model only selected and the question never named (Phase 9-05).
+
+    The card replaces ``select`` anyway, so declining the whole answer for
+    it was wrong: a database without sections declined most questions
+    because the model often selects ``CourseOffering.section``. A field the
+    question names ("분반 알려줘") or filters on is still declined.
+    """
+    filtered = {item.field for item in query_ir.filters}
+    candidates = [field for field in query_ir.select if field in unsupported and field not in filtered]
+    if not candidates:
+        return query_ir
+    named = set(mentioned_fields(question, _domain_ontology(), candidates))
+    named |= {
+        field for field in candidates if field in _UNLABELLED_REQUESTS and _UNLABELLED_REQUESTS[field].search(question)
+    }
+    dropped = {field for field in candidates if field not in named}
+    if not dropped:
+        return query_ir
+    select = [field for field in query_ir.select if field not in dropped]
+    if not select:
+        fallback = next((field for field in CARD_FIELDS if field in available), None)
+        if fallback is None:
+            return query_ir
+        select = [fallback]
+    return query_ir.model_copy(update={"select": select})
+
+
 def _takes_hints(model: Any) -> bool:
     """Whether ``generate_ir`` takes ``value_hints`` (a pre-8-13 model does not)."""
     try:
@@ -508,6 +546,7 @@ def answer_chat_query(
         return _not_understood(database_id, "MODEL_INVALID_OUTPUT")
 
 
+    query_ir = _drop_unasked_select(query_ir, question, unsupported, set(mapping.fields))
     requested_unsupported = [
         field for field in dict.fromkeys(_referenced_fields(query_ir)) if field in unsupported
     ]

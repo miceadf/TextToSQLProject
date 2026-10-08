@@ -303,6 +303,11 @@ class PostgresRegistrationService:
                 return pg.SampledValues(v for v in sampled if isinstance(v, str)) if isinstance(sampled, list) else []
             return [value for value in values if isinstance(value, str)] if isinstance(values, list) else []
 
+        def has_blank(table: str, column: str) -> bool | None:
+            """Phase 9-05: whether the column holds empty text (``None`` = unavailable)."""
+            found = reader.present(database_id, table, column, [""])
+            return None if found is None else "" in found
+
         # Phase 8-07: the edited dictionaries, re-checked against the stored values.
         draft = pg.load_draft(repository_root=root, database_id=database_id)
         entries = dictionaries_store.load_entries(repository_root=root, database_id=database_id)
@@ -346,6 +351,7 @@ class PostgresRegistrationService:
             read_values=read_values,
             dictionaries=value_dictionaries,
             extensions=extensions_store.load_extensions(repository_root=root, database_id=database_id),
+            has_blank=has_blank,
         )
         if context is None:
             return _publish_blocked_response(blocking)
