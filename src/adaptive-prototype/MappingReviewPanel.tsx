@@ -521,7 +521,7 @@ export default function MappingReviewPanel({ databaseId, fetchFn, onPublished, b
           </div>
         ) : null}
         {error !== null ? (
-          <div className="mt-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-900" role="alert">
+          <div className="mt-2 whitespace-pre-line rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-900" role="alert">
             {error}
             <button type="button" onClick={() => void handleStart()} className="ml-2 underline">
               다시 시도
@@ -674,7 +674,7 @@ export default function MappingReviewPanel({ databaseId, fetchFn, onPublished, b
         </div>
       ) : null}
       {error !== null ? (
-        <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-900" role="alert">
+        <div className="whitespace-pre-line rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-900" role="alert">
           {error}
         </div>
       ) : null}

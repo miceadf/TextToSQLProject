@@ -641,6 +641,28 @@ def decide_transforms(
     return transforms
 
 
+# Phase 9-07: why a field blocks publish, shown to the admin all at once.
+BLOCK_REASONS = (
+    "PENDING",  # not reviewed yet
+    "COLUMN_MISSING",  # the chosen column is not in this schema
+    "COLUMN_SHARED",  # another field (``other``) already uses the column
+    "NOTHING_MAPPED",  # no field is connected at all
+    "DICTIONARY_UNUSED",  # a value dictionary for a field that is not connected
+    "PERIOD_TABLE_NEEDED",  # a time field on a period-number column needs its period table
+    "TIME_FORMAT",  # raw text that is not zero-padded HH:MM (Phase 9-05)
+    "NUMBER_FORMAT",  # a number field on a non-numeric column (Phase 9-06)
+    "BLANK_VALUES",  # empty text under a text-to-number/time transform (Phase 9-06)
+    "DICTIONARY_STALE",  # a dictionary entry the column no longer holds (checked before planning)
+)
+
+
+@dataclass(frozen=True, order=True)
+class BlockedField:
+    name: str
+    reason: str
+    other: str | None = None
+
+
 @dataclass(frozen=True)
 class PublishPlan:
     mapping: PublishedMappingProfile
@@ -661,8 +683,9 @@ def plan_publish(
     dictionaries: dict[str, Any] | None = None,
     extensions: list[Any] | None = None,
     has_blank: Callable[[str, str], bool | None] | None = None,
-) -> tuple[PublishPlan | None, list[str]]:
-    """The publishable mapping, or the fields that block it.
+    preblocked: list[BlockedField] | None = None,
+) -> tuple[PublishPlan | None, list[BlockedField]]:
+    """The publishable mapping, or every field that blocks it, with the reason.
 
     A field with a value dictionary (Phase 8-07) gets no transform: the
     runtime allows only one of the two per field. Extension fields
@@ -670,53 +693,70 @@ def plan_publish(
     """
     dictionaries = dict(dictionaries or {})
     extensions = list(extensions or [])
-    blocking = sorted(name for name, entry in draft.fields.items() if entry.decision is ReviewDecision.PENDING)
-    if blocking:
-        return None, blocking
+    # Phase 9-07: every check runs and every blocked field comes back with its
+    # reason, so an admin fixes them in one pass instead of publishing again
+    # and again (the 9-04 rehearsal needed four publishes).
+    # ``preblocked``: found before planning (a stale value dictionary), so they
+    # come back with every other blocker instead of hiding them (Luna 9-07).
+    blocked: dict[str, BlockedField] = {item.name: item for item in preblocked or []}
+
+    def block(name: str, reason: str, other: str | None = None) -> None:
+        blocked.setdefault(name, BlockedField(name, reason, other))
+
+    for name, entry in sorted(draft.fields.items()):
+        if entry.decision is ReviewDecision.PENDING:
+            block(name, "PENDING")
     physical = {(t.name, c.name) for t in loaded.catalog.tables for c in t.columns}
     mapped: dict[str, PublishedFieldMapping] = {}
-    used: set[tuple[str, str]] = set()
+    owner: dict[tuple[str, str], str] = {}
     for name, entry in sorted(draft.fields.items()):
         if entry.decision in (ReviewDecision.APPROVED, ReviewDecision.REMAPPED):
             target = (entry.table or "", entry.column or "")
-            if target not in physical or target in used:
-                blocking.append(name)
+            if target not in physical:
+                block(name, "COLUMN_MISSING")
                 continue
-            used.add(target)
+            if target in owner:
+                block(name, "COLUMN_SHARED", owner[target])
+                continue
+            owner[target] = name
             mapped[name] = PublishedFieldMapping(
                 table=target[0], column=target[1], reviewer=entry.reviewer or published_by, reason=entry.reason
             )
-    if blocking or not mapped:
-        return None, blocking or sorted(draft.fields)
+    if not mapped:
+        for name in sorted(draft.fields):
+            block(name, "NOTHING_MAPPED")
+        return None, sorted(blocked.values())
     for extension in extensions:
         target = (extension.table, extension.column)
-        if target not in physical or target in used or extension.name in mapped:
-            blocking.append(extension.name)
+        if target not in physical:
+            block(extension.name, "COLUMN_MISSING")
             continue
-        used.add(target)
+        if target in owner or extension.name in mapped:
+            block(extension.name, "COLUMN_SHARED", owner.get(target))
+            continue
+        owner[target] = extension.name
         mapped[extension.name] = PublishedFieldMapping(
             table=target[0], column=target[1], reviewer=extension.reviewer, reason="Phase 8-19 extension field"
         )
-    if blocking:
-        return None, blocking
-    stray = sorted(name for name in dictionaries if name not in mapped)
-    if stray:
-        return None, stray
+    for name in sorted(dictionaries):
+        if name not in mapped:
+            block(name, "DICTIONARY_UNUSED")
     # Phase 8-21: a time field on a period-number column needs its period table.
     from .postgres_dictionaries import INTEGER_TYPE
 
     declared = {(t.name, c.name): str(c.declared_type or "").lower() for t in loaded.catalog.tables for c in t.columns}
     ontology_fields = load_default_ontology().fields
-    periods_missing = sorted(
-        name
-        for name, target in mapped.items()
-        if name in ontology_fields
-        and ontology_fields[name].data_type is DataType.TIME
-        and INTEGER_TYPE.fullmatch(declared.get((target.table, target.column), "")) is not None
-        and name not in dictionaries
-    )
-    if periods_missing:
-        return None, periods_missing
+
+    def kind(name: str) -> DataType | None:
+        return ontology_fields[name].data_type if name in ontology_fields else None
+
+    def column_type(name: str) -> str:
+        target = mapped[name]
+        return declared.get((target.table, target.column), "").strip()
+
+    for name in sorted(mapped):
+        if kind(name) is DataType.TIME and INTEGER_TYPE.fullmatch(column_type(name)) and name not in dictionaries:
+            block(name, "PERIOD_TABLE_NEEDED")
     transforms = {
         name: transform
         for name, transform in decide_transforms(mapped, loaded.catalog, read_values).items()
@@ -732,42 +772,37 @@ def plan_publish(
             return True
         return has_blank is not None and has_blank(target.table, target.column) is not False
 
-    unreadable_times = sorted(
-        name
-        for name, target in mapped.items()
-        if name in ontology_fields
-        and ontology_fields[name].data_type is DataType.TIME
-        and name not in transforms
-        and name not in dictionaries
-        and not declared.get((target.table, target.column), "").startswith("time")
-        and unreadable_time(target)
-    )
-    if unreadable_times:
-        return None, unreadable_times
-    # Phase 9-06: a number field on a text column without a validated
-    # text-to-number transform fails in SQL ("3-2-2" or even "3" = 3).
-    non_numeric = sorted(
-        name
-        for name, target in mapped.items()
-        if name in ontology_fields
-        and ontology_fields[name].data_type in (DataType.NUMBER, DataType.INTEGER)
-        and name not in transforms
-        and not _NUMERIC_TYPE.fullmatch(declared.get((target.table, target.column), "").strip())
-    )  # a value dictionary never serves a number field (the runtime refuses it): no exemption
-    if non_numeric:
-        return None, non_numeric
-    # Luna 9-06: the value read leaves out empty text, so a slash or four-digit
-    # transform could be chosen over a column that also holds "" and then fail
-    # in SQL (CAST('' AS NUMERIC)) or misorder; ask for it on its own.
-    blank_casts = sorted(
-        name
-        for name, transform in transforms.items()
-        if transform in (FieldTransform.SLASH_FIRST_NUMERIC, FieldTransform.HHMM_TEXT_TO_HHMM)
-        and has_blank is not None
-        and has_blank(mapped[name].table, mapped[name].column) is not False
-    )
-    if blank_casts:
-        return None, blank_casts
+    for name in sorted(mapped):
+        if name in blocked:
+            continue
+        if (
+            kind(name) is DataType.TIME
+            and name not in transforms
+            and name not in dictionaries
+            and not column_type(name).startswith("time")
+            and unreadable_time(mapped[name])
+        ):
+            block(name, "TIME_FORMAT")
+        # Phase 9-06: a number field on a text column without a validated
+        # text-to-number transform fails in SQL ("3-2-2" or even "3" = 3). A
+        # value dictionary never serves a number field (the runtime refuses it).
+        elif (
+            kind(name) in (DataType.NUMBER, DataType.INTEGER)
+            and name not in transforms
+            and not _NUMERIC_TYPE.fullmatch(column_type(name))
+        ):
+            block(name, "NUMBER_FORMAT")
+        # Luna 9-06: the value read leaves out empty text, so a slash or
+        # four-digit transform could be chosen over a column that also holds ""
+        # and then fail in SQL (CAST('' AS NUMERIC)) or misorder.
+        elif (
+            transforms.get(name) in (FieldTransform.SLASH_FIRST_NUMERIC, FieldTransform.HHMM_TEXT_TO_HHMM)
+            and has_blank is not None
+            and has_blank(mapped[name].table, mapped[name].column) is not False
+        ):
+            block(name, "BLANK_VALUES")
+    if blocked:
+        return None, sorted(blocked.values())
     unsupported = tuple(sorted(name for name in draft.fields if name not in mapped))
     mapping = PublishedMappingProfile(
         database_id=draft.database_id,
@@ -850,7 +885,8 @@ def publish_review(
     dictionaries: dict[str, Any] | None = None,
     extensions: list[Any] | None = None,
     has_blank: Callable[[str, str], bool | None] | None = None,
-) -> tuple[Any, list[str]]:
+    preblocked: list[BlockedField] | None = None,
+) -> tuple[Any, list[BlockedField]]:
     """(validated runtime context or ``None``, blocking fields).
 
     Nothing is written unless the runtime accepts the profile.
@@ -872,6 +908,7 @@ def publish_review(
         dictionaries=dictionaries,
         extensions=extensions,
         has_blank=has_blank,
+        preblocked=preblocked,
     )
     if plan is None:
         return None, blocking

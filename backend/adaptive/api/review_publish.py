@@ -68,17 +68,13 @@ def _error_response(code: str) -> JSONResponse:
     return JSONResponse(status_code=_status_for(code), content={"error": {"code": code}})
 
 
-def _publish_blocked_response(fields: list[str]) -> JSONResponse:
+def _publish_blocked_response(fields: list[str], reasons: list[dict[str, str]] | None = None) -> JSONResponse:
+    """``fields`` as before; Phase 9-07 adds why each one blocks (PostgreSQL publish)."""
     safe = [item for item in fields if isinstance(item, str)][:64]
-    return JSONResponse(
-        status_code=_status_for(MappingReviewErrorCode.PUBLISH_BLOCKED.value),
-        content={
-            "error": {
-                "code": MappingReviewErrorCode.PUBLISH_BLOCKED.value,
-                "fields": safe,
-            }
-        },
-    )
+    error: dict[str, Any] = {"code": MappingReviewErrorCode.PUBLISH_BLOCKED.value, "fields": safe}
+    if reasons is not None:
+        error["reasons"] = [item for item in reasons if item.get("field") in safe][:64]
+    return JSONResponse(status_code=_status_for(MappingReviewErrorCode.PUBLISH_BLOCKED.value), content={"error": error})
 
 
 def _review_to_public_code(exc: ReviewError) -> str:

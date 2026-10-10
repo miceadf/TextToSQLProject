@@ -36,22 +36,34 @@ export type ReviewFetchLike = (
   init: ReviewFetchInit,
 ) => Promise<ReviewFetchResponse>;
 
+// Phase 9-07: why a field blocks publish (PostgreSQL registrations).
+export interface PublishBlockReason {
+  field: string;
+  label: string;
+  reason: string;
+  other?: string;
+  other_label?: string;
+}
+
 export class MappingReviewClientError extends Error {
   readonly kind: 'transport' | 'contract' | 'server';
   readonly serverCode: string | null;
   // Phase 8-17: the blocking fields a PUBLISH_BLOCKED error names, if any.
   readonly fields: readonly string[] | null;
+  readonly reasons: readonly PublishBlockReason[] | null;
 
   constructor(
     kind: 'transport' | 'contract' | 'server',
     serverCode: string | null = null,
     fields: readonly string[] | null = null,
+    reasons: readonly PublishBlockReason[] | null = null,
   ) {
     super(kind === 'transport' ? REVIEW_TRANSPORT_MESSAGE : REVIEW_CONTRACT_MESSAGE);
     this.name = 'MappingReviewClientError';
     this.kind = kind;
     this.serverCode = serverCode;
     this.fields = fields;
+    this.reasons = reasons;
   }
 }
 
@@ -434,15 +446,40 @@ export function parseReviewPublish(value: unknown): ReviewPublishResult | null {
   };
 }
 
-export function parseReviewError(value: unknown): { code: string; fields?: string[] } | null {
+const MAX_BLOCK_REASONS = 64;
+// The server's reason codes (BLOCK_REASONS in postgres_registrations.py).
+export const PUBLISH_BLOCK_REASONS: readonly string[] = [
+  'PENDING', 'COLUMN_MISSING', 'COLUMN_SHARED', 'NOTHING_MAPPED', 'DICTIONARY_UNUSED',
+  'PERIOD_TABLE_NEEDED', 'TIME_FORMAT', 'NUMBER_FORMAT', 'BLANK_VALUES', 'DICTIONARY_STALE',
+];
+
+function parseBlockReason(value: unknown, fields: readonly string[]): PublishBlockReason | null {
+  if (!isPlainObject(value)) return null;
+  const allowed = ['field', 'label', 'reason', 'other', 'other_label'];
+  for (const key of Object.keys(value)) {
+    if (!allowed.includes(key)) return null;
+    const text = value[key];
+    if (typeof text !== 'string' || text.length === 0 || text.length > 200) return null;
+  }
+  const { field, label, reason, other } = value as Record<string, string | undefined>;
+  const otherLabel = (value as Record<string, string | undefined>)['other_label'];
+  if (field === undefined || label === undefined || reason === undefined) return null;
+  if (!fields.includes(field) || !PUBLISH_BLOCK_REASONS.includes(reason)) return null;
+  if ((other === undefined) !== (otherLabel === undefined)) return null;
+  return other === undefined ? { field, label, reason } : { field, label, reason, other, other_label: otherLabel };
+}
+
+export function parseReviewError(
+  value: unknown,
+): { code: string; fields?: string[]; reasons?: PublishBlockReason[] } | null {
   if (!isPlainObject(value)) return null;
   if (!hasOnlyKeys(value, ['error'])) return null;
   if (!isPlainObject(value['error'])) return null;
   const error = value['error'];
   if (!('code' in error)) return null;
-  const keys = Object.keys(error);
-  if (keys.length > 2 || (keys.length === 2 && !keys.includes('fields'))) return null;
-  if (!hasOnlyKeys(error, keys.length === 2 ? ['code', 'fields'] : ['code'])) return null;
+  // Phase 9-07: ``reasons`` comes only beside ``fields``.
+  if (!hasOnlyKeys(error, ['code', 'fields', 'reasons'])) return null;
+  if ('reasons' in error && !('fields' in error)) return null;
   const code = error['code'];
   if (typeof code !== 'string' || code.length === 0 || code.length > 128) return null;
   if (!ERROR_CODE_PATTERN.test(code)) return null;
@@ -452,7 +489,20 @@ export function parseReviewError(value: unknown): { code: string; fields?: strin
       if (typeof entry !== 'string') return null;
     }
   }
-  return { code, fields: (error['fields'] as string[] | undefined) ?? undefined };
+  const fields = (error['fields'] as string[] | undefined) ?? undefined;
+  if (!('reasons' in error)) return { code, fields };
+  const raw = error['reasons'];
+  if (!Array.isArray(raw) || raw.length > MAX_BLOCK_REASONS) return null;
+  const reasons: PublishBlockReason[] = [];
+  for (const entry of raw) {
+    const parsed = parseBlockReason(entry, fields ?? []);
+    if (parsed === null) return null;
+    reasons.push(parsed);
+  }
+  // Exactly one reason per blocked field, so no blocker is silently left out (Luna 9-07).
+  const named = new Set(reasons.map((item) => item.field));
+  if (named.size !== reasons.length || named.size !== new Set(fields ?? []).size) return null;
+  return { code, fields, reasons };
 }
 
 async function readPayload(response: ReviewFetchResponse): Promise<unknown> {
@@ -483,7 +533,7 @@ async function postAction(
   const payload = await readPayload(response);
   if (!response.ok) {
     const parsed = parseReviewError(payload);
-    throw new MappingReviewClientError('server', parsed?.code ?? null, parsed?.fields ?? null);
+    throw new MappingReviewClientError('server', parsed?.code ?? null, parsed?.fields ?? null, parsed?.reasons ?? null);
   }
   return payload;
 }
@@ -741,12 +791,55 @@ export function getReviewErrorMessage(code: string | null): string {
 export const PUBLISH_RUNTIME_BLOCKED_MESSAGE =
   '검토는 끝났지만 이 DB 구조에서 질의 경로를 하나로 정할 수 없어 게시하지 않았습니다. 승인한 column을 다시 확인해 주세요.';
 
+// "와" after a vowel, "과" after a final consonant (Korean particle).
+function withParticle(word: string): string {
+  const last = word.charCodeAt(word.length - 1);
+  if (last >= 0xac00 && last <= 0xd7a3) return word + ((last - 0xac00) % 28 === 0 ? '와' : '과');
+  return `${word}와(과)`;
+}
+
+// Phase 9-07: what each blocking reason means and what the admin can do.
+export function describeBlockReason(item: PublishBlockReason): string {
+  switch (item.reason) {
+    case 'PENDING':
+      return '아직 검토하지 않았습니다. 승인, 다시 지정, 이 DB에 없음 중 하나를 고르세요.';
+    case 'COLUMN_MISSING':
+      return '연결한 칸이 이 DB에 없습니다. 다시 지정하세요.';
+    case 'COLUMN_SHARED':
+      return `${item.other_label ? withParticle(item.other_label) : '다른 항목과'} 같은 칸을 씁니다. 한 칸에는 한 항목만 연결할 수 있으니 하나를 '이 DB에 없음'으로 두세요.`;
+    case 'NOTHING_MAPPED':
+      return '연결된 항목이 하나도 없습니다.';
+    case 'DICTIONARY_UNUSED':
+      return '값 사전이 있지만 이 항목이 연결되지 않았습니다. 항목을 연결하거나 값 사전을 지우세요.';
+    case 'DICTIONARY_STALE':
+      return '값 사전의 값이 이 DB 칸에 없습니다. 값 사전을 고치세요.';
+    case 'PERIOD_TABLE_NEEDED':
+      return '교시 번호 칸입니다. 값 사전에 교시표(예: 1 → 09:00)를 넣으세요.';
+    case 'TIME_FORMAT':
+      return "시간 값이 09:00 꼴이 아닙니다(예: 09:00-10:15, 9:00, 빈 값). '이 DB에 없음'으로 두세요.";
+    case 'NUMBER_FORMAT':
+      return "숫자 칸이 아닙니다(예: 3-2-2 같은 글자). 숫자 형식 칸에 연결하거나 '이 DB에 없음'으로 두세요.";
+    case 'BLANK_VALUES':
+      return "빈 값이 섞여 있어 비교할 수 없습니다. '이 DB에 없음'으로 두세요.";
+    default:
+      return '이 항목 때문에 게시할 수 없습니다.';
+  }
+}
+
+export function describePublishBlock(reasons: readonly PublishBlockReason[]): string {
+  const lines = reasons.map((item) => `- ${item.label}: ${describeBlockReason(item)}`);
+  return ['게시하지 못했습니다. 아래 항목을 고친 뒤 다시 게시하세요.', ...lines].join('\n');
+}
+
 export function toReviewMessage(error: unknown): string {
   if (error instanceof MappingReviewClientError) {
     if (error.kind === 'transport') return REVIEW_TRANSPORT_MESSAGE;
     if (error.kind === 'contract') return REVIEW_CONTRACT_MESSAGE;
     if (error.serverCode === 'MAPPING_REVIEW_PUBLISH_BLOCKED' && error.fields?.length === 0) {
       return PUBLISH_RUNTIME_BLOCKED_MESSAGE;
+    }
+    if (error.serverCode === 'MAPPING_REVIEW_PUBLISH_BLOCKED' && error.reasons && error.reasons.length > 0) {
+      return describePublishBlock(error.reasons);
     }
     return getReviewErrorMessage(error.serverCode);
   }

@@ -310,7 +310,7 @@ export default function ValueDictionaryPanel({
       </button>
       {message !== null ? <div role="status">{message}</div> : null}
       {error !== null ? (
-        <div className="text-rose-700" role="alert">
+        <div className="whitespace-pre-line text-rose-700" role="alert">
           {error}
         </div>
       ) : null}

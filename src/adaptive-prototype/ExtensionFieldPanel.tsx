@@ -220,7 +220,7 @@ export default function ExtensionFieldPanel({
       </div>
       {message !== null ? <div role="status">{message}</div> : null}
       {error !== null ? (
-        <div role="alert" className="text-rose-600">
+        <div role="alert" className="whitespace-pre-line text-rose-600">
           {error}
         </div>
       ) : null}

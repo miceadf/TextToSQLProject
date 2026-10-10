@@ -78,12 +78,18 @@ def test_empty_text_under_a_cast_transform_blocks_publish(tmp_path, monkeypatch,
     assert response.json()["error"]["fields"] == [field]
 
 
-def test_a_number_field_gets_no_dictionary_exemption() -> None:
-    """A value dictionary never serves a number field (the runtime refuses it), so it cannot unblock one."""
-    import inspect
+def test_a_number_field_gets_no_dictionary_exemption(tmp_path, monkeypatch) -> None:
+    """A value dictionary never serves a number field (the runtime refuses it), so it cannot unblock one;
+    the admin sees the field and the reason instead of a nameless refusal."""
+    from backend.adaptive.registration import postgres_dictionaries
 
-    from backend.adaptive.registration import postgres_registrations as pg
-
-    source = inspect.getsource(pg.plan_publish)
-    block = source[source.index("non_numeric = sorted("):source.index("if non_numeric:")]
-    assert "dictionaries" not in block.split("#")[0]
+    original = postgres_dictionaries.build_dictionaries
+    monkeypatch.setattr(
+        postgres_dictionaries, "build_dictionaries",
+        lambda *args, **kwargs: {**original(*args, **kwargs), "Course.credits": object()},
+    )
+    response, _repo = publish_with(tmp_path, monkeypatch, {"credit_hours": "character varying"}, {"credit_hours": ["3"]})
+    assert response.status_code == 422
+    error = response.json()["error"]
+    assert error["fields"] == ["Course.credits"]
+    assert error["reasons"] == [{"field": "Course.credits", "label": "학점", "reason": "NUMBER_FORMAT"}]

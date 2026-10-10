@@ -67,6 +67,22 @@ def _json(payload: dict[str, Any]) -> JSONResponse:
     return JSONResponse(status_code=200, content=json.loads(text))
 
 
+def _block_reasons(blocked: list[Any], extensions: list[Any]) -> list[dict[str, str]]:
+    """Phase 9-07: each blocked field with its label and reason for the admin screen."""
+    from ..ontology.loader import load_default_ontology
+
+    fields = load_default_ontology().fields
+    labels = {name: field.label for name, field in fields.items()}
+    labels.update({extension.name: extension.label for extension in extensions})
+    reasons = []
+    for item in blocked:
+        entry = {"field": item.name, "label": labels.get(item.name, item.name), "reason": item.reason}
+        if item.other:
+            entry["other"] = item.other
+            entry["other_label"] = labels.get(item.other, item.other)
+        reasons.append(entry)
+    return reasons
+
 class PostgresRegistrationService:
     """Server-side registration, review and publish for PostgreSQL schemas."""
 
@@ -330,8 +346,8 @@ class PostgresRegistrationService:
             present = reader.present(database_id, table, column, stored)
             if present is None or set(stored) - present:
                 stale.append(field_name)  # missing, or not verifiable now
-        if stale:
-            return _publish_blocked_response(sorted(stale))
+        extensions = extensions_store.load_extensions(repository_root=root, database_id=database_id)
+        stale_fields = [pg.BlockedField(name, "DICTIONARY_STALE") for name in sorted(set(stale))]
         value_dictionaries = dictionaries_store.build_dictionaries(entries, published_by)
 
         def validate(profile: Any) -> Any:
@@ -350,11 +366,12 @@ class PostgresRegistrationService:
             validate=validate,
             read_values=read_values,
             dictionaries=value_dictionaries,
-            extensions=extensions_store.load_extensions(repository_root=root, database_id=database_id),
+            extensions=extensions,
             has_blank=has_blank,
+            preblocked=stale_fields,
         )
         if context is None:
-            return _publish_blocked_response(blocking)
+            return _publish_blocked_response([item.name for item in blocking], _block_reasons(blocking, extensions))
         self._live.add(context)
         self._register_reader(database_id, config)  # chat value hints for the new database
         record = pg.load_published(repository_root=root, database_id=database_id)
