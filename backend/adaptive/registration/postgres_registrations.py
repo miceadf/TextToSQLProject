@@ -65,6 +65,11 @@ _SLASH_VALUE = re.compile(r"^(?:\d+(?:\.\d+)?|\.\d+)(?:/(?:\d+(?:\.\d+)?|\.\d+))
 _HHMM_VALUE = re.compile(r"^(?:[01]\d|2[0-3])[0-5]\d$")
 # Phase 9-05: a time field left as raw text is compared as text, so it must
 # already hold zero-padded "HH:MM" ("09:00-10:15" would silently misorder).
+# Phase 9-06: column types a number field may be compared on as is.
+_NUMERIC_TYPE = re.compile(
+    r"^(?:smallint|integer|int|int2|int4|int8|bigint|numeric|decimal|real|double precision|float4|float8)"
+    r"(?:\s*\([0-9,\s]*\))?$"
+)
 _CLOCK_TEXT = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
 _SYSTEM_SCHEMAS = ("pg_catalog", "information_schema", "pg_toast")
 
@@ -739,6 +744,30 @@ def plan_publish(
     )
     if unreadable_times:
         return None, unreadable_times
+    # Phase 9-06: a number field on a text column without a validated
+    # text-to-number transform fails in SQL ("3-2-2" or even "3" = 3).
+    non_numeric = sorted(
+        name
+        for name, target in mapped.items()
+        if name in ontology_fields
+        and ontology_fields[name].data_type in (DataType.NUMBER, DataType.INTEGER)
+        and name not in transforms
+        and not _NUMERIC_TYPE.fullmatch(declared.get((target.table, target.column), "").strip())
+    )  # a value dictionary never serves a number field (the runtime refuses it): no exemption
+    if non_numeric:
+        return None, non_numeric
+    # Luna 9-06: the value read leaves out empty text, so a slash or four-digit
+    # transform could be chosen over a column that also holds "" and then fail
+    # in SQL (CAST('' AS NUMERIC)) or misorder; ask for it on its own.
+    blank_casts = sorted(
+        name
+        for name, transform in transforms.items()
+        if transform in (FieldTransform.SLASH_FIRST_NUMERIC, FieldTransform.HHMM_TEXT_TO_HHMM)
+        and has_blank is not None
+        and has_blank(mapped[name].table, mapped[name].column) is not False
+    )
+    if blank_casts:
+        return None, blank_casts
     unsupported = tuple(sorted(name for name in draft.fields if name not in mapped))
     mapping = PublishedMappingProfile(
         database_id=draft.database_id,
