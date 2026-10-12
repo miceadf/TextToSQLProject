@@ -5,6 +5,7 @@ import {
   CHAT_MODELS_PATH,
   CHAT_MODELS_VERSION,
   ChatQueryClientError,
+  chatErrorMessage,
   describeChatModel,
   fetchChatModels,
   parseChatModels,
@@ -119,5 +120,13 @@ describe('Phase 9-08 chat popup', () => {
 
   it('sends the pick with each QueryIR question', () => {
     assert.match(source, /\.\.\.\(chatModel === null \? \{\} : \{ model: chatModel \}\)/);
+  });
+});
+
+describe('Phase 9-09 model failure message', () => {
+  it('names the ChatGPT API as well as Ollama', () => {
+    const text = chatErrorMessage(new ChatQueryClientError('server', 503, 'CHAT_MODEL_UNAVAILABLE', 'PROVIDER_ERROR'));
+    assert.match(text, /Ollama/);
+    assert.match(text, /ChatGPT라면 API 키/);
   });
 });

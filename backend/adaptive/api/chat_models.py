@@ -23,6 +23,8 @@ CHAT_MODELS_VERSION = "adaptive-chat-models-v1"
 
 GENERAL_MODEL_ID = "general"
 LEGACY_TUNED_MODEL_ID = "legacy-tuned"
+# Phase 9-09 (ADR-099): the ChatGPT API, offered only when OPENAI_API_KEY is set.
+OPENAI_MODEL_ID = "openai"
 # A single model passed the pre-9-08 way (``ollama_model`` alone).
 DEFAULT_MODEL_ID = "default"
 DEFAULT_CHAT_MODEL = "qwen2.5-coder:7b-instruct"
@@ -30,6 +32,7 @@ DEFAULT_CHAT_MODEL = "qwen2.5-coder:7b-instruct"
 MODEL_LABELS = {
     GENERAL_MODEL_ID: "일반 모델",
     LEGACY_TUNED_MODEL_ID: "레거시 학습 모델(비교용)",
+    OPENAI_MODEL_ID: "ChatGPT(외부 API)",
     DEFAULT_MODEL_ID: "기본 모델",
 }
 
@@ -46,6 +49,7 @@ __all__ = [
     "GENERAL_MODEL_ID",
     "LEGACY_TUNED_MODEL_ID",
     "MODEL_LABELS",
+    "OPENAI_MODEL_ID",
     "ChatModelChoice",
     "validate_choices",
 ]

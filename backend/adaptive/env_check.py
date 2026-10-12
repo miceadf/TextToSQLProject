@@ -37,7 +37,10 @@ from urllib import request
 # originals by tests (dev_launcher.read_env_file, ollama_startup's base URL
 # rule, ai_proposal.DEFAULT_MAPPING_MODEL, chat_models.DEFAULT_CHAT_MODEL).
 ENV_KEYS = frozenset(
-    {"DATABASE_URL", "OLLAMA_BASE_URL", "OLLAMA_MODEL", "CHAT_MODEL", "MAPPING_MODEL", "SHOW_SQL"}
+    {
+        "DATABASE_URL", "OLLAMA_BASE_URL", "OLLAMA_MODEL", "CHAT_MODEL", "MAPPING_MODEL", "SHOW_SQL",
+        "OPENAI_API_KEY", "OPENAI_MODEL",
+    }
 )
 OLLAMA_BASE_URL_PATTERN = re.compile(r"http://(?:127\.0\.0\.1|\[::1\]):([1-9][0-9]{0,4})")
 DEFAULT_MAPPING_MODEL = "qwen2.5-coder:7b-instruct"
@@ -249,6 +252,10 @@ def _env(values: dict[str, str], exists: bool) -> list[Check]:
         if values.get("OLLAMA_MODEL")
         else Check(WARN, "OLLAMA_MODEL", "없다(레거시 챗봇과 비교용 레거시 학습 모델이 꺼진다)",
                    "backend/.env에 레거시 챗봇 모델 이름을 넣는다"),
+        # Phase 9-09: optional; the key itself is never shown.
+        Check(OK, "OPENAI_API_KEY", "있음(값은 표시하지 않음). 챗봇에 ChatGPT 선택지가 생긴다")
+        if values.get("OPENAI_API_KEY")
+        else Check(OK, "OPENAI_API_KEY", "없음(선택). ChatGPT 선택지는 꺼진다"),
     ]
     sources = sorted(key[len("PG_SOURCE_"):].lower().replace("_", "-") for key in values if key.startswith("PG_SOURCE_"))
     checks.append(

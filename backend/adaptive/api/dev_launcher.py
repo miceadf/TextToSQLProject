@@ -13,7 +13,10 @@ chatbot see the same database and model:
   QueryIR chat offers a general model (``CHAT_MODEL``, default
   ``qwen2.5-coder:7b-instruct``, model template) as its default and the
   legacy chatbot's fine-tuned ``OLLAMA_MODEL`` (no-system request format,
-  ADR-059) as a comparison choice; the user picks one per question;
+  ADR-059) as a comparison choice; the user picks one per question.
+  Phase 9-09 (ADR-099): with ``OPENAI_API_KEY`` the ChatGPT API
+  (``OPENAI_MODEL``, default ``gpt-5-mini``) is one more choice; the key is
+  used only in its request header;
 - upload mapping proposals (Phase 8-12) use the same loopback base URL (or the
   default one) with ``MAPPING_MODEL`` or the benchmarked default tag;
 - the chat shows the executed SQL like the legacy chatbot (Phase 8-14, a
@@ -45,7 +48,10 @@ ENV_FILE = Path("backend/.env")
 REQUEST_FORMAT = "alpaca-raw-no-system-v1"
 OLLAMA_TIMEOUT = "120"
 _ENV_KEYS = frozenset(
-    {"DATABASE_URL", "OLLAMA_BASE_URL", "OLLAMA_MODEL", "CHAT_MODEL", "MAPPING_MODEL", "SHOW_SQL"}
+    {
+        "DATABASE_URL", "OLLAMA_BASE_URL", "OLLAMA_MODEL", "CHAT_MODEL", "MAPPING_MODEL", "SHOW_SQL",
+        "OPENAI_API_KEY", "OPENAI_MODEL",
+    }
 )
 _FIXED_HOST = "127.0.0.1"
 
@@ -94,6 +100,20 @@ def plan_launch(
     return profile_ids, ollama, status
 
 
+class _Secret:
+    """A value that never shows in a repr, str or log line (Luna 9-09 review)."""
+
+    __slots__ = ("value",)
+
+    def __init__(self, value: str) -> None:
+        self.value = value
+
+    def __repr__(self) -> str:
+        return "_Secret(***)"
+
+    __str__ = __repr__
+
+
 def plan_chat_models(
     env_values: dict[str, str],
 ) -> tuple[list[dict[str, str]] | None, dict[str, str]]:
@@ -102,6 +122,7 @@ def plan_chat_models(
     ``general`` is ``CHAT_MODEL`` or the default tag with the model template;
     ``legacy-tuned`` is the legacy chatbot's ``OLLAMA_MODEL`` with the
     no-system format. The same tag twice keeps only ``legacy-tuned``.
+    ``openai`` (Phase 9-09) is added last when ``OPENAI_API_KEY`` is set.
     """
     from .chat_models import DEFAULT_CHAT_MODEL, GENERAL_MODEL_ID, LEGACY_TUNED_MODEL_ID
     from .ollama_startup import parse_ollama_startup_config
@@ -133,11 +154,21 @@ def plan_chat_models(
             "prompt_version": prompt_version,
         })
         status[f"chat_model.{model_id}"] = "enabled"
-    if not choices:
-        status["ollama"] = "disabled (INVALID_OR_NON_LOOPBACK_CONFIG)"
-        return None, status
-    status["ollama"] = "enabled"
-    return choices, status
+    status["ollama"] = "enabled" if choices else "disabled (INVALID_OR_NON_LOOPBACK_CONFIG)"
+    api_key = env_values.get("OPENAI_API_KEY")
+    if api_key:
+        from ..harness.openai_chat import DEFAULT_OPENAI_MODEL, valid_openai_settings
+        from .chat_models import OPENAI_MODEL_ID
+
+        model = env_values.get("OPENAI_MODEL") or DEFAULT_OPENAI_MODEL
+        if valid_openai_settings(api_key, model):
+            choices.append(
+                {"id": OPENAI_MODEL_ID, "provider": "openai", "model_tag": model, "api_key": _Secret(api_key)}
+            )
+            status[f"chat_model.{OPENAI_MODEL_ID}"] = "enabled"
+        else:
+            status[f"chat_model.{OPENAI_MODEL_ID}"] = "disabled (INVALID_CONFIG)"
+    return (choices or None), status
 
 
 def plan_mapping_model(env_values: dict[str, str]) -> tuple[dict[str, str] | None, str]:
@@ -171,6 +202,11 @@ def _load_profiles(profile_ids: list[str], repository_root: Path) -> list[Any]:
 def _build_model(ollama: dict[str, str]) -> Any:
     from .ollama_startup import build_startup_ollama_model, parse_ollama_startup_config
 
+    if ollama.get("provider") == "openai":
+        from ..harness.openai_chat import OpenAIQueryModel
+
+        return OpenAIQueryModel(ollama["api_key"].value, ollama["model_tag"])
+
     return build_startup_ollama_model(
         parse_ollama_startup_config(
             ollama["model_tag"], ollama["base_url"] or None, OLLAMA_TIMEOUT,
@@ -181,6 +217,7 @@ def _build_model(ollama: dict[str, str]) -> Any:
 
 def _build_choices(ollama: list[dict[str, str]], status: dict[str, str]) -> list[Any] | None:
     """Build each chat model on its own; one failing keeps the others."""
+    from ..harness.openai_chat import OpenAIQueryModel
     from .chat_models import MODEL_LABELS, ChatModelChoice
 
     choices: list[Any] = []
@@ -195,8 +232,9 @@ def _build_choices(ollama: list[dict[str, str]], status: dict[str, str]) -> list
                 id=spec["id"], label=MODEL_LABELS[spec["id"]], tag=spec["model_tag"], model=model
             )
         )
-    if not choices:
+    if not any(not isinstance(choice.model, OpenAIQueryModel) for choice in choices):
         status["ollama"] = "disabled (STARTUP_FAILED)"
+    if not choices:
         return None
     return choices
 

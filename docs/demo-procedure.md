@@ -14,6 +14,7 @@
    - `OLLAMA_BASE_URL`: loopback, 예: `http://127.0.0.1:11434`.
    - `OLLAMA_MODEL`: 레거시 챗봇 모델. 예: `text2sql_qwen:latest`. 새 챗봇에서는 "레거시 학습 모델(비교용)" 선택지가 된다.
    - `CHAT_MODEL`(선택): 새 챗봇의 기본 "일반 모델". 없으면 `qwen2.5-coder:7b-instruct`(Phase 9-08).
+   - `OPENAI_API_KEY`(선택): 넣으면 "ChatGPT(외부 API)" 선택지가 생긴다. 모델은 `OPENAI_MODEL`, 없으면 `gpt-5-mini`(Phase 9-09). 질문·공통 항목·값 힌트가 OpenAI로 간다.
    - 선택 항목:
      - `MAPPING_MODEL`: mapping 제안 모델. 없으면 `qwen2.5-coder:7b-instruct`를 쓴다.
      - `PG_SOURCE_<이름>=<DSN>`: 다른 PostgreSQL 연결을 추가한다.

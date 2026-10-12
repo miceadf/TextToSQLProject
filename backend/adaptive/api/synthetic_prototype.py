@@ -411,7 +411,8 @@ def create_synthetic_clarification_prototype(
     """Assemble the synthetic clarification prototype app.
 
     ``chat_models`` (Phase 9-08) lists the QueryIR chat's model choices,
-    default first; the default also serves the clarification flow. It
+    default first; the first Ollama choice also serves the clarification
+    flow (Phase 9-09: a choice may be the ChatGPT API). It
     replaces ``ollama_model`` (pass one or the other).
 
     ``mapping_model`` (Phase 8-12) is a JSON-schema model call used only to
@@ -438,10 +439,23 @@ def create_synthetic_clarification_prototype(
             if ollama_model is not None:
                 raise RuntimeError(_PROTOTYPE_CREATION_FAILURE)
             try:
+                from ..harness.ollama import OllamaQueryModel
+                from ..harness.openai_chat import OpenAIQueryModel
+
                 chat_choices = validate_choices(chat_models)
             except Exception:
                 raise RuntimeError(_PROTOTYPE_CREATION_FAILURE) from None
-            ollama_model = chat_choices[0].model
+            if any(
+                not isinstance(choice.model, (OllamaQueryModel, OpenAIQueryModel))
+                for choice in chat_choices
+            ):
+                raise RuntimeError(_PROTOTYPE_CREATION_FAILURE)
+            # Phase 9-09: the clarification flow stays on a local model; it
+            # takes the first Ollama choice, or none.
+            ollama_model = next(
+                (choice.model for choice in chat_choices if isinstance(choice.model, OllamaQueryModel)),
+                None,
+            )
         if postgres_profiles is None:
             pg_profiles: list[Any] = []
         elif isinstance(postgres_profiles, list):
@@ -562,9 +576,7 @@ def create_synthetic_clarification_prototype(
                 from ..harness.ollama_constraint import OllamaConstraintProvider
             except Exception:
                 raise RuntimeError(_PROTOTYPE_CREATION_FAILURE) from None
-            if not isinstance(ollama_model, OllamaQueryModel) or any(
-                not isinstance(choice.model, OllamaQueryModel) for choice in chat_choices or ()
-            ):
+            if not isinstance(ollama_model, OllamaQueryModel):
                 raise RuntimeError(_PROTOTYPE_CREATION_FAILURE) from None
             try:
                 provider = OllamaConstraintProvider(ollama_model)

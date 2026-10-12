@@ -423,6 +423,9 @@ threshold는 고정 진리가 아니라 관리자 작업량과 정확도 사이�
 - 사용자가 질문마다 화면에서 고르고, 평가 도구도 `--model`로 고른다.
 - 레거시 챗봇(8000)은 그대로 fine-tuned 모델을 쓴다.
 
+2026-10-12 사용자 결정(ADR-099): `OPENAI_API_KEY`가 있으면 ChatGPT API(`OPENAI_MODEL`, 기본 `gpt-5-mini`)도 선택지가 된다.
+- 비교용 외부 모델이다. 기본 모델은 바꾸지 않는다.
+
 ### 10.2 새 학교마다 재학습하지 않는 원칙
 
 목표 구조는 학교별 모델이 아니라 하나의 공통 모델과 학교별 Mapping Profile이다.
@@ -752,6 +755,7 @@ Phase 8 분할 계획(상세는 [`docs/prompts/phase8-01-mapping-version-rollbac
 4o. Phase 9 진입: L1 검토 표 준비(완료, ADR-094). 판정은 사용자 → 팀원. 다음: 사용자의 L1 판정, 팀원 모사 DB·질문 파일.
 4p. 8-23 AI mapping 제안 개선(완료, ADR-095; 개발용 schema 5개 55→75/80, 개발 수치).
 4q. 8-24 코드표에서 값 사전 가져오기(완료, 관리자 편의 기능, ADR 없음: 기존 값 사전 규칙 안의 입력 방법 추가).
+4aa. Phase 9-09 챗봇 모델 선택지에 ChatGPT API 추가(완료, ADR-099; 키는 사용자가 `backend/.env`에 넣음, 실제 호출 측정은 사용자 시험 대기).
 4z. Phase 9-08 챗봇 기본 모델을 일반 모델로, 모델 고르기(완료, ADR-098; 레거시 30문항 일반 23·학습 22, `other_school` 일반 10/12·학습 12/12, 개발 수치).
 4y. Phase 9-07 게시 막힘 항목·이유 한 번에 보이기(완료; 응답에 `reasons` 추가, 화면은 항목마다 한국어 한 줄).
 4x. Phase 9-06 리허설 문제 3 고침(완료, ADR-097 보완; 숫자 항목은 숫자 칸·검증된 변환일 때만 게시, 리허설 재실행 9/14·오류 0).
@@ -1255,6 +1259,8 @@ SQLite DB 입력
 - 모델 context에 전체 원본 행을 무분별하게 포함하지 않음
 - 샘플값 수와 길이 제한
 - 외부 모델 실험 시 민감 데이터 제거
+  - 2026-10-12 사용자 결정(ADR-099): ChatGPT 선택지로 보내는 것은 질문, 공통 항목 목록, 값 힌트(질문 단어와 맞는 DB 값)다.
+  - 물리 이름·DSN·DB 행은 보내지 않는다. API 키는 서버 안에서만 쓴다.
 - 교수명 등 공개 데이터도 재배포 조건 확인 후 가명화 여부 결정
 - SQL, mapping version, reviewer, 실행 결과 감사 로그 유지
 
@@ -2399,6 +2405,30 @@ SQLite DB 입력
   - 레거시 학습 모델의 레거시 답은 9-08 전후로 같다.
 - 남은 판단: 기본 모델을 계속 일반 모델로 둘지는 팀원 DB 평가를 두 모델로 각각 실행한 뒤 다시 본다. 다른 일반 모델은 내려받기가 필요해 시험하지 않았다.
 
+### ADR-099: ChatGPT API를 챗봇 모델 선택지로 더한다
+
+- 날짜: 2026-10-12
+- 상태: 채택(사용자 결정)
+  - 로컬 7B 모델만으로는 한계가 있다. ChatGPT API 선택지를 더하고 키는 사용자가 넣는다.
+  - 기본 모델은 `gpt-5-mini`다.
+  - 값 힌트도 보낸다.
+  - "Legacy 기준선"은 그대로 둔다.
+- 결정:
+  - `OPENAI_API_KEY`가 있을 때만 선택지 `openai`("ChatGPT(외부 API)")를 맨 뒤에 둔다.
+    - 모델은 `OPENAI_MODEL`, 없으면 `gpt-5-mini`다.
+    - 기본 선택지는 그대로 일반 모델이다.
+  - 질문당 Chat Completions 한 번을 부른다. 재시도는 없다.
+    - prompt `query-ir-v3`와 값 힌트를 쓰고, QueryIR JSON schema를 non-strict `response_format`으로 보낸다.
+    - 결과는 다른 모델과 같은 QueryIR 검증·compiler·policy·executor를 지난다.
+  - 고정 HTTPS 주소만 쓴다. proxy와 redirect는 따르지 않고 응답 크기에 상한을 둔다. 실패는 고정 코드다.
+  - API 키는 요청 header에만 쓴다. 화면, 상태 줄, 오류, repr, 평가 기록에는 나가지 않는다.
+  - 예전 명확화 흐름은 로컬 Ollama 모델에만 둔다.
+- 이유: 9-08에서 로컬 일반 모델은 다른 학교의 약어 질문에 약했다(`other_school` 10/12). 더 큰 모델과 비교할 선택지가 필요하다.
+- 예외 범위: 지금까지 모델 호출은 loopback Ollama만이었다(ADR-059 계열). 이 선택지만 외부로 나간다.
+  - 보내는 것: 질문, 공통 항목 목록, 값 힌트.
+  - 보내지 않는 것: 물리 이름, DSN, DB 행.
+- 결과: 가짜 전송 테스트만 했다. 실제 호출과 비교 수치는 사용자가 키를 넣은 뒤 잰다.
+
 ## 21. 변경 이력
 
 ### 2026-09-04
@@ -2683,3 +2713,4 @@ SQLite DB 입력
 - 2026-10-10 Phase 9-06 리허설 문제 3 고침(ADR-097 보완, 사용자 결정). `plan_publish`: 공통 숫자 항목은 숫자 형식 칸(`_NUMERIC_TYPE`)이거나 검증된 변환이 있을 때만 게시하고, `SLASH_FIRST_NUMERIC`·`HHMM_TEXT_TO_HHMM`이 정해진 칸에 빈 글자가 있으면 막는다. 레거시 확인(읽기 전용): public schema 숫자 칸은 `integer`, 학점은 `3/3/0` 글자(빈 글자 0). 화면 등록 경로로 레거시 public schema와 `other_school`이 모두 1번에 게시되었고, 레거시 답(3학점·컴융 전공 82·컴융 3학년 전공 33·월요일 오전 200·정원 60명 이상 200)은 그대로였다. 리허설 학교는 학점이 게시에서 막혀 "이 DB에 없음"이 되었고, 재실행(`run-003`) 9/14·오류 0(학점 질문 HTTP 500 → "학점 정보 없음"). `gpt-6-luna` high 지적 3건(빈 글자, 도메인 형식, 값 사전 예외)을 확인해 2건을 고치고 도메인 형식은 한계로 기록했다. 남은 것: 문제 4~6, 게시 막힘이 단계별로 나옴. 결과는 `docs/phase9-06-numeric-columns-results-2026-10-10.md`. 전체 pytest 2037개 통과·8 skip·611 subtests, compileall·diff check 통과
 - 2026-10-10 Phase 9-07 게시 막힘 항목·이유 한 번에 보이기(사용자 결정, 리허설 문제 6). `plan_publish`가 모든 검사를 끝까지 돌려 막힌 항목마다 이유(`BLOCK_REASONS` 10종)를 모으고, 값 사전 낡음도 같은 목록에 넣는다. 게시 거절 응답은 기존 `fields`를 그대로 두고 `reasons`(항목, 한국어 이름, 이유, 같은 칸이면 다른 항목)를 더했다. 런타임 검증 실패와 SQLite 경로는 그대로다. 화면(`mappingReview.ts`)은 `reasons`를 엄격히 읽어(알려진 코드만, 항목마다 하나) 항목마다 이유와 할 일을 한 줄씩 보이고, 세 패널의 오류 칸이 줄바꿈을 보인다. 리허설 학교 게시 한 번에 막힌 항목 넷(학점, 개설 연도, 종료 시간, 시작 시간)이 이유와 함께 나왔다(이전에는 게시 세 번). 화면(5174→8124)에서도 확인했다. `gpt-6-luna` high 지적 3건(낡은 값 사전이 다른 막힘을 가림, 모르는 이유 코드, 빠지거나 겹친 이유)을 고쳤다. 결과는 `docs/phase9-07-publish-block-reasons-results-2026-10-10.md`. 전체 pytest 2042개 통과·8 skip·611 subtests, frontend Node 139개·tsc·ESLint(src·tests/frontend)·vite build·compileall·diff check 통과
 - 2026-10-12 Phase 9-08 챗봇 기본 모델을 일반 모델로 바꾸고 모델 고르기(ADR-098, 사용자 결정). 원인: 레거시로 미세 조정한 모델이 리허설 학교의 "컴융·소웨 전공"을 없는 레거시 과목 코드로 바꿈(위험 3). 서버가 선택지를 정한다: `general`(기본, `CHAT_MODEL` 또는 `qwen2.5-coder:7b-instruct`, model template + QueryIR JSON schema `queryir-schema-v1` + prompt `query-ir-v3`), `legacy-tuned`(`OLLAMA_MODEL`, 요청 불변). `GET /api/adaptive/v1/chat/models`, 질문 요청의 선택 `model`(id만, 모르는 id 거절), 화면 "모델" 고르기, `blind_eval run --model <id>`(기록은 서버가 알려 준 모델). 8-13 값 힌트 고침을 넓혀 식별 항목(코드·분반)의 값이 힌트 하나와 같으면 옮긴다. 레거시 챗봇은 그대로. 잠정 수치: 레거시 30문항 일반 23·학습 22(학습 모델 답은 전후 같음), 리허설(사용자 등록) 6/14·6/14, `other_school` 10/12·12/12(일반 모델은 학과 약어에 약함). `gpt-6-luna` high 지적 5건: 3건 고침(조건 상한 6→12, 조회 항목 중복 금지, 평가 도구가 모델 목록을 못 읽으면 멈춤), 1건 재현 안 됨(JS 정규식), 1건 의도(모델 이름 표시). 결과는 `docs/phase9-08-chat-model-choice-results-2026-10-12.md`. 전체 pytest 2088개 통과·8 skip·611 subtests, frontend Node 147개·tsc·ESLint(src·tests/frontend)·vite build·compileall·diff check 통과
+- 2026-10-12 Phase 9-09 챗봇 모델 선택지에 ChatGPT API 추가(ADR-099, 사용자 결정: 기본 `gpt-5-mini`, 값 힌트 전송, Legacy 기준선 그대로). `harness/openai_chat.py` `OpenAIQueryModel`: 질문당 Chat Completions 한 번, prompt `query-ir-v3`·값 힌트·QueryIR schema(non-strict), 고정 HTTPS 주소·proxy/redirect 없음·응답 상한, `finish_reason == "stop"`만 답, 실패는 고정 코드. `OPENAI_API_KEY`가 있을 때만 선택지 `openai`(맨 뒤, 기본은 그대로 일반 모델). 키는 요청 header에만 쓰고 화면·상태 줄·오류·repr·평가 기록에 나가지 않는다. 명확화 흐름은 로컬 Ollama. 화면의 모델 실패 안내에 ChatGPT 키·한도를 더했다. `gpt-6-luna` high 지적 3건(시작 설정 repr의 키, `__context__`에 남는 원래 예외, `finish_reason` 미확인) 모두 고침. 실제 호출 측정은 사용자가 키를 넣은 뒤. 결과는 `docs/phase9-09-openai-chat-model-results-2026-10-12.md`. 전체 pytest 2116개 통과·8 skip·611 subtests, frontend Node 148개·tsc·ESLint·vite build·compileall·diff check 통과

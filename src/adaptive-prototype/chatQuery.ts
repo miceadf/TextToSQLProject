@@ -470,7 +470,8 @@ export function chatErrorMessage(error: unknown): string {
     if (error.serverCode === 'CHAT_MODEL_UNAVAILABLE') {
       return error.failureCode === 'TIMEOUT'
         ? '모델 응답 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.'
-        : 'QueryIR 모델을 사용할 수 없습니다. Ollama가 켜져 있는지 확인해 주세요.';
+        : // Phase 9-09: the model may be the ChatGPT API as well as Ollama.
+          'QueryIR 모델을 사용할 수 없습니다. Ollama가 켜져 있는지, ChatGPT라면 API 키와 사용 한도를 확인해 주세요.';
     }
     if (error.serverCode === 'CHAT_CONTEXT_UNAVAILABLE') return '선택한 DB를 지금 사용할 수 없습니다.';
     if (error.serverCode === 'CHAT_INVALID_REQUEST') return '질문 형식이 올바르지 않습니다(최대 500자).';
