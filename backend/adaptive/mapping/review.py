@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from ..catalog import DatabaseCatalog
-from ..ontology import DomainOntology
+from ..ontology import DomainOntology, load_default_ontology
 from .contracts import (
     MappingCandidate,
     MappingDraft,
@@ -25,6 +25,13 @@ def utc_now() -> datetime:
 
 
 class MappingReviewService:
+    def __init__(self, ontology: DomainOntology | None = None) -> None:
+        self._retired_fields = (ontology or load_default_ontology()).retired_fields
+
+    def _require_active_field(self, semantic_field: str) -> None:
+        if semantic_field in self._retired_fields:
+            self._unknown_field(semantic_field)
+
     def create_draft(self, proposal: MappingProposal) -> MappingDraft:
         fields: dict[str, ReviewedFieldMapping] = {}
         for semantic_field, candidates in sorted(proposal.candidates.items()):
@@ -53,6 +60,7 @@ class MappingReviewService:
         reason: str | None = None,
     ) -> MappingDraft:
         self._validate_proposal(draft, proposal)
+        self._require_active_field(semantic_field)
         candidates = proposal.candidates.get(semantic_field)
         if candidates is None:
             self._unknown_field(semantic_field)
@@ -81,6 +89,7 @@ class MappingReviewService:
         reason: str,
     ) -> MappingDraft:
         self._require_field(draft, semantic_field)
+        self._require_active_field(semantic_field)
         entry = ReviewedFieldMapping(
             semantic_field=semantic_field,
             decision=ReviewDecision.REMAPPED,
@@ -116,6 +125,7 @@ class MappingReviewService:
         reviewer: str,
         reason: str,
     ) -> MappingDraft:
+        self._require_active_field(semantic_field)
         return self._dismiss(
             draft,
             semantic_field,
@@ -145,6 +155,7 @@ class MappingReviewService:
                 reason=entry.reason,
             )
             for name, entry in draft.fields.items()
+            if name not in ontology.retired_fields
             if entry.decision in {ReviewDecision.APPROVED, ReviewDecision.REMAPPED}
         }
         return PublishedMappingProfile(
@@ -180,6 +191,7 @@ class MappingReviewService:
         active_entities = {
             semantic_field.split(".", 1)[0]
             for semantic_field, entry in draft.fields.items()
+            if semantic_field not in ontology.retired_fields
             if entry.decision in {ReviewDecision.APPROVED, ReviewDecision.REMAPPED}
         }
         physical_columns = {
@@ -193,6 +205,8 @@ class MappingReviewService:
             issues.append("at least one field must be mapped")
 
         for semantic_field, entry in sorted(draft.fields.items()):
+            if semantic_field in ontology.retired_fields:
+                continue
             field = ontology_fields.get(semantic_field)
             if field is None:
                 issues.append(f"unknown ontology field: {semantic_field}")
@@ -224,6 +238,8 @@ class MappingReviewService:
                     used_physical[physical] = semantic_field
 
         for semantic_field, field in ontology_fields.items():
+            if semantic_field in ontology.retired_fields:
+                continue
             entity_name = semantic_field.split(".", 1)[0]
             if semantic_field not in draft.fields:
                 issues.append(f"ontology field missing from draft: {semantic_field}")

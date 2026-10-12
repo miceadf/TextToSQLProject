@@ -264,7 +264,7 @@ def hint_fields(context: Any, ontology: DomainOntology) -> list[str]:
     """
     mapped = context.published_mapping().fields
     transforms = context.field_transforms()
-    fields = ontology.fields
+    fields = ontology.active_fields
     reader = getattr(context, "extension_fields", None)
     extensions = reader() if callable(reader) else {}
     return sorted(
@@ -290,6 +290,12 @@ class ChatValueIndexes:
         self._lock = threading.Lock()
         # key -> (index, rebuild after; None = complete, kept)
         self._cache: dict[tuple[str, str, int], tuple[ValueIndex, float | None]] = {}
+
+    def forget(self, database_id: str) -> None:
+        """Drop every cached version when a registration is deleted."""
+        with self._lock:
+            for key in [key for key in self._cache if key[0] == database_id]:
+                del self._cache[key]
 
     def get(self, context: Any) -> ValueIndex | None:
         try:
@@ -349,7 +355,7 @@ class ChatValueIndexes:
 def _field_repairs(ontology: DomainOntology) -> dict[str, set[str]]:
     """Attribute word → ontology fields it can only mean (hints from the ontology)."""
     by_word: dict[str, set[str]] = {}
-    for entity in ontology.entities:
+    for entity in ontology.at_version(ontology.version).entities:
         name_field = f"{entity.name}.name"
         for field in entity.fields:
             for hint in field.physical_name_hints:
@@ -386,7 +392,7 @@ def repair_output(
     if not isinstance(output, dict):
         return output
     # Phase 8-19: a database's extension fields are known, never "repaired".
-    known = set(ontology.fields) | set(available_fields or [])
+    known = set(ontology.active_fields) | set(available_fields or [])
     by_word = _field_repairs(ontology)
     entities = {entity.name for entity in ontology.entities}
     repaired = dict(output)

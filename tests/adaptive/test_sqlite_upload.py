@@ -65,6 +65,33 @@ def _ok_headers() -> dict:
     return {"Content-Type": SQLITE_UPLOAD_CONTENT_TYPE}
 
 
+def test_reserved_selection_id_upload_is_invalid_without_writing(upload_client, monkeypatch) -> None:
+    client, repo, source = upload_client
+    before = sorted(path.relative_to(repo) for path in repo.rglob("*"))
+
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("reserved upload must not create a temporary file")
+
+    monkeypatch.setattr(tempfile, "mkstemp", forbidden)
+    response = _upload(client, "?database_id=legacy&label=Legacy", source.read_bytes(), _ok_headers())
+    assert response.status_code == 400
+    assert response.json() == {"error": {"code": "SQLITE_UPLOAD_INVALID_REQUEST"}}
+    assert sorted(path.relative_to(repo) for path in repo.rglob("*")) == before
+
+
+def test_reserved_selection_id_storage_is_invalid_before_any_write(tmp_path: Path) -> None:
+    from backend.adaptive.registration.errors import RegistrationError, RegistrationErrorCode
+
+    with pytest.raises(RegistrationError) as caught:
+        registration_storage.register_database(
+            repository_root=tmp_path, source_path=tmp_path / "missing.sqlite3",
+            database_id="legacy", label="Legacy",
+        )
+    assert caught.value.code is RegistrationErrorCode.INVALID_INPUT
+    assert list(tmp_path.iterdir()) == []
+    assert registration_storage.validate_database_id("legacy") == "legacy"
+
+
 def test_raw_upload_success_pending_review_summary_without_samples_or_paths(
     upload_client,
 ) -> None:

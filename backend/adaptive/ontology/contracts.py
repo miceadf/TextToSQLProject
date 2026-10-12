@@ -47,9 +47,9 @@ class OntologyField(BaseModel):
     physical_name_hints: list[str] = Field(default_factory=list)
     allowed_operators: set[Operator]
     required: bool = False
-    # Phase 8-18: the ontology version that added this field. Versions only
-    # add fields, so a record made under an older version stays valid.
+    # Keep definitions for historical records, including retired fields.
     since_version: int = Field(default=1, ge=1)
+    retired_in_version: int | None = Field(default=None, ge=1)
 
 
 class EntityDefinition(BaseModel):
@@ -94,6 +94,8 @@ class DomainOntology(BaseModel):
             for field in entity.fields:
                 if field.since_version > self.version:
                     raise ValueError(f"field '{field.name}' is newer than the ontology")
+                if field.retired_in_version is not None and field.retired_in_version <= field.since_version:
+                    raise ValueError(f"field '{field.name}' retires before it is introduced")
         known_entities = set(entity_names)
         for relation in self.relations:
             if relation.source_entity not in known_entities:
@@ -124,6 +126,17 @@ class DomainOntology(BaseModel):
             and 1 <= version <= self.version
         )
 
+    @property
+    def active_fields(self) -> dict[str, OntologyField]:
+        return self.fields_at(self.version)
+
+    @property
+    def retired_fields(self) -> set[str]:
+        return {
+            name for name, field in self.fields.items()
+            if field.retired_in_version is not None and field.retired_in_version <= self.version
+        }
+
     def fields_at(self, version: int) -> dict[str, OntologyField]:
         """The fields a record made under ``version`` knows about."""
         if not self.accepts_version(version):
@@ -132,14 +145,19 @@ class DomainOntology(BaseModel):
             name: field
             for name, field in self.fields.items()
             if field.since_version <= version
+            and (field.retired_in_version is None or field.retired_in_version > version)
         }
 
     def at_version(self, version: int) -> "DomainOntology":
-        """This ontology as it stood at ``version`` (fields added later left out)."""
+        """This ontology as it stood at ``version``."""
         if not self.accepts_version(version):
             raise ValueError("ontology version is not accepted")
         entities = [
-            entity.model_copy(update={"fields": [f for f in entity.fields if f.since_version <= version]})
+            entity.model_copy(update={"fields": [
+                f.model_copy(update={"retired_in_version": None})
+                if f.retired_in_version is not None and f.retired_in_version > version else f
+                for f in entity.fields if f.name in self.fields_at(version)
+            ]})
             for entity in self.entities
         ]
         return self.model_copy(update={"version": version, "entities": entities})

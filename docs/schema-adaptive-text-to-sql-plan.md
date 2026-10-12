@@ -234,6 +234,8 @@ Schedule.day
 Schedule.start_time
 ```
 
+현재 공통 ontology는 버전 3이다(2026-10-13 사용자 결정, ADR-101). `CourseOffering.year` 정의는 `retired_in_version: 3`으로 보존하되 현재 등록·검토·게시·챗봇에서는 사용하지 않는다. 활성 항목은 `since_version <= v`이며 `retired_in_version`이 없거나 `> v`인 항목이다. 버전 1·2 기록은 자기 버전으로 읽고, 현재 runtime은 옛 mapping의 year 연결도 "이 DB에 없음"으로 본다. `CourseOffering.semester`는 유지한다.
+
 ### 7.2 Database Catalog
 
 Schema Inspector가 생성하는 표준 메타데이터다.
@@ -366,6 +368,12 @@ sbjt_mst.div1    → Department.name   34%
 - 코드값 의미 지정
 - 누락된 테이블 관계 추가
 
+2026-10-13 Phase 9-17: 화면의 Legacy 기준선 선택용 내부 ID `legacy`는 새 PostgreSQL·SQLite 등록에서 기존 고정 입력 오류 코드로 거절하고 양식에서도 전송 전에 시스템 이름 안내로 막는다. 저장된 `legacy` 등록은 수정하지 않고 기존 loader의 ID 검증도 유지한다. DB 목록은 예약 선택 ID와 겹치거나 형식이 잘못된 개별 항목만 제외해 한 줄 경고와 나머지 목록을 표시한다. 최상위 계약·목록 크기·중복 ID 검사는 엄격하게 유지한다. 고정 합성 DB ID 두 개의 기존 등록 충돌 거절도 유지한다.
+
+2026-10-13 Phase 9-18 사용자 요청: 관리자 표에서 ID를 그대로 입력해 확인하면 PostgreSQL 등록과 게시 profile만 삭제한다. 기존 등록된 `legacy`는 정리할 수 있으나 새 등록 예약 규칙은 유지한다. 등록 lock과 기존 private 경로 검증을 사용하고 symlink·Windows junction을 거절하며, live context·값 reader·목록에서 즉시 빠진다. 선택된 DB를 삭제하면 Legacy 기준선으로 돌아가고 열린 검토는 닫는다. SQLite·합성 DB·profile 전용 ID는 삭제하지 않고 평가 기록(`blind-evals`, `direct-sql-pg`)은 남긴다.
+
+2026-10-13 Phase 9-20 사용자 결정: 새 PostgreSQL 등록에 다른 DB의 값 사전을 가져온다. 출처는 게시된 PostgreSQL 등록의 편집 사전과 서버 시작 `legacy-view`·`legacy-base` profile 사전이며, 목록에는 ID·이름·항목별 개수만 보낸다. 같은 공통 항목 중 대상의 `editable_fields`만 처리하고 실제 대상 칸에 저장 값이 있는지 확인한다. 없는 값·연결 안 된 항목·사용 중단 항목·별칭 충돌 등은 항목별 개수와 이유 코드로 보고한다. 같은 저장 값은 별칭을 중복 없이 합치고 대상 뜻을 유지한다. 검토자가 지정된 가져오기는 편집 중 사전만 저장하며, 기존 ‘사전 적용해 게시’로 반영한다. 기존 값 존재·별칭·사전 검증과 private 저장 경계를 재사용하는 관리자 편집 기능 확장으로 새 ADR은 없다.
+
 ### 9.2 매핑 상태
 
 ```text
@@ -378,6 +386,8 @@ STALE
 ```
 
 운영 질의는 검증 후 `PUBLISHED` mapping version만 사용한다.
+
+2026-10-13 사용자 요청(Phase 9-15): 검토·게시 화면의 **AI 추천 모두 승인**은 검토자가 입력된 상태에서 대기(`PENDING`)·후보 있음 항목만 대상으로 한다. 확인 안내에 대상 수와 후보 없는 대기 항목 수를 표시하고, 승인하면 각 항목의 첫 후보 index를 기존 `APPROVE` API에 한 번씩 순서대로 보낸다. 실행 중 화면 버튼을 비활성화하고 `k/N 승인 중`을 표시하며, 각 응답으로 표를 갱신한다. 실패하면 즉시 멈춰 승인 수·실패 항목·기존 오류 안내를 표시한다. 완료 안내에는 후보 없는 항목 이름을 표시하며 확정·변경·없음 항목은 건드리지 않는다. 각 항목의 다시 정하기로 고칠 수 있고 게시는 자동으로 하지 않는다. 화면만 추가하며 9-06 숫자 칸·ADR-097 시간 칸 게시 규칙과 레거시 기준선은 유지한다. 기존 승인 동작 안의 편의 기능이므로 새 ADR은 없다.
 
 ### 9.3 신뢰도 정책 초기안
 
@@ -460,6 +470,8 @@ schema + relations + safe sample values + natural-language question
 최종 test schema는 학습과 데이터 생성 과정에서 제외한다.
 
 ### 10.4 모델 추상화
+
+2026-10-13 Phase 9-21(사용자 결정, ADR-102): 적응형 챗봇은 한 번의 모델 호출과 기존 검증·실행 뒤, 성공 답에서 어떤 값·항목에도 연결되지 않은 질문 낱말을 최대 5개 알린다. 값 사전 별칭·기존 값/시간 힌트·QueryIR 조건과 닫힌 일반어·조사 규칙만 재사용하고 추가 조건·모델 호출·DB 읽기는 없다. 답을 막지 않으며 기존 거절과 레거시 기준선은 유지한다. 개발 30문항의 고정 조건 확인과 한계는 [결과 문서](phase9-21-unmatched-word-notice-results-2026-10-13.md)에 기록한다.
 
 ```python
 class TextToSQLModel:
@@ -755,7 +767,22 @@ Phase 8 분할 계획(상세는 [`docs/prompts/phase8-01-mapping-version-rollbac
 4o. Phase 9 진입: L1 검토 표 준비(완료, ADR-094). 판정은 사용자 → 팀원. 다음: 사용자의 L1 판정, 팀원 모사 DB·질문 파일.
 4p. 8-23 AI mapping 제안 개선(완료, ADR-095; 개발용 schema 5개 55→75/80, 개발 수치).
 4q. 8-24 코드표에서 값 사전 가져오기(완료, 관리자 편의 기능, ADR 없음: 기존 값 사전 규칙 안의 입력 방법 추가).
+
 4aa. Phase 9-09 챗봇 모델 선택지에 ChatGPT API 추가(완료, ADR-099; 키는 사용자가 `backend/.env`에 넣음, 실제 호출 측정은 사용자 시험 대기).
+
+4ab. Phase 9-10 PostgreSQL 직접 SQL 비교군(평가 전용, ADR-100): [x] 구현·가짜 모델 targeted 검증; [x] Luna/opencode 독립 리뷰(제공된 리뷰 지적 4건 재현·고침, 9-10c); [x] live 측정(2026-10-12 사용자 승인으로 한 번, 로컬 7B; 직접 SQL 17/56·QueryIR 42/56, other_school QueryIR은 9-08 재사용; 개발 질문·L1/L3 전 잠정치, 사람 관문 승인 없음). [결과](phase9-10-direct-sql-results-2026-10-12.md).
+4ac. Phase 9-11 게시된 PostgreSQL mapping 검토 응답 계약 고침(9-11b 보완): [x] review GET·INIT의 `published_at`을 초 단위 UTC `Z` 형식으로 정규화하고 활성 버전 `activatable: False` 유지; [x] 화면 parser에서 활성·재활성화 불가 조합 허용, 실행 불가 문구는 비활성 버전에만 표시; PostgreSQL 회귀 확인·ACTIVATE 미지원과 SQLite 응답·동작 유지; [x] 서버·frontend targeted 회귀 검증; [x] Luna/opencode 독립 리뷰(제공된 9-11~9-22 리뷰, 확인 지적은 9-23에서 고침).
+4ad. Phase 9-12 DB 변경 관리 화면 재배치(사용자 요청): [x] 큰 창·사용할 DB/DB 등록/검토·게시 메뉴, PostgreSQL 등록 표, 항목 연결 표·선택 도구 접기·게시 영역; [x] 배치·한국어 안내만 변경, API·계약·검증 규칙·레거시 기준선 유지; [x] frontend 검증; [ ] 기존 스타일과 맞추기(다음 단계); [x] Luna/opencode 독립 리뷰(제공된 9-11~9-22 리뷰, 확인 지적은 9-23에서 고침).
+4ae. Phase 9-13 PostgreSQL 시험 질의·기준 저장·회귀 확인(사용자 결정 B): [x] 게시된 현재 profile과 검증된 챗봇 context로 고정 QueryIR 실행, 없는 항목 제외·표시; [x] 등록 디렉터리에 검토자·hash·행 수만 기준 저장, 현재 게시 버전만 회귀 확인(다른 버전은 `POSTGRES_CURRENT_VERSION_ONLY`); [x] 활성 버전 `activatable: True`, 초 단위 게시 시각·SQLite 동작 유지; [x] targeted 검증(backend 51개, frontend 24개; SQLite upload setup 실패 2개는 재실행 통과); [x] Luna/opencode 독립 리뷰(제공된 9-11~9-22 리뷰, 확인 지적은 9-23에서 고침). PostgreSQL ACTIVATE·이전 버전 보관은 추가하지 않는다.
+4af. Phase 9-14 검토·게시 탭 항목 연결 표 정리(사용자 요청): [x] 대기 줄의 세 동작·확정/없음 줄의 다시 정하기, 한 번에 한 줄만 편집; [x] 다른 칸 편집의 처음 값을 현재 연결 → 추천 → 빈 선택으로 고침, 빈 선택·빈 사유 저장 차단; [x] 검토자 한 번 입력·도구 공통 사용, 설명·게시 안내 정리; [x] frontend 161개·TypeScript·대상 ESLint·native config loader Vite build·diff check 통과(기본 Vite build는 Windows spawn EPERM); [x] Luna/opencode 독립 리뷰(제공된 9-11~9-22 리뷰, 확인 지적은 9-23에서 고침). API·계약·검증 규칙·레거시 기준선 유지, 스타일 통일·화면 확인은 별도.
+4ag. Phase 9-15 AI 추천 모두 승인(사용자 요청, 화면만): [x] 대기·후보 있음 선택과 첫 후보 index, 확인·취소·순차 승인·진행 표시·버튼 비활성화; [x] 첫 실패에서 중단·기존 오류 안내, 응답별 표 갱신·후보 없는 항목 이름 표시; [x] JSX·한국어 인코딩·공통 항목 이름 참조 복구, 순수 선택·가짜 fetch 회귀 7개 포함 frontend 168개·TypeScript·대상 ESLint 통과; [x] Luna/opencode 독립 리뷰(제공된 9-11~9-22 리뷰, 확인 지적은 9-23에서 고침). 자동 게시 없음, 9-06 숫자 칸·ADR-097 시간 칸 게시 규칙·레거시 기준선 유지.
+4ah. Phase 9-16 공통 ontology v3 개설 연도 사용 중단(ADR-101, 사용자 결정): [x] retirement 계약·v1/v2 기록 호환; [x] 등록·검토·게시·값 힌트·모델 목록·QueryIR schema·챗봇에서 year 제외, 현재 runtime의 연도 질문 거절; [x] 관련 targeted 테스트·frontend·TypeScript 검증; [x] Luna/opencode 독립 리뷰(제공된 9-11~9-22 리뷰, 확인 지적은 9-23에서 고침). gold·fixture·dataset profile·레거시 기준선·학기는 유지. [결과와 평가 영향](phase9-16-retire-offering-year-results-2026-10-13.md).
+4ai. Phase 9-17 예약 DB ID와 목록 부분 실패(사용자 요청): [x] 새 PostgreSQL·SQLite 등록의 `legacy` 고정 입력 오류 거절·파일 생성 전 차단; [x] 양식 전송 전 안내·잘못된 개별 목록 항목만 제외와 경고, 최상위 계약·중복 ID 검사 유지; [x] 관련 backend 47개·frontend 29개·TypeScript·diff check 검증; [x] Luna/opencode 독립 리뷰(제공된 9-11~9-22 리뷰, 확인 지적은 9-23에서 고침). 저장된 `legacy`와 사용자 데이터·서버·레거시 기준선·기존 미커밋 작업 유지, 새 ADR 없음.
+4aj. Phase 9-18 PostgreSQL 등록 삭제(사용자 요청): [x] 엄격한 DELETE API·등록 lock·등록/profile 두 폴더만 삭제·symlink/junction 거절; [x] live context·값 reader·DB/등록 목록에서 재시작 없이 제거, 기존 예약 ID legacy 정리 허용·다른 등록/평가 기록 보존; [x] 정확한 ID 확인·목록 갱신·선택 DB 삭제 시 Legacy 기준선·열린 검토 닫기; [x] 관련 targeted backend 57 passed·3 skipped(Windows symlink 권한), frontend 17 passed·TypeScript·대상 ESLint·diff check 검증; [x] Luna/opencode 독립 리뷰(제공된 9-11~9-22 리뷰, 확인 지적은 9-23에서 고침). 사용자 서버·데이터와 기존 미커밋 작업 유지.
+4ak. Phase 9-20 다른 DB 값 사전 가져오기(사용자 결정): [x] 게시 등록·시작 profile 출처 목록, 대상 값 존재·편집 가능 항목·기존 별칭 검사, 별칭 합침·대상 뜻 유지·draft만 저장; [x] 출처 선택(자기 자신 제외)·공통 검토자·요약·사전 표 새로고침; [x] 관련 targeted backend 58개(실패한 기존 setup 2개 재실행 통과)·frontend 15개·TypeScript·대상 ESLint·diff check 검증; [x] Luna/opencode 독립 리뷰(제공된 9-11~9-22 리뷰, 확인 지적은 9-23에서 고침). 사용자 서버·데이터·레거시 기준선·기존 미커밋 작업 유지.
+4al. Phase 9-21 연결되지 않은 낱말 알림(사용자 결정, ADR-102): [x] 닫힌 낱말 연결 규칙·성공 응답만 최대 5개 알림, 기존 호출 수·조건·검증·거절 유지; [x] 선택 필드 parser·결과 위 안내; [x] 관련 targeted backend 245개·frontend 19개·TypeScript·대상 ESLint 검증; [x] 개발 30문항 고정 판정(q12: 아직·자리, 나머지 알림 없음)·한계 기록; [x] Luna/opencode 독립 리뷰(제공된 9-11~9-22 리뷰, 확인 지적은 9-23에서 고침). [결과](phase9-21-unmatched-word-notice-results-2026-10-13.md).
+4am. Phase 9-22 관리 창 스타일 통일·검토자 기억(2026-10-13 사용자 요청, frontend만): [x] 공용 버튼·입력·상자·표·상태 배지·메시지 스타일; [x] 앱 공통 localStorage 키와 읽기·쓰기 실패 허용, 하위 안내 클릭으로 맨 위 검토자 칸 스크롤·focus, 실제 비활성 조건의 title; [x] 관련 frontend 107개(새 회귀 6개 포함)·TypeScript·대상 ESLint 검증; [x] Luna/opencode 독립 리뷰(제공된 9-11~9-22 리뷰, 확인 지적은 9-23에서 고침); [ ] 화면 확인(Claude 담당). 전체 frontend 실행의 기존 registry parser 기대 불일치 6건은 이번 변경 밖이라 유지. API·동작·검증 규칙·레거시 기준선·기존 미커밋 작업 유지, 새 ADR·사람 관문 승인 없음.
+4an. Phase 9-24 ontology v3 전체 테스트 정리: [x] 오프라인 평가의 기록 버전 재현·미선언 v2; [x] 현재 v3 기대 갱신·stale AI year 제거·smoke·v2→v3 carry-over 고침; [x] 최종 회귀 검증·29건 분류표(1:13/2:9/3:7; 전체 실행 후 정확한 실패 재실행 통과); [ ] Luna/opencode 독립 리뷰(사용자 no-live-model 제약으로 대기).
 4z. Phase 9-08 챗봇 기본 모델을 일반 모델로, 모델 고르기(완료, ADR-098; 레거시 30문항 일반 23·학습 22, `other_school` 일반 10/12·학습 12/12, 개발 수치).
 4y. Phase 9-07 게시 막힘 항목·이유 한 번에 보이기(완료; 응답에 `reasons` 추가, 화면은 항목마다 한국어 한 줄).
 4x. Phase 9-06 리허설 문제 3 고침(완료, ADR-097 보완; 숫자 항목은 숫자 칸·검증된 변환일 때만 게시, 리허설 재실행 9/14·오류 0).
@@ -809,7 +836,7 @@ HarnessRequest
 
 ### Course Ontology와 규칙 기반 Schema Aligner 구현 상태
 
-`backend/adaptive/ontology/course-domain.yaml`에 1차 ontology를 정의했다. 현재 entity는 `Course`, `Department`, `Instructor`, `CourseOffering`, `Schedule`이며, 각 semantic field에 한국어 별칭, 물리 컬럼명 힌트, 자료형, 허용 연산자를 기록한다.
+`backend/adaptive/ontology/course-domain.yaml`에 공통 ontology를 정의했다. 현재 버전은 3이며 `CourseOffering.year`는 `retired_in_version: 3`으로 사용 중단한다(ADR-101, 사용자 결정). `since_version`·`retired_in_version`으로 버전별 활성 항목을 정하고 버전 1·2 기록과 학기는 유지한다. 현재 entity는 `Course`, `Department`, `Instructor`, `CourseOffering`, `Schedule`이며, 각 semantic field에 한국어 별칭, 물리 컬럼명 힌트, 자료형, 허용 연산자를 기록한다.
 
 `backend/adaptive/mapping`의 baseline aligner는 컬럼명 0.70, 자료형 호환성 0.20, 테이블명 0.10의 결정적 점수로 후보를 정렬한다. 각 후보는 구성 점수와 매칭 근거를 보존한다. 기본 상태 구분은 다음과 같다.
 
@@ -1163,6 +1190,22 @@ SQLite DB 입력
 5. ontology/Query IR/Compiler 기반 제안 시스템
 6. 필요 시 multi-schema fine-tuned 모델
 
+### 15.1.1 Phase 9-10 PostgreSQL 직접 SQL 비교 (ADR-100)
+
+2026-10-12 사용자 결정: 같은 등록 PostgreSQL DB에서 직접 SQL과 QueryIR을 비교한다. 직접 SQL은 등록 catalog(table·column·자료형·PK/FK·schema), column당 최대 10개 예시(값당 40자), 낮은 cardinality 글자 column의 실제 값 힌트를 받는다. 관리자 mapping·변환·값 사전(약어)은 쓰지 않는다. QueryIR은 기존 게시 mapping·값 사전·compiler 경로를 쓴다. 정확도와 함께 온보딩 비용이 다른 조건임을 명시한다.
+
+개발 질문은 레거시 30 + `other_school` q01~q12 12 + `rehearsal_school` 14 = 56개다. QueryIR 규칙을 맞춘 개발 질문이라 A(QueryIR) 쪽에 유리하다. 학교 간 일반화·제품 구조 판정 근거는 에이전트가 미리 보지 않은 팀원 DB 첫 실행이며 L1/L3 승인을 대신하지 않는다.
+
+평가 CLI: `python -m backend.adaptive.evaluation.direct_sql_pg run --set <legacy|other_school|blind:ID> --database ID --model general`. 같은 날 사용자 결정으로 OpenAI 측정 허용을 철회했다(추가 비용 없음; ChatGPT Plus는 API 사용량을 포함하지 않음). 비교는 로컬 `general`로만 하며 QueryIR arm은 `general`·`legacy-tuned`만 받는다. 9-08 other_school 실행의 재사용 가능한 CLI가 없어 `--arm queryir --base-url <loopback>`로 동일 채점과 지연 요약을 만든다. PostgreSQL AST 정책, READ ONLY executor·statement timeout·200행 상한, 질문당 한 모델 호출·재시도 없음을 적용한다. 원래 SQL 검사 뒤 `SELECT * FROM (<sql>) AS direct_sql_result LIMIT 200`으로 실행하고 원래 SQL hash를 유지한다. 200행도 SUCCEEDED·row_count=200·limit=200으로 기존 상한 채점에 넘긴다. 따옴표 없는 schema·table·CTE 이름은 소문자로 접고 따옴표 있는 이름은 그대로 비교한다. schema로 한정한 함수는 모두 거절하고, Anonymous 함수는 코드에 고정한 PostgreSQL 내장 함수 허용 목록만 받는다(typed 함수는 기존 금지 이름 검사 유지). wrapper는 원래 SQL 앞뒤에 줄바꿈을 두어 끝의 `--` 주석 밖에서 닫는다. 기존 SQLite arm과 제품은 유지한다.
+
+이 CLI의 legacy 거절 규칙은 `blind_eval`과 같고(`UNSUPPORTED`·`NOT_UNDERSTOOD`), 9-08 `legacy_chat_compare` 수치와 직접 비교하지 않는다.
+
+레거시 QueryIR의 profile과 기준 SQL 실행 연결을 따로 고를 때 `--reference-database p910-legacy`를 쓴다(질문은 `legacy-view`, 기준 SQL은 새로 등록한 public schema 연결).
+
+기록은 `.schema-adaptive/`에 코드·개수·sha256·시간만 저장한다(SQL·모델 원문·행 값·prompt·키 없음). blind는 기존 잠금 hash·run 번호를 공유하고 `arm: direct-sql`로 구분한다. arm 없는 과거 기록은 QueryIR로 읽고 report는 arm별로 보여 준다. 지표: 맞음, SUCCEEDED 조용한 오답, 생성 실패, 정책 거절, 실행 실패, UNKNOWN 거절의 맞음/틀림, 상한 도달, 질문별 elapsed_ms와 중앙값·p90. 기존 QueryIR blind/legacy 기록은 HTTP 왕복 elapsed_ms만 추가한다. blind 지연은 ask 반환 직후 채점 전에 재며, 응답에 elapsed_ms가 있으면 그 값을 쓴다.
+
+가짜 모델·reader·executor·전송으로 검증했고, 9-10c에서 제공된 Luna 리뷰의 지적 4건을 재현·고쳤다. live 측정은 2026-10-12 사용자 승인으로 테스트 서버 8124에서 한 번 수행했고 측정 뒤 종료했다. 로컬 `qwen2.5-coder:7b-instruct`(temperature 0)로 직접 SQL 17/56·QueryIR 42/56이며, other_school QueryIR 10/12는 9-08 기록을 재사용했다(응답 시간 없음). 레거시 QueryIR 26/30은 9-08의 정확 18·상한 부분 집합 5에 거절 정답 3을 더한 채점이다. [결과 문서](phase9-10-direct-sql-results-2026-10-12.md)에 조건·지표·실패 분류를 기록했다. 개발 질문·L1/L3 전 잠정치이며 사람 관문 승인 없음. 이번 문서 작업은 새 측정·모델 호출(Luna/opencode 포함)·서버 조작·테스트·commit 없이 제공된 결과만 기록한다. 사용자 서버 변경·레거시 DB 쓰기·새 등록 게시·관리자 작업 없음.
+
 ### 15.2 주요 지표
 
 - Execution Accuracy
@@ -1261,6 +1304,7 @@ SQLite DB 입력
 - 외부 모델 실험 시 민감 데이터 제거
   - 2026-10-12 사용자 결정(ADR-099): ChatGPT 선택지로 보내는 것은 질문, 공통 항목 목록, 값 힌트(질문 단어와 맞는 DB 값)다.
   - 물리 이름·DSN·DB 행은 보내지 않는다. API 키는 서버 안에서만 쓴다.
+- Phase 9-10 OpenAI 전송 예외는 같은 날 사용자 결정으로 철회했다(추가 API 비용 없음). OpenAI 측정과 직접 SQL OpenAI 경로를 제거한다. 제품 챗봇 ADR-099 범위는 그대로다.
 - 교수명 등 공개 데이터도 재배포 조건 확인 후 가명화 여부 결정
 - SQL, mapping version, reviewer, 실행 결과 감사 로그 유지
 
@@ -2429,7 +2473,40 @@ SQLite DB 입력
   - 보내지 않는 것: 물리 이름, DSN, DB 행.
 - 결과: 가짜 전송 테스트만 했다. 실제 호출과 비교 수치는 사용자가 키를 넣은 뒤 잰다.
 
+### ADR-100: 등록 PostgreSQL 직접 SQL 비교군을 평가 전용으로 추가한다
+
+- 날짜: 2026-10-12
+- 상태: 채택(사용자 결정, 지침 `docs/prompts/phase9-10-direct-sql-postgres.md`)
+- 사용자 결정 1~4: 9-10 진행; catalog + column별 예시 최대 10개/40자 + 실제 값 힌트; 결정 3은 같은 날 사용자가 철회: 추가 비용 없음(ChatGPT Plus는 API 사용량을 포함하지 않음). OpenAI 측정 제외, 직접 SQL OpenAI 경로 제거; 레거시 30·other_school 12·리허설 14 개발 질문 사용.
+- 결정: 별도 평가 모듈만 추가한다. 제품 HTTP·prototype·명확화·챗봇에서 import하지 않는다(ADR-048/049 유지). 기존 SQLite 직접 SQL, Legacy 기준선, ontology, 제품 QueryIR·API·화면을 보존한다.
+- 저장된 등록 loader·source identity를 재사용한다. sample=True 읽기를 정렬한 뒤 제한하고 숫자·날짜·시간도 포함한다. 낮은 cardinality 실제 글자 값에 ValueIndex 전체 값·단어 조각·가까운 철자 일치를 적용하며 관리자 값 사전은 사용하지 않는다. 이유: 직접 SQL 쪽의 "등록만" 비용을 재기 위함이다.
+- 모델: 로컬 `general`로만 비교한다. CLI 직접 SQL arm은 `general`만, QueryIR arm은 `general`·`legacy-tuned`만 허용한다. 질문당 한 호출·재시도 없음. 제품 ChatGPT 선택지는 ADR-099 그대로다.
+- SQL 정책: 한 SELECT/집합 SELECT, 등록 schema/catalog table 또는 자기 CTE만; 쓰기·DDL·SET·COPY·트랜잭션·위험 함수 금지. schema로 한정한 함수 호출은 모두 거절하며 Anonymous 함수는 고정 PostgreSQL 내장 허용 목록만 받는다(typed 함수는 기존 금지 이름 검사 유지). 따옴표 없는 schema·table·CTE 식별자는 소문자로 접고 따옴표 있는 이름은 그대로 비교한다. 원래 SQL 검사 뒤 200행 wrapper로 등록 연결 READ ONLY executor·timeout을 적용하고 원래 SQL hash를 유지한다. 200행도 SUCCEEDED·row_count=200·limit=200으로 기존 course_code/section 상한 채점기를 쓴다.
+- 기록: 원문·행 값·secret 없는 코드·개수·fingerprint·elapsed_ms, blind 잠금/번호 공유·arm 보고. 가짜 모델·전송 테스트와 9-10c에서 제공된 Luna 리뷰 지적 4건의 재현·수정을 거쳤다. CLI legacy 거절 채점은 blind_eval과 같은 DECLINE_STATUSES를 쓴다(legacy_chat_compare 자체 채점 유지). blind 지연은 채점 전 측정하고 응답 elapsed_ms가 있으면 우선한다. 사람 관문 승인 없음.
+- 결과(2026-10-12 사용자 승인, 한 번): 로컬 `qwen2.5-coder:7b-instruct`·temperature 0·질문당 한 호출. 직접 SQL / QueryIR은 레거시 10/30 / 26/30, other_school 5/12 / 10/12(9-08 재사용, 응답 시간 없음), 리허설 2/14 / 6/14, 합 17/56 / 42/56. 레거시 QueryIR 26은 9-08의 정확 18·상한 부분 집합 5 + 거절 정답 3이다. 테스트 서버 8124는 측정 뒤 종료, 사용자 서버는 건드리지 않음. 새 등록 `p910-legacy`·`p910-other`는 PENDING_REVIEW·미게시, 리허설은 기존 `rehearsal-school` 사용. [결과 문서](phase9-10-direct-sql-results-2026-10-12.md)에 전체 지표와 약 39건 실패 분류를 기록했다. 개발 질문·L1/L3 전 잠정치이며 적응성 근거·사람 관문 승인·제품 구조 결정이 아니다. 이번 문서 기록에서 새 모델 호출·테스트·서버 조작·commit 없음.
+
+### ADR-101: 공통 ontology v3에서 개설 연도를 사용 중단하고 과거 기록은 보존한다
+
+- 날짜: 2026-10-13
+- 상태: 채택(사용자 결정). 팀 공유 필요, 사람 관문 승인 없음.
+- 결정: 방법 A(사용 중단). 공통 ontology를 버전 3으로 올리고 `CourseOffering.year`에 `retired_in_version: 3`을 기록한다. 정의 삭제(B)는 하지 않는다. `CourseOffering.semester`와 다른 항목은 유지한다.
+- 이유: 사용자 판단으로 수강 강의를 개설 연도로 찾는 경우가 없다(레거시만 보고 내린 결론이 아님). 레거시 등록 AI가 개설 연도를 `cnu_courses.course_year`(실제 학년 1~5)에 연결해 연도 질문을 학년과 비교하는 조용한 오답 위험도 확인되었다.
+- A안을 고른 이유: v1/v2 게시 mapping·평가 gold·fixture·dataset profile을 수정하거나 폐기하지 않고 그대로 읽기 위해 정의와 버전별 항목 집합을 보존한다. 현재 활성 항목은 `since_version <= v` 및 (`retired_in_version` 없음 또는 `> v`)으로 정한다. ADR-085의 추가 전용 정책을 retirement 허용으로 보완한다.
+- 현재 동작: 새 규칙·AI 제안·검토 표·게시 검사·값 사전·확장 항목 대상·모델 항목 목록·QueryIR schema·값 힌트에서 year가 빠진다. 옛 mapping에 연결이 있어도 현재 runtime에서는 unsupported다. 연도 질문은 정보 없음, 모델이 다시 year를 생성하면 UNKNOWN_FIELD로 거절한다. SQLite 강의 목록 필수 projection은 14개이며 catalog DTO의 기존 year key는 null로 유지한다.
+- 평가(9-24 보완): 오프라인 평가는 기록 버전(`ontology.at_version(v)`, 미선언 기록은 v2)으로 재현한다. fixture gold·oracle·녹화 replay·capture targets·benchmark의 기존 정답과 수치는 유지한다. 실제 챗봇 HTTP 평가(`blind_eval` 등)는 현재 v3이며 P2-009·P2-028·P2-049·P2-063 및 variant v09·v19의 연도 질문을 다시 측정하면 거절 대상이다. gold·fixture·녹화·review_status는 수정하지 않는다. legacy_chat_compare q28은 원래 UNSUPPORTED_FIELD이며 정답 변화가 없다.
+- 검증·한계: fake model/reader/executor와 임시 디렉터리 targeted 테스트만 실행한다. live 모델·사용자 서버·사용자 .schema-adaptive 데이터·commit 없음. Luna/opencode review는 no-live-model 사용자 제약으로 대기한다.
+
+### ADR-102: 연결되지 않은 낱말은 답을 막지 않고 알린다
+
+- 날짜: 2026-10-13
+- 상태: 채택(사용자 결정), 사람 관문 승인 없음.
+- 이유: 값 사전 없는 DB에서 “컴융 전공 보여줘”의 컴융 조건을 모델이 조용히 버리고 전공 전체를 조회했다. 이해한 조건을 직접 읽어야만 조건 누락을 알아챌 수 있었다.
+- 결정: 성공 응답에서만 질문의 공백 단위 낱말을 닫힌 규칙으로 확인하고 연결되지 않은 2글자 이상 한글·영문 낱말을 `unmatched_terms` 최대 5개로 알린다. 조사·어미, 코드 상수 일반어, 공통·확장 항목과 엔터티 이름·별칭, 기존 값 힌트, QueryIR 조건 값·연산, 시간 규칙과 숫자·단위를 사용한다. 특정 DB 줄임말이나 특정 질문 예외를 코드에 넣지 않는다.
+- 동작: 화면 결과 위에 누락 낱말과 짧은 값 사전 안내를 표시한다. 알림만 추가하며 답을 막거나 조건을 만들지 않는다. 기존 outside-concept 거절·UNSUPPORTED·NOT_UNDERSTOOD·빈 결과 진단을 유지한다. 선택 필드 parser로 기존 응답도 허용한다. 레거시 8000 챗봇은 유지한다.
+- 경계·한계: 추가 모델 호출·DB 읽기 없이 기존 힌트와 검증·compiler·policy·executor 뒤의 조건을 재사용한다. 낱말 연결 여부는 조건 완전성이나 모델 정확도의 증명이 아니다. 값 힌트가 찾은 낱말은 조건이 빠져도 연결됨으로 본다(사용자 지침). 30문항 확인은 공개된 개발 질문의 reference SQL 기반 고정 조건으로만 수행한 잠정 결과이며 L1/L3 승인이나 미관측 학교 평가가 아니다. [결과](phase9-21-unmatched-word-notice-results-2026-10-13.md).
+
 ## 21. 변경 이력
+
 
 ### 2026-09-04
 
@@ -2714,3 +2791,42 @@ SQLite DB 입력
 - 2026-10-10 Phase 9-07 게시 막힘 항목·이유 한 번에 보이기(사용자 결정, 리허설 문제 6). `plan_publish`가 모든 검사를 끝까지 돌려 막힌 항목마다 이유(`BLOCK_REASONS` 10종)를 모으고, 값 사전 낡음도 같은 목록에 넣는다. 게시 거절 응답은 기존 `fields`를 그대로 두고 `reasons`(항목, 한국어 이름, 이유, 같은 칸이면 다른 항목)를 더했다. 런타임 검증 실패와 SQLite 경로는 그대로다. 화면(`mappingReview.ts`)은 `reasons`를 엄격히 읽어(알려진 코드만, 항목마다 하나) 항목마다 이유와 할 일을 한 줄씩 보이고, 세 패널의 오류 칸이 줄바꿈을 보인다. 리허설 학교 게시 한 번에 막힌 항목 넷(학점, 개설 연도, 종료 시간, 시작 시간)이 이유와 함께 나왔다(이전에는 게시 세 번). 화면(5174→8124)에서도 확인했다. `gpt-6-luna` high 지적 3건(낡은 값 사전이 다른 막힘을 가림, 모르는 이유 코드, 빠지거나 겹친 이유)을 고쳤다. 결과는 `docs/phase9-07-publish-block-reasons-results-2026-10-10.md`. 전체 pytest 2042개 통과·8 skip·611 subtests, frontend Node 139개·tsc·ESLint(src·tests/frontend)·vite build·compileall·diff check 통과
 - 2026-10-12 Phase 9-08 챗봇 기본 모델을 일반 모델로 바꾸고 모델 고르기(ADR-098, 사용자 결정). 원인: 레거시로 미세 조정한 모델이 리허설 학교의 "컴융·소웨 전공"을 없는 레거시 과목 코드로 바꿈(위험 3). 서버가 선택지를 정한다: `general`(기본, `CHAT_MODEL` 또는 `qwen2.5-coder:7b-instruct`, model template + QueryIR JSON schema `queryir-schema-v1` + prompt `query-ir-v3`), `legacy-tuned`(`OLLAMA_MODEL`, 요청 불변). `GET /api/adaptive/v1/chat/models`, 질문 요청의 선택 `model`(id만, 모르는 id 거절), 화면 "모델" 고르기, `blind_eval run --model <id>`(기록은 서버가 알려 준 모델). 8-13 값 힌트 고침을 넓혀 식별 항목(코드·분반)의 값이 힌트 하나와 같으면 옮긴다. 레거시 챗봇은 그대로. 잠정 수치: 레거시 30문항 일반 23·학습 22(학습 모델 답은 전후 같음), 리허설(사용자 등록) 6/14·6/14, `other_school` 10/12·12/12(일반 모델은 학과 약어에 약함). `gpt-6-luna` high 지적 5건: 3건 고침(조건 상한 6→12, 조회 항목 중복 금지, 평가 도구가 모델 목록을 못 읽으면 멈춤), 1건 재현 안 됨(JS 정규식), 1건 의도(모델 이름 표시). 결과는 `docs/phase9-08-chat-model-choice-results-2026-10-12.md`. 전체 pytest 2088개 통과·8 skip·611 subtests, frontend Node 147개·tsc·ESLint(src·tests/frontend)·vite build·compileall·diff check 통과
 - 2026-10-12 Phase 9-09 챗봇 모델 선택지에 ChatGPT API 추가(ADR-099, 사용자 결정: 기본 `gpt-5-mini`, 값 힌트 전송, Legacy 기준선 그대로). `harness/openai_chat.py` `OpenAIQueryModel`: 질문당 Chat Completions 한 번, prompt `query-ir-v3`·값 힌트·QueryIR schema(non-strict), 고정 HTTPS 주소·proxy/redirect 없음·응답 상한, `finish_reason == "stop"`만 답, 실패는 고정 코드. `OPENAI_API_KEY`가 있을 때만 선택지 `openai`(맨 뒤, 기본은 그대로 일반 모델). 키는 요청 header에만 쓰고 화면·상태 줄·오류·repr·평가 기록에 나가지 않는다. 명확화 흐름은 로컬 Ollama. 화면의 모델 실패 안내에 ChatGPT 키·한도를 더했다. `gpt-6-luna` high 지적 3건(시작 설정 repr의 키, `__context__`에 남는 원래 예외, `finish_reason` 미확인) 모두 고침. 실제 호출 측정은 사용자가 키를 넣은 뒤. 결과는 `docs/phase9-09-openai-chat-model-results-2026-10-12.md`. 전체 pytest 2116개 통과·8 skip·611 subtests, frontend Node 148개·tsc·ESLint·vite build·compileall·diff check 통과
+
+- 2026-10-12 Phase 9-10 등록 PostgreSQL 직접 SQL 평가군 추가(ADR-100, 사용자 결정). catalog·10개/40자 예시·실제 값 힌트(관리자 값 사전 없음), PostgreSQL SQL 정책·read-only executor, general/OpenAI 한 호출, 기존 세 채점기, 비노출 private 기록·blind 잠금/번호/arm 보고, QueryIR HTTP elapsed_ms와 other_school 12문항 비교 CLI. 제품·Legacy·SQLite arm 유지. 지정 targeted 테스트만 실행; 전체 pytest·live 모델·서버 변경·commit 없음. live 측정은 사용자 승인 뒤 한 번, Luna/opencode 독립 리뷰는 no-live-model 제약으로 대기. 사람 관문 미승인.
+
+  - Phase 9-10 검증: 지정된 6개 파일의 targeted pytest 234 passed·2 skipped(기존 Windows link 권한 skip). 새 테스트는 fake reader/model/executor/transport만 사용했다. Windows sandbox의 Python 3.13 mode=0700 임시 디렉터리 ACL 제한을 피해 테스트에만 tempfile을 private workspace로 옮기고 그 아래 mkdir만 mode=0777로 실행했다. 기존 SQLite CLI 테스트의 간헐 실패는 report 게시 os.rename의 PermissionError로 재현했다. 테스트 임시 경로 안에서만 해당 오류를 최대 20번(50ms 간격) 재시도한 최종 실행은 전건 통과했다. 제품 권한 처리·SQLite arm은 변경하지 않는다. 전체 pytest·live 모델·opencode·서버 조작 없음.
+
+- 2026-10-12 Phase 9-10b 검토 보완(사용자 지침 `docs/prompts/phase9-10b-review-fixes.md`). 같은 날 사용자 결정으로 OpenAI 평가 허용을 철회하고 직접 SQL OpenAI 모델·분기·테스트를 제거했다(추가 API 비용 없음; 제품 ADR-099 유지). CLI arm별 모델 제한, 원래 SQL 검사 뒤 200행 wrapper 실행·원래 SQL hash 유지, PostgreSQL schema/table/CTE 식별자 대소문자 규칙을 고쳤다. 지정 targeted 파일만 검증하며 live 모델·서버 조작·commit 없음. Luna/opencode는 no-live-model 제약으로 대기, 사람 관문 승인 없음.
+  - 검증: 지정된 6개 파일(`test_direct_sql_pg`, `test_direct_sql_arm`, `test_arm_live_cli`, `test_blind_eval`, `test_legacy_chat_compare`, `test_openai_chat_model`) targeted pytest 243 passed·2 skipped(기존 Windows link 권한 skip). pytest plugin 자동 로딩을 끄고 테스트에만 private workspace 임시 경로 아래 mkdir mode=0777을 적용했다(기존 Windows sandbox ACL 제한 우회). 초기 기본 실행은 출력 없이 중단했고, 우회 후 새 회귀 테스트의 gold codes 150개 상한을 맞춘 뒤 최종 6개 파일이 통과했다. 제품 권한 처리 변경 없음.
+
+- 2026-10-12 9-10c Luna 지적 4건 고침: schema 한정·미허용 Anonymous 함수 거절, 끝 주석을 보존하는 줄바꿈 wrapper, CLI legacy의 blind_eval 공통 거절 채점, 채점 전 blind 지연 측정·응답 elapsed_ms 우선. 각 회귀 테스트로 재현·검증, 제공된 Luna 리뷰 로드맵 완료. 지정 3개 파일(test_direct_sql_pg·test_blind_eval·test_legacy_chat_compare) targeted pytest 155 passed·1 skipped(기존 Windows link 권한 skip). 테스트에만 tempfile을 private workspace로 옮기고 그 아래 mkdir mode=0777을 적용했다(Windows sandbox ACL 제한 우회; 제품 권한 처리 유지). 새 live 모델 호출·서버 조작·commit 없음.
+
+- 2026-10-12 Phase 9-10 측정 결과 기록(사용자 지침 docs/prompts/phase9-10d-results-doc.md, 문서만). 사용자 승인으로 한 번 측정한 로컬 qwen2.5-coder:7b-instruct·temperature 0·질문당 한 호출 결과를 docs/phase9-10-direct-sql-results-2026-10-12.md에 기록했다. 직접 SQL / QueryIR: 레거시 10/30 / 26/30, other_school 5/12 / 10/12(9-08 재사용·응답 시간 없음), 리허설 2/14 / 6/14, 합 17/56 / 42/56. 레거시 QueryIR 26은 정확 18·상한 부분 집합 5·거절 정답 3이다. Claude가 제공한 측정 요약과 실패 재생성 분류를 기록했으며 분류 개수는 대략적인 값이다. ADR-100·15.1.1(--reference-database)·로드맵 live 측정 완료·사람 관문 메모·인수인계를 갱신했다. 테스트 서버 8124는 측정 뒤 종료, 사용자 서버 변경 없음; p910-legacy·p910-other는 PENDING_REVIEW·미게시. 개발 질문·L1/L3 전 잠정치, 적응성 근거·사람 관문 승인·제품 구조 결정 없음. 이번 작업은 코드 변경·새 측정·모델 호출(Luna/opencode 포함)·서버 조작·테스트·commit 없이 문서만 갱신했다.
+- 2026-10-12 Phase 9-11 게시된 PostgreSQL 등록의 "mapping 검토 시작" 형식 오류 고침(사용자 지침 `docs/prompts/phase9-11-published-review-contract.md`, `docs/prompts/phase9-11b-activatable.md`로 보완). review GET·INIT의 마이크로초 `published_at`만 초 단위 UTC `Z`로 정규화하고 저장 파일·저장 형식은 유지한다. 최초 미커밋 구현의 `activatable: True`는 SQLite 저장소만 읽는 회귀 확인 버튼을 노출하므로 원래 `False`로 되돌렸다. 화면 parser는 활성·`activatable: false`를 허용하고 다른 검사는 유지하며, 실행 불가 문구는 비활성 버전에만 표시한다. 활성 PostgreSQL 버전은 실행 중으로 보이고 회귀 확인·되돌리기 버튼은 숨긴다. SQLite 응답·동작과 PostgreSQL ACTIVATE 미지원은 유지한다. 최초 검증은 PostgreSQL 34 passed·frontend 22 passed였고, 보완 후 targeted 결과는 아래 9-11b 항목에 기록한다. 사용자 서버·사용자 `.schema-adaptive` 데이터 변경·live 모델 호출·commit·`backend/.env` 값 출력 없음. Luna/opencode 독립 리뷰는 사용자 no-live-model 제약으로 대기; 기존 기능 지원 범위 안의 계약 보완이라 새 ADR 없음.
+
+- 2026-10-12 Phase 9-11b targeted 검증: `test_postgres_registration.py` 34 passed; 기존 SQLite `test_mapping_version_rollback.py`는 첫 실행 24 passed·3 failed(이력 검사 전 fixture 업로드에서 `SQLITE_UPLOAD_INTERNAL_ERROR`), 실패한 3개만 코드 변경 없이 재실행하여 3 passed. 원인 오류를 포착하기 위한 임시 rename 진단도 재실행에서 오류를 재현하지 못했으므로 제품 코드는 추가 변경하지 않았다. frontend review·version history·9-11 계약 3개 파일 23 passed; diff check 통과. `.tmp-phase9-11-tests`는 이미 없음을 확인했고 임시 경로는 기존 git-ignored `.venv/phase9-11b-tests`에 두었다. 기본 `.pytest_cache` 임시 경로 생성은 Windows 접근 오류로 실패하여 `.venv`로 옮겼으며, 테스트 프로세스에서만 임시 경로 아래 mkdir mode=0777·tempfile 경로 지정·pytest plugin 자동 로딩 및 cacheprovider 비활성화를 적용했다. Node는 `--test-isolation=none`으로 실행했다. 사용자 서버·사용자 데이터·live 모델 호출·commit·환경 값 출력 없음; Luna/opencode 독립 리뷰는 사용자 제약으로 대기.
+
+- 2026-10-12 Phase 9-12 사용자 요청(`docs/prompts/phase9-12-db-admin-layout.md`): DB 변경 창을 크게 하고 사용할 DB/DB 등록/검토·게시로 나눴다. PostgreSQL 등록 양식·목록은 2열·표, 검토는 항목 연결 표와 접는 선택 도구, 게시 막힘 이유는 게시 영역에 한 줄씩 표시한다. SQLite 등록은 기타 접힌 영역에 보존했다. 배치·문구만 변경했고 기존 스타일 맞추기는 다음 단계다. API·계약·규칙·챗봇·adaptive-prototype 페이지·레거시 기준선과 기존 미커밋 작업 유지, 새 ADR·사람 관문 승인 없음. `npx tsc -b`와 frontend Node 152개 통과; 기본 `npm run lint`는 기존 임시·private 데이터 폴더 접근 EPERM으로 중단, `npx eslint src tests/frontend` 및 `.pytest_cache`·`.venv`·`.schema-adaptive`를 제외한 `npm run lint` 통과; 기본 `npx vite build`는 config 로딩 spawn EPERM으로 중단, `npx vite build --configLoader native` 통과; diff check 통과. 서버 조작·live 모델 호출·commit·환경 값 출력 없음. Luna/opencode 리뷰는 사용자 제약으로 대기하며 화면 확인은 Claude가 별도로 한다.
+- 2026-10-13 Phase 9-13 사용자 결정 B(`docs/prompts/phase9-13-postgres-test-queries.md`): PostgreSQL 등록의 고정 시험 질의·hash 기준 저장·현재 버전만 회귀 확인을 기존 검증된 챗봇 실행 경로로 추가하고, 없는 항목 표시와 활성 버전 `activatable: True`를 반영했다. 관련 backend 3개 파일 최초 48 passed·2 failed(SQLite upload setup `SQLITE_UPLOAD_INTERNAL_ERROR`), 실패 2개 targeted 재실행 통과·추가 preview/Decimal/검토자 테스트 1 passed로 총 51개 통과; frontend 4개 파일 24 passed, TypeScript·대상 ESLint·diff check 통과. Windows sandbox에서 테스트 프로세스에만 tempfile 경로를 새 `.venv` 임시 디렉터리로 지정하고 그 아래 `os.mkdir` mode=0777 적용; 마지막 setup 재실행의 임시 경로 한정 rename 재시도 진단은 실제 retry 0회로 통과, upload 오류 원인은 확정하지 않았으며 제품 권한 처리는 변경하지 않았다. 기존 SQLite·레거시·미커밋 작업 유지; 사용자 서버·데이터 변경, live 모델 호출, commit, 환경 값·DSN 출력 없음. Luna/opencode 리뷰는 사용자 no-live-model 제약으로 대기, 사람 관문 승인 없음.
+
+- 2026-10-13 Phase 9-14 사용자 지침(`docs/prompts/phase9-14-review-row-cleanup.md`): 검토·게시의 항목 연결 표를 한 줄씩 펼치는 동작으로 정리하고, 다른 칸 편집 드롭다운이 현재 연결 대신 첫 테이블·칸(dept.college)을 고르던 결함을 현재 연결 → 추천 → 빈 선택 기본값으로 고쳤다. 검토자 한 번 입력을 값 사전·확장 항목·시험 질의 기준 저장·게시에서 공유하고 설명·게시 안내를 정리했다. frontend 161개(새 회귀 7개)·tsc·대상 ESLint·diff check 통과; 기본 vite build는 Windows spawn EPERM으로 실패, --configLoader native 통과. API·계약·검증 규칙·레거시·기존 미커밋 작업 유지, 새 ADR·사람 관문 승인 없음. 서버·사용자 데이터 조작, live 모델 호출, commit, backend/.env 값 출력 없음; Luna/opencode 독립 리뷰는 사용자 no-live-model 제약으로 대기, 화면 확인은 Claude가 한다.
+
+- 2026-10-13 Phase 9-15 사용자 요청(`docs/prompts/phase9-15-bulk-approve.md`): 화면만 AI 추천 모두 승인 추가, 대기·후보 있음 항목의 첫 후보를 확인 후 순차 APPROVE하고 진행 중 버튼 비활성화·응답별 표 갱신·첫 실패 중단·후보 없는 항목 이름 안내. 중단된 구현의 JSX·한국어 문자열·항목 이름 참조를 복구하고 UTF-8로 저장했다. 순수 선택·가짜 fetch 회귀 7개 포함 frontend 168개, npx tsc -b·관련 ESLint 통과. 자동 게시 없음, 9-06 숫자 칸·ADR-097 시간 칸 게시 규칙·레거시·기존 미커밋 작업 유지; 서버·사용자 데이터 조작·live 모델 호출·commit·backend/.env 값 출력 없음. Luna/opencode 독립 리뷰는 사용자 no-live-model 제약으로 대기, 새 ADR·사람 관문 승인 없음.
+
+- 2026-10-13 Phase 9-16 사용자 결정(`docs/prompts/phase9-16-retire-offering-year.md`): 공통 ontology v3의 CourseOffering.year를 정의 삭제 없이 사용 중단했다(ADR-101). v1/v2 기록·gold·fixture·dataset profile·학기·레거시 기준선은 보존하고 현재 등록·검토·게시·모델 목록·schema·값 힌트·챗봇에서는 제외한다. 기존 게시 mapping의 year도 현재 runtime에서 unsupported, q28 거절 유지. 현재 평가 영향 6문항과 targeted 검증 결과는 `docs/phase9-16-retire-offering-year-results-2026-10-13.md`. 사용자 서버·사용자 데이터·live 모델·commit·backend/.env 값 출력 없음. Luna/opencode 독립 리뷰는 사용자 제약으로 대기, 사람 관문 승인 없음.
+
+- 2026-10-13 Phase 9-17 사용자 지침(`docs/prompts/phase9-17-reserved-database-id.md`): 새 PostgreSQL·SQLite 등록에서 예약 선택 ID `legacy`를 파일 생성 전 기존 고정 입력 오류 코드로 거절하고 화면 전송 전 시스템 이름 안내를 추가했다. 목록은 예약 ID·잘못된 개별 항목만 제외해 나머지와 한 줄 경고를 표시하며 최상위 계약·중복 ID 검사는 유지한다. 관련 targeted backend 47 passed·frontend 29 passed, npx tsc -b·diff check 통과. 최초 기본 backend 실행은 출력 없이 중단했고 테스트 프로세스에서만 tempfile 경로를 새 `.venv` 임시 디렉터리로 지정하고 그 아래 mkdir mode=0777을 적용해 전건 통과했다(Windows sandbox ACL 우회; 제품 권한 처리 유지). 저장된 `legacy`·사용자 `.schema-adaptive` 데이터·서버·레거시 기준선·기존 미커밋 작업 유지; live 모델 호출·commit·backend/.env 값 출력 없음. Luna/opencode 독립 리뷰는 사용자 no-live-model 제약으로 대기, 기존 계약 내 오류 처리 보완으로 새 ADR·사람 관문 승인 없음.
+
+- 2026-10-13 Phase 9-18 사용자 요청(`docs/prompts/phase9-18-delete-registration.md`): PostgreSQL 등록만 엄격한 DELETE API·등록 lock·검증된 private 경로로 등록/profile 두 폴더에서 삭제하고 live context·값 reader·목록에서 즉시 제거한다. 저장된 legacy 정리 허용, profile 전용·합성·SQLite 등록 거절, symlink·Windows junction 차단, 평가 기록은 남김. 화면은 정확한 ID 확인·성공 후 목록 갱신·선택 DB의 Legacy 기준선 복귀·열린 검토 닫기를 추가했다. 관련 targeted backend는 최초 53 passed·3 skipped·기존 등록 setup 1 failed, 실패 항목과 갱신한 삭제 테스트만 재실행하여 19 passed·3 skipped로 전체 57개 통과 확인(Windows junction 3개 통과, symlink 3개는 권한 skip); frontend 17 passed·npx tsc -b·대상 ESLint·diff check 통과. 테스트 프로세스에서만 새 .venv 임시 경로·그 아래 mkdir mode=0777·pytest plugin/cache 비활성화를 적용했으며, setup 재실행은 제품 변경 없이 통과해 원인을 확정하지 않았다. 사용자 서버·사용자 .schema-adaptive 데이터·기존 미커밋 작업 유지, live 모델 호출·commit·backend/.env 값 출력 없음. Luna/opencode 독립 리뷰는 사용자 no-live-model 제약으로 대기; 기존 관리자 등록 생명주기 안의 요청 구현으로 새 ADR·사람 관문 승인 없음.
+
+- 2026-10-13 Phase 9-19 사용자 지침(`docs/prompts/phase9-19-database-id-message.md`): PostgreSQL·SQLite 등록의 ID·표시 이름 검증을 입력 오류로 구분하고 ID 규칙 상시 안내·즉시 오류 표시·잘못된 ID의 등록 비활성화를 추가했다. 예약 ID·실제 응답 형식 오류 문구는 유지. 관련 frontend 4개 파일 29 passed·npx tsc -b·diff check 통과. UTF-8 저장, 기존 미커밋 작업 유지; 서버·사용자 데이터 변경·live 모델 호출·commit 없음. Luna/opencode 독립 리뷰는 사용자 no-live-model 제약으로 대기.
+
+- 2026-10-13 Phase 9-20 사용자 결정(docs/prompts/phase9-20-copy-dictionaries.md): 게시된 PostgreSQL 등록·시작 legacy profile의 값 사전 출처 목록과 COPY API, 대상 저장 값 존재·편집 가능 항목·별칭 검증, 별칭 합침·대상 뜻 유지·편집 중 사전만 저장, 화면 출처 선택·공통 검토자·요약·표 새로고침을 구현했다. 관련 targeted backend 58개 통과(첫 56개 실행 54 passed·기존 mapping 검토 setup 2 failed, 실패한 2개만 재실행 2 passed; 추가 pending mapping·게시 target 보존 2 passed), frontend 15 passed·npx tsc -b·대상 ESLint·diff check·7개 파일 UTF-8 확인 통과. 추가 2개 테스트도 첫 임시 등록 setup에서 실패한 뒤 새 임시 경로 재실행으로 통과했으며 원인은 확정하지 않고 제품 권한 처리는 변경하지 않았다. 테스트에만 .venv 아래 임시 경로·mkdir mode=0777을 적용했다. 기존 미커밋 작업·레거시 기준선 유지, 사용자 서버·사용자 데이터 변경·live 모델 호출·commit·backend/.env 값 출력 없음. Luna/opencode 독립 리뷰는 사용자 no-live-model 제약으로 대기, 새 ADR·사람 관문 승인 없음.
+
+- 2026-10-13 Phase 9-21 사용자 결정(`docs/prompts/phase9-21-unmatched-word-notice.md`, ADR-102): 성공 답에만 닫힌 낱말 연결 규칙으로 `unmatched_terms` 최대 5개·결과 위 값 사전 안내를 추가했다. 호출 수·조건·검증·compiler·policy·executor·outside-concept 거절·빈 결과 진단·레거시와 Phase 9-20 포함 기존 미커밋 작업 유지. 관련 backend 기존 198개·새 테스트 최종 47개로 총 245개 통과(최초 새 테스트 기대 오류 3개 수정), frontend 19 passed·TypeScript·대상 ESLint·diff check·8개 파일 UTF-8 검증 통과. 개발 30문항 reference SQL 기반 고정 조건에서 q12만 아직·자리 알림, 나머지 29개는 없음(5개 거절 포함). [잠정 결과와 한계](phase9-21-unmatched-word-notice-results-2026-10-13.md). 테스트 프로세스만 새 `.venv` 임시 경로·mkdir mode=0777 적용, 출력 없이 지연된 기본 pytest·collect-only 테스트 세션만 종료. 사용자 서버·사용자 데이터 접근/변경·live 모델 호출·commit·환경 값 출력 없음. Luna/opencode 독립 리뷰는 사용자 no-live-model 제약으로 대기, 사람 관문 승인 없음.
+
+- 2026-10-13 Phase 9-22 사용자 요청(`docs/prompts/phase9-22-admin-style.md`): 관리 창 스타일 통일·검토자 기억과 클릭 가능한 검토자 안내·비활성 사유를 frontend에만 추가했다. 관련 frontend 107 passed(새 회귀 6개), `npx tsc -b`·관련 ESLint 통과; 전체 frontend에서 기존 registry parser의 부분 실패 정책과 오래된 기대가 다른 6건은 수정하지 않았다. API·검증·기존 미커밋 작업 유지, 서버·사용자 데이터 조작·live 모델 호출·commit 없음; Luna/opencode 리뷰는 사용자 제약으로 대기, 화면 확인은 Claude 담당.
+
+- 2026-10-13 Phase 9-23 Luna 지적 4건 고침 + reference-database 테스트: 등록 삭제의 값 힌트 cache 제거, Python 3.10/3.11 junction 호환, 사용 중단 필드 검토 변경 거절, 일반 요청 어미 알림 제외를 회귀 검증했다(targeted 6개 파일 총 266 passed·3 skipped·7 subtests passed; 최초 임시 등록/검토 쓰기 실패 2건과 새 호환 테스트 모사 오류는 targeted 재실행 통과, 개발 30문항 고정 판정 유지). 제공된 9-11~9-22 Luna 리뷰 완료 반영; 새 live 모델 호출·사용자 서버·사용자 데이터 변경·commit 없음.
+
+- 2026-10-13 Phase 9-24 사용자 지침(`docs/prompts/phase9-24-v3-fallout.md`): 오프라인 평가·gold/녹화 replay·capture·benchmark는 선언 버전(미선언 v2)으로 재현하며 ADR-101·9-16 평가 영향 절을 보완했다. stale AI year만 제거, 현재 smoke의 year 의존 제거, v2→v3 비교/이월 필터와 회귀 검증, v3 테스트 기대를 정리했다. 원문 목록의 26건에 누락된 fixture 3 subtest를 더한 29건 분류는 1:13/2:9/3:7. 전체 pytest 한 번은 2341 passed·11 skipped·9 failed·608 subtests passed(34분 6초); 남은 역사적 fixture 3 subtest의 v2 생성 인자를 고친 뒤 해당 전체 파일과 검토 setup 500 6건을 정확히 재실행하여 10 passed·12 subtests passed로 전건 통과 확인. setup 오류는 재현되지 않아 제품 저장 정책 변경 없음. 관련 frontend 56개·TypeScript·UTF-8·diff check 통과, workspace basetemp/보조 파일 삭제. 결과와 변경 파일은 `docs/phase9-16-retire-offering-year-results-2026-10-13.md`의 9-24 절. 기존 미커밋 변경·현재 runtime v3·레거시·gold/fixture/녹화 유지, 사용자 서버/데이터 변경·live 모델·commit·환경 값 출력 없음. Luna/opencode 리뷰는 사용자 제약으로 대기, 사람 관문 승인 없음.

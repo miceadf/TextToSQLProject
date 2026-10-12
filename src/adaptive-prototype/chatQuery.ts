@@ -82,6 +82,7 @@ export type ChatQueryAnswer =
       extensions?: { key: string; label: string }[];
       // Phase 8-20: only on an empty result, when a condition's value is not in the DB.
       unmatched?: ChatUnmatched[];
+      unmatchedTerms?: string[];
     }
   | { status: 'UNSUPPORTED'; unsupported: ChatUnsupported[] }
   | { status: 'NOT_UNDERSTOOD'; failureCode: string };
@@ -196,12 +197,18 @@ export function parseChatQueryResponse(value: unknown, databaseId: string): Chat
     const hasSql = Object.prototype.hasOwnProperty.call(value, 'sql');
     const hasExtensions = Object.prototype.hasOwnProperty.call(value, 'extensions');
     const hasUnmatched = Object.prototype.hasOwnProperty.call(value, 'unmatched');
+    const hasTerms = Object.prototype.hasOwnProperty.call(value, 'unmatched_terms');
     const optional = [
       ...(hasSql ? ['sql'] : []),
       ...(hasExtensions ? ['extensions'] : []),
       ...(hasUnmatched ? ['unmatched'] : []),
+      ...(hasTerms ? ['unmatched_terms'] : []),
     ];
     if (!hasExactKeys(value, [...keys, ...optional])) return null;
+    const terms = value['unmatched_terms'];
+    if (hasTerms && (!Array.isArray(terms) || terms.length === 0 || terms.length > 5 ||
+      !terms.every((term) => typeof term === 'string' && term.length <= MAX_CHAT_QUESTION_LENGTH && /^[가-힣A-Za-z]{2,}$/.test(term)) ||
+      new Set(terms).size !== terms.length)) return null;
     const unmatched = hasUnmatched ? parseUnmatched(value['unmatched']) : [];
     if (unmatched === null || (hasUnmatched && value['row_count'] !== 0)) return null;
     const sql = value['sql'];
@@ -236,6 +243,7 @@ export function parseChatQueryResponse(value: unknown, databaseId: string): Chat
     if (hasSql) answer.sql = sql as string;
     if (hasExtensions) answer.extensions = extensions;
     if (hasUnmatched) answer.unmatched = unmatched;
+    if (hasTerms) answer.unmatchedTerms = terms as string[];
     return answer;
   }
   if (status === 'UNSUPPORTED') {
@@ -447,6 +455,11 @@ export function describeUnmatched(unmatched: readonly ChatUnmatched[]): string {
   if (unmatched.length === 0) return '';
   const parts = unmatched.map((item) => `${item.label}에서 '${String(item.value)}'`).join(', ');
   return `${parts} 값을 찾지 못했습니다. 이 DB에 없는 정보이거나 다른 항목으로 잘못 이해했을 수 있습니다.`;
+}
+
+export function describeUnmatchedTerms(terms: readonly string[]): string {
+  if (terms.length === 0) return '';
+  return `${terms.map((term) => `‘${term}’`).join(', ')}을(를) 이해하지 못해 조건에서 뺐습니다. 값 사전에 줄임말을 넣으면 알아들을 수 있습니다.`;
 }
 
 export function describeAnswer(answer: ChatQueryAnswer): string {

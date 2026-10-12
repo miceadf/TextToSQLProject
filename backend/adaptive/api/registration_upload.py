@@ -30,6 +30,7 @@ from starlette.concurrency import run_in_threadpool
 from ..mapping.ai_proposal import is_ai_candidate
 from ..registration import MAX_SOURCE_BYTES, REGISTRATION_STATUS
 from ..registration.errors import RegistrationError, RegistrationErrorCode
+from ..registration.storage import RESERVED_SELECTION_DATABASE_IDS
 
 
 # v2 (Phase 8-12): ``mapping.proposer`` and the ``AI_PROPOSAL`` reason signal.
@@ -285,6 +286,8 @@ def register_sqlite_upload_routes(
             if params is None or set(params) != {"database_id", "label"}:
                 return _error_response(SqliteUploadErrorCode.INVALID_REQUEST.value)
             database_id = params["database_id"]
+            if database_id in RESERVED_SELECTION_DATABASE_IDS:
+                return _error_response(SqliteUploadErrorCode.INVALID_REQUEST.value)
             label = params["label"]
             if not isinstance(database_id, str) or not database_id:
                 return _error_response(SqliteUploadErrorCode.INVALID_REQUEST.value)

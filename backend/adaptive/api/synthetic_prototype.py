@@ -665,6 +665,10 @@ def create_synthetic_clarification_prototype(
                 value_reader = PostgresDistinctValueReader(
                     reader_configs, connector=options.get("connector")
                 )
+        from .value_hints import ChatValueIndexes
+        from ..ontology import load_default_ontology
+
+        value_indexes = None if value_reader is None else ChatValueIndexes(value_reader, load_default_ontology())
         postgres_service = None
         if postgres_sources is not None:
             try:
@@ -683,6 +687,7 @@ def create_synthetic_clarification_prototype(
                     max_databases=int(MAX_DATABASES),
                     expected_ontology_version=_expected_ontology_version,
                     value_reader=value_reader,
+                    value_indexes=value_indexes,
                     mapping_proposer=None if mapping_model is None else _upload_proposer(mapping_model),
                     alias_model=mapping_model,
                     adapter_factory=options.get("adapter_factory"),
@@ -706,6 +711,7 @@ def create_synthetic_clarification_prototype(
                 model=ollama_model if chat_choices is None else None,
                 models=chat_choices,
                 value_reader=value_reader,
+                value_indexes=value_indexes,
                 show_sql=show_chat_sql is True,
             )
         except Exception:

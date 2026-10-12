@@ -148,6 +148,10 @@ def test_ai_choice_is_first_with_rule_score_and_ai_evidence(tmp_path: Path) -> N
     assert model.prompts[0].startswith("Prompt version: ai-mapping-v3/columns")  # Phase 8-23
     table = next(t for t in catalog.tables if t.name == "lect")
     for field, ref in CORRECT.items():
+        # ADR-101: stale AI year choices are discarded, other choices survive.
+        if field in ontology.retired_fields:
+            assert field not in proposal.candidates
+            continue
         first = proposal.candidates[field][0]
         assert f"{first.table}.{first.column}" == ref
         assert is_ai_candidate(first)

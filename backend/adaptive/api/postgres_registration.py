@@ -12,8 +12,10 @@ is listed and answerable without a restart. DSNs never leave the server.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -31,6 +33,8 @@ SOURCES_PATH = "/api/adaptive/v1/postgres/sources"
 SCHEMAS_PATH = "/api/adaptive/v1/postgres/schemas"
 REGISTER_PATH = "/api/adaptive/v1/postgres/registrations"
 DICTIONARIES_PATH = "/api/adaptive/v1/postgres/dictionaries"
+DICTIONARY_SOURCES_PATH = DICTIONARIES_PATH + "/sources"
+DICTIONARY_COPY_VERSION = "postgres-dictionary-copy-v1"
 # Phase 8-19: this database's extension fields.
 EXTENSIONS_PATH = "/api/adaptive/v1/postgres/extensions"
 EXTENSIONS_VERSION = "postgres-extensions-v1"
@@ -96,6 +100,7 @@ class PostgresRegistrationService:
         expected_ontology_version: int,
         max_databases: int = 8,
         value_reader: Any | None = None,
+        value_indexes: Any | None = None,
         mapping_proposer: Callable[..., Any] | None = None,
         alias_model: Callable[[str, dict[str, Any]], Any] | None = None,
         adapter_factory: Callable[[str, Any], Any] | None = None,
@@ -109,6 +114,7 @@ class PostgresRegistrationService:
         self._max_databases = int(max_databases)
         self._ontology_version = int(expected_ontology_version)
         self._reader = value_reader
+        self._value_indexes = value_indexes
         self._proposer = mapping_proposer
         self._alias_model = alias_model
         self._adapter_factory = adapter_factory
@@ -120,6 +126,78 @@ class PostgresRegistrationService:
 
     def handles(self, root: Path, database_id: Any) -> bool:
         return isinstance(database_id, str) and pg.registration_exists(root, database_id)
+
+    def test_query_context(self, root: Path, database_id: str) -> Any:
+        """Pin fixed queries to the persisted current profile and chat's validated context."""
+        from .admin_test_queries import AdminTestQueryError, AdminTestQueryErrorCode
+        from .postgres_startup_profile import _parse_profile_payload, _parse_mapping_profile
+        from ..ontology import load_default_ontology
+
+        try:
+            loaded = pg.load_postgres_registration(repository_root=root, database_id=database_id)
+            published = pg.load_published(repository_root=root, database_id=database_id)
+            context = self._live.get(database_id)
+            if published is None or context is None:
+                raise ValueError()
+            directory = pg._private_dir(root, pg.PROFILE_ROOT, database_id)[1]
+            raw = pg._read(directory / "mapping.json")
+            mapping = _parse_mapping_profile(raw, expected_id=database_id)
+            profile = _parse_profile_payload(pg._read(directory / "profile.json"), expected_id=database_id)
+            ontology = load_default_ontology()
+            newer_fields = (set(ontology.fields_at(self._ontology_version)) - set(
+                ontology.fields_at(mapping.ontology_version)
+            )) | ontology.retired_fields
+            if (
+                hashlib.sha256(raw).hexdigest() != published.mapping_sha256
+                or profile["mapping_sha256"] != published.mapping_sha256
+                or mapping.version != published.mapping_version
+                or mapping.schema_fingerprint != loaded.manifest.schema_fingerprint
+                or mapping != context.published_mapping()
+                or profile.get("field_transforms", {}) != {k: v.value for k, v in context.field_transforms().items()}
+                or (set(profile.get("unsupported_fields", [])) | newer_fields) != set(context.unsupported_fields())
+                or profile.get("anchor_table") != context.anchor_table()
+                or profile.get("value_dictionaries", {}) != {k: v.model_dump(mode="json") for k, v in context.value_dictionaries().items()}
+                or profile.get("extension_fields", {}) != {k: {"label": v.label, "data_type": v.data_type} for k, v in context.extension_fields().items()}
+            ):
+                raise ValueError()
+            return context
+        except Exception:
+            raise AdminTestQueryError(AdminTestQueryErrorCode.NOT_FOUND) from None
+
+    def load_verified_queries(self, root: Path, database_id: str) -> Any:
+        from ..registration.reviews import VerifiedQueries
+
+        try:
+            directory = pg._private_dir(root, pg.REGISTRATION_ROOT, database_id)[1]
+            path = directory / "verified-queries.json"
+            if not path.exists():
+                return None
+            record = pg._strict_model(pg._read(path), VerifiedQueries)
+            return record if record.database_id == database_id else None
+        except Exception:
+            return None
+
+    def record_verified_query(self, root: Path, database_id: str, entry: Any) -> Any:
+        from ..registration.reviews import VerifiedQueries, validate_reviewer
+        from .admin_test_queries import AdminTestQueryError, AdminTestQueryErrorCode
+
+        validate_reviewer(entry.verified_by)
+        with self._lock:
+            context = self.test_query_context(root, database_id)
+            if context.published_mapping().version != entry.mapping_version:
+                raise AdminTestQueryError(AdminTestQueryErrorCode.CONFLICT)
+            existing = self.load_verified_queries(root, database_id)
+            kept = [item for item in (existing.entries if existing else []) if item.query_id != entry.query_id]
+            record = VerifiedQueries(
+                schema_version="verified-queries-v1", database_id=database_id,
+                entries=sorted([*kept, entry], key=lambda item: item.query_id),
+            )
+            directory = pg._private_dir(root, pg.REGISTRATION_ROOT, database_id)[1]
+            path = directory / "verified-queries.json"
+            if path.is_symlink():
+                raise AdminTestQueryError(AdminTestQueryErrorCode.INTERNAL_ERROR)
+            pg._write_atomic(path, pg._json_bytes(record.model_dump(mode="json")))
+            return record
 
     def source(self, source_id: Any) -> pg.PostgresSource | None:
         return self._sources.get(source_id) if isinstance(source_id, str) else None
@@ -163,6 +241,17 @@ class PostgresRegistrationService:
     def registrations(self) -> dict[str, Any]:
         return {"version": REGISTRATIONS_VERSION, "registrations": pg.list_registrations(self.repository_root)}
 
+    def delete(self, database_id: str) -> dict[str, Any]:
+        with self._lock:
+            pg.delete_registration(self.repository_root, database_id)
+            self._live.remove(database_id)
+            if self._value_indexes is not None:
+                self._value_indexes.forget(database_id)
+            unregister = getattr(self._reader, "unregister", None)
+            if callable(unregister):
+                unregister(database_id)
+        return {"database_id": database_id, "deleted": True}
+
     def register(self, body: dict[str, Any]) -> dict[str, Any]:
         if set(body) != {"source_id", "schema", "database_id", "label"} or not all(
             isinstance(value, str) for value in body.values()
@@ -172,6 +261,8 @@ class PostgresRegistrationService:
         if source is None:
             raise pg.PostgresRegistrationError("NOT_FOUND")
         database_id = body["database_id"]
+        if database_id in pg.sqlite_storage.RESERVED_SELECTION_DATABASE_IDS:
+            raise pg.PostgresRegistrationError("INVALID_INPUT")
         reader = None
         if self._proposer is not None:
             try:
@@ -223,10 +314,14 @@ class PostgresRegistrationService:
             history = [{
                 "version": published.mapping_version,
                 "published_by": published.published_by,
-                "published_at": published.published_at,
+                # Match the review UI's seconds-only UTC contract without changing storage.
+                "published_at": (
+                    datetime.fromisoformat(published.published_at)
+                    .astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+                ),
                 "active": True,
                 "latest": True,
-                "activatable": False,
+                "activatable": True,
             }]
         payload = _detail_payload(
             database_id=database_id,
@@ -428,6 +523,121 @@ class PostgresRegistrationService:
 
     # -- value dictionaries (Phase 8-07) ---------------------------------------------------
 
+    def _dictionary_sources(self) -> dict[str, tuple[str, dict[str, Any]]]:
+        """Registered drafts are sources only after publication; startup profiles are read-only."""
+        found = {}
+        for item in pg.list_registrations(self.repository_root):
+            if item["status"] != "PUBLISHED":
+                continue
+            database_id = item["database_id"]
+            try:
+                entries = dictionaries_store.load_entries(repository_root=self.repository_root, database_id=database_id)
+            except pg.PostgresRegistrationError:
+                continue
+            found[database_id] = (item["label"], entries)
+        for database_id in ("legacy-view", "legacy-base"):
+            if database_id in found or pg.registration_exists(self.repository_root, database_id):
+                continue
+            context = self._live.get(database_id)
+            if context is not None:
+                found[database_id] = (context.label, {
+                    name: list(dictionary.entries) for name, dictionary in context.value_dictionaries().items()
+                })
+        return found
+
+    def dictionary_sources(self) -> dict[str, Any]:
+        with self._lock:
+            return {"version": DICTIONARY_COPY_VERSION, "sources": [
+                {"database_id": database_id, "label": label,
+                 "fields": {name: len(entries) for name, entries in sorted(fields.items()) if entries}}
+                for database_id, (label, fields) in sorted(self._dictionary_sources().items())
+            ]}
+
+    def copy_dictionaries(self, body: dict[str, Any]) -> dict[str, Any]:
+        from ..mapping.values import ValueDictionary, ValueEntry, lookup_key
+        from ..ontology import load_default_ontology
+
+        if set(body) != {"action", "database_id", "source_database_id", "reviewer"}:
+            raise pg.PostgresRegistrationError("INVALID_INPUT")
+        database_id, source_id, reviewer = (body[key] for key in ("database_id", "source_database_id", "reviewer"))
+        if (not all(isinstance(value, str) for value in (database_id, source_id, reviewer))
+                or source_id == database_id or not 1 <= len(reviewer.strip()) <= 64 or len(reviewer) > 64):
+            raise pg.PostgresRegistrationError("INVALID_INPUT")
+        with self._lock:
+            sources = self._dictionary_sources()
+            if source_id not in sources:
+                raise pg.PostgresRegistrationError("INVALID_INPUT")
+            loaded, _draft, editable, reader = self._dictionary_context(database_id)
+            checks, fields = self._check_context(loaded, editable, reader, database_id)
+            labels = load_default_ontology().fields
+            results = []
+            changed = False
+            for name, source_entries in sorted(sources[source_id][1].items()):
+                result = {"field": name, "label": labels[name].label if name in labels else name,
+                          "imported": 0, "skipped": 0, "reasons": {}}
+
+                def skip(reason: str) -> None:
+                    result["skipped"] += 1
+                    result["reasons"][reason] = result["reasons"].get(reason, 0) + 1
+
+                if name not in editable:
+                    for _entry in source_entries:
+                        skip("FIELD_NOT_EDITABLE")
+                    results.append(result)
+                    continue
+                table, column = editable[name]
+                known = checks["values_by_field"].get(name)
+                present = set(known) if known is not None else reader.present(
+                    database_id, table, column, [entry.stored for entry in source_entries]
+                )
+                for entry in source_entries:
+                    if present is None:
+                        skip("VALUES_UNAVAILABLE")
+                        continue
+                    if entry.stored not in present:
+                        skip("VALUE_NOT_PRESENT")
+                        continue
+                    current = {item.stored: item for item in fields.get(name, [])}
+                    existing = current.get(entry.stored)
+                    aliases = {}
+                    for alias in (*(existing.aliases if existing else ()), *entry.aliases):
+                        aliases.setdefault(lookup_key(alias), alias)
+                    merged_label = existing.label if existing else entry.label
+                    if dictionaries_store.is_period_field(name) and not dictionaries_store.valid_period_entry(
+                        entry.stored, merged_label, list(aliases.values())
+                    ):
+                        skip("INVALID_PERIOD_ENTRY")
+                        continue
+                    blocked = None
+                    for alias in aliases.values():
+                        blocked, _warning = dictionaries_store.check_alias(
+                            alias, entry.stored, field=name, entries=fields, **checks
+                        )
+                        if blocked is None:
+                            blocked = self._big_field_collision(editable, checks, reader, database_id, alias, entry.stored)
+                        if blocked is not None:
+                            break
+                    if blocked is not None:
+                        skip("ALIAS_LENGTH" if blocked == dictionaries_store.ALIAS_LENGTH_REASON else "ALIAS_CONFLICT")
+                        continue
+                    if len(aliases) > dictionaries_store.MAX_ALIASES or (existing is None and len(current) >= dictionaries_store.MAX_ENTRIES):
+                        skip("LIMIT_REACHED")
+                        continue
+                    try:
+                        current[entry.stored] = ValueEntry(stored=entry.stored, label=merged_label, aliases=tuple(aliases.values()))
+                        ValueDictionary(entries=tuple(current.values()), reviewer=reviewer, reason=dictionaries_store.REVIEW_REASON)
+                    except ValueError:
+                        skip("DICTIONARY_CONFLICT")
+                        continue
+                    fields[name] = sorted(current.values(), key=lambda item: item.stored)
+                    result["imported"] += 1
+                    changed = True
+                results.append(result)
+            if changed:
+                dictionaries_store._save(self.repository_root, database_id, reviewer, fields)
+            return {"version": DICTIONARY_COPY_VERSION, "database_id": database_id,
+                    "source_database_id": source_id, "fields": results}
+
     def _dictionary_context(self, database_id: Any) -> tuple[Any, Any, dict[str, tuple[str, str]], Any]:
         if not isinstance(database_id, str):
             raise pg.PostgresRegistrationError("INVALID_INPUT")
@@ -482,6 +692,8 @@ class PostgresRegistrationService:
 
     def dictionary_action(self, body: dict[str, Any]) -> dict[str, Any]:
         action = body.get("action")
+        if action == "COPY":
+            return self.copy_dictionaries(body)
         allowed = {
             "SET": {"action", "database_id", "field", "stored", "label", "aliases", "reviewer"},
             "REMOVE": {"action", "database_id", "field", "stored", "reviewer"},
@@ -686,6 +898,17 @@ class PostgresRegistrationService:
 def register_postgres_registration_routes(app: FastAPI, service: PostgresRegistrationService) -> None:
     app.state.postgres_registration_service = service
 
+    @app.get(DICTIONARY_SOURCES_PATH)
+    async def get_dictionary_sources(http_request: Request) -> JSONResponse:
+        try:
+            if http_request.query_params:
+                return _error("INVALID_INPUT")
+            return _json(await run_in_threadpool(service.dictionary_sources))
+        except pg.PostgresRegistrationError as exc:
+            return _error(exc.code)
+        except Exception:
+            return _error("INTERNAL_ERROR")
+
     @app.get(SOURCES_PATH)
     async def list_sources(_request: Request) -> JSONResponse:
         try:
@@ -770,6 +993,18 @@ def register_postgres_registration_routes(app: FastAPI, service: PostgresRegistr
             if dict(http_request.query_params):
                 return _error("INVALID_INPUT")
             return _json(await run_in_threadpool(service.registrations))
+        except Exception:
+            return _error("INTERNAL_ERROR")
+
+    @app.delete(REGISTER_PATH)
+    async def delete(http_request: Request) -> JSONResponse:
+        try:
+            params = list(http_request.query_params.multi_items())
+            if len(params) != 1 or params[0][0] != "database_id" or await http_request.body():
+                return _error("INVALID_INPUT")
+            return _json(await run_in_threadpool(service.delete, params[0][1]))
+        except pg.PostgresRegistrationError as exc:
+            return _error(exc.code)
         except Exception:
             return _error("INTERNAL_ERROR")
 

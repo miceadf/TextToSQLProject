@@ -44,6 +44,7 @@ from .variant_specs import (
     spec_catalog,
     table_rows,
 )
+from .ontology_version import recorded_ontology
 
 REPORT_DIR = Path(".schema-adaptive/reports/variant-benchmark")
 REVIEW_THRESHOLD = 0.60
@@ -122,7 +123,10 @@ def rule_based_answer(catalog: Any, ontology: Any, variant_name: str) -> Variant
     """
     from ..mapping.rules import RuleBasedSchemaAligner
 
-    proposal = RuleBasedSchemaAligner(review_threshold=REVIEW_THRESHOLD).align(catalog, ontology)
+    # This benchmark has no ontology version metadata: reproduce it with v2.
+    proposal = RuleBasedSchemaAligner(review_threshold=REVIEW_THRESHOLD).align(
+        catalog, recorded_ontology(ontology)
+    )
     order = sorted(
         CANONICAL_FIELDS,
         key=lambda name: (-max((c.confidence for c in proposal.candidates.get(name, [])), default=0.0), name),
@@ -386,7 +390,8 @@ def execute_answer(
     make_executor: Callable[[], Any],
 ) -> dict[str, Any]:
     """Run every question with this answer; outcome per question."""
-    from ..api.legacy_view_profile import _NoSqlite, _runtime_ontology
+    from ..api.legacy_view_profile import _NoSqlite
+    from .runner import _runtime_ontology
     from ..api.postgres_runtime import (
         DatabaseRoutingCompiler,
         DatabaseRoutingExecutor,
@@ -411,7 +416,7 @@ def execute_answer(
             [profile],
             adapters_by_id={database_id: make_adapter()},
             executors_by_id={database_id: make_executor()},
-            expected_ontology_version=1,
+            expected_ontology_version=profile.published_mapping.ontology_version,
         )
     except Exception:
         return {"profile": "REJECTED", "outcomes": {q["id"]: "PROFILE_REJECTED" for q in QUESTIONS}}
@@ -423,7 +428,7 @@ def execute_answer(
         sql_policy=DatabaseRoutingPolicy(none, contexts),
         executor=DatabaseRoutingExecutor(none, contexts),
     )
-    ontology = _runtime_ontology()
+    ontology = _runtime_ontology(recorded_ontology(version=profile.published_mapping.ontology_version))
     outcomes: dict[str, str] = {}
     for question in QUESTIONS:
         expected = reference_result(spec, question["ir"])
@@ -469,7 +474,7 @@ def run_live(
     from ..harness.postgres import PostgresReadOnlyExecutor
     from ..ontology.loader import load_default_ontology
 
-    ontology = load_default_ontology()
+    ontology = recorded_ontology(load_default_ontology())
     variants: dict[str, Any] = {}
     connection = psycopg2.connect(dsn, connect_timeout=5)
     try:
@@ -536,7 +541,7 @@ def run_live(
 def offline_scores(suite: str = "dev") -> dict[str, Any]:
     from ..ontology.loader import load_default_ontology
 
-    ontology = load_default_ontology()
+    ontology = recorded_ontology(load_default_ontology())
     scores = {}
     for spec in SUITES[suite]:
         catalog = spec_catalog(spec, f"bench-{spec.name}")

@@ -44,6 +44,7 @@ from .run_contracts import EvaluationRunConfig, FixtureRunMetadata, Metric
 from .run_report import deterministic_request_id
 from .runner import _prepare_fixture_contexts
 from .validator import validate_evaluation_set
+from .ontology_version import recorded_ontology
 
 
 DIRECT_SQL_PROMPT_VERSION = "direct-sql-v1"
@@ -475,6 +476,7 @@ def run_direct_sql_evaluation(
     """Evaluate every scheduled case×variant once; never show gold to the model."""
     domain_ontology = ontology or load_default_ontology()
     validate_evaluation_set(gold, seed, domain_ontology)
+    domain_ontology = recorded_ontology(domain_ontology, version=gold.ontology_version)
     contexts, all_metadata = _prepare_fixture_contexts(bundle, seed, domain_ontology, None)
     if any(FixtureVariant(name) not in contexts for name in config.variants):
         raise ValueError("configured variant missing from fixture bundle")

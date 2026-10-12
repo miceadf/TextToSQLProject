@@ -38,16 +38,16 @@ def make_profile(*, ontology_version: int, fields: dict[str, str] | None = None)
 
 def test_version_two_only_adds_the_target_grade() -> None:
     ontology = load_default_ontology()
-    assert ontology.version == 2
+    assert ontology.version == 3
     assert set(ontology.fields_at(2)) - set(ontology.fields_at(1)) == {"Course.target_grade"}
-    assert set(ontology.fields_at(1)) == set(CANONICAL_SELECT)
+    assert set(ontology.fields_at(1)) == set(CANONICAL_SELECT) | {"CourseOffering.year"}
     field = ontology.fields["Course.target_grade"]
     assert field.label == "대상 학년" and field.data_type.value == "integer" and not field.required
     assert ontology.accepts_version(1) and ontology.accepts_version(2)
-    for bad in (0, 3, True, "2", None):
+    for bad in (0, 4, True, "2", None):
         assert not ontology.accepts_version(bad)
     with pytest.raises(ValueError):
-        ontology.fields_at(3)
+        ontology.fields_at(4)
 
 
 def test_a_field_newer_than_the_ontology_is_rejected() -> None:
@@ -58,8 +58,8 @@ def test_a_field_newer_than_the_ontology_is_rejected() -> None:
 
 
 def test_card_fields_follow_the_ontology_and_have_dto_keys() -> None:
-    assert list(CARD_FIELDS) == list(load_default_ontology().fields)
-    assert set(_REF_TO_DTO_KEY) == set(CARD_FIELDS)
+    assert list(CARD_FIELDS) == list(load_default_ontology().active_fields)
+    assert set(_REF_TO_DTO_KEY) == set(CARD_FIELDS) | {"CourseOffering.year"}
     assert _REF_TO_DTO_KEY["Course.target_grade"] == "target_grade"
 
 

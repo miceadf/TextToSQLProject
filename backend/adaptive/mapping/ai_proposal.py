@@ -353,7 +353,7 @@ def propose_upload_mapping(
     proposal never does. Any model failure returns ``None`` so the caller
     keeps the rule proposal.
     """
-    fields = {field.name: field for entity in ontology.entities for field in entity.fields}
+    fields = ontology.active_fields
     names = tuple(fields)
     columns = catalog_column_inputs(catalog)
     by_ref = {column["ref"]: column for column in columns}
@@ -364,6 +364,10 @@ def propose_upload_mapping(
         chosen = model(prompt, schema)
     except Exception:
         return None
+    # A stale model may return retired keys. Discard only those keys; all
+    # active fields, real-column choices and unknown-key checks stay strict.
+    if isinstance(chosen, dict):
+        chosen = {name: value for name, value in chosen.items() if name not in ontology.retired_fields}
     if not schema_conforms(chosen, schema):
         return None
 

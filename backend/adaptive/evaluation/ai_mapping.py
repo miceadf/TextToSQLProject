@@ -94,9 +94,9 @@ ModelCall = Callable[[str, dict[str, Any]], Any]
 
 
 def _ontology_fields() -> dict[str, Any]:
-    from ..ontology.loader import load_default_ontology
+    from .ontology_version import recorded_ontology
 
-    return {field.name: field for entity in load_default_ontology().entities for field in entity.fields}
+    return recorded_ontology().active_fields
 
 
 def _shown(value: Any, pg_type: str) -> str:

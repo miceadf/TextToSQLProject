@@ -264,7 +264,7 @@ SMOKE_QUERIES: tuple[tuple[str, dict[str, Any], str | None], ...] = (
             "filters": [],
             "limit": 10,
         },
-        "MAPPING_MISSING",
+        "UNKNOWN_FIELD",
     ),
 )
 
@@ -458,7 +458,7 @@ def _runtime_ontology() -> Any:
             name: OntologyField(
                 name=name, data_type=field.data_type, allowed_operators=field.allowed_operators
             )
-            for name, field in domain.fields.items()
+            for name, field in domain.active_fields.items()
         },
     )
 

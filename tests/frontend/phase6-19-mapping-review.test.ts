@@ -276,20 +276,18 @@ describe('phase6-19 registry private variant', () => {
 
   it('accepts schema private and rejects unknown variants', () => {
     assert.equal(parseDatabaseRegistry(registryPayload())?.length, 2);
-    assert.equal(
-      parseDatabaseRegistry({
+    for (const invalid of [
+      { database_id: 'review-db-one', label: 'x', schema: 'weird' },
+      { database_id: 'review-db-one', label: '   ', schema: 'private' },
+    ]) {
+      const valid = registryPayload().databases[0]!;
+      const warnings: Array<string | null> = [];
+      assert.deepEqual(parseDatabaseRegistry({
         version: 'synthetic-database-registry-v1',
-        databases: [{ database_id: 'review-db-one', label: 'x', schema: 'weird' }],
-      }),
-      null,
-    );
-    assert.equal(
-      parseDatabaseRegistry({
-        version: 'synthetic-database-registry-v1',
-        databases: [{ database_id: 'review-db-one', label: '   ', schema: 'private' }],
-      }),
-      null,
-    );
+        databases: [invalid, valid],
+      }, (message) => warnings.push(message)), [valid]);
+      assert.deepEqual(warnings, ['형식이 올바르지 않은 DB 1개를 목록에서 뺐습니다.']);
+    }
   });
 });
 

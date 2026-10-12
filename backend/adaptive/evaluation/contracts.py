@@ -92,7 +92,7 @@ class EvaluationSet(BaseModel):
     version: int = Field(ge=1)
     seed_version: int = Field(ge=1)
     seed_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
-    ontology_version: int = Field(ge=1)
+    ontology_version: int = Field(default=2, ge=1)
     ontology_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
     query_ir_contract_version: Literal[1] = 1
     query_ir_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")

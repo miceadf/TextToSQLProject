@@ -540,8 +540,8 @@ def _validate_one(
             raise PostgresRuntimeError()
         if fingerprint != str(published.schema_fingerprint):
             raise PostgresRuntimeError()
-        # Phase 8-18: ontology versions only add fields, so a mapping made
-        # under an older version is valid; fields added since are unsupported.
+        # Validate the historical record against its own version. Runtime
+        # also treats fields retired in the requested version as unsupported.
         canonical, newer = _fields_for(int(published.ontology_version), int(expected_ontology_version))
         transforms = profile.field_transforms
         unsupported = set(profile.unsupported_fields)
@@ -559,7 +559,12 @@ def _validate_one(
             or set(extensions) & set(profile.value_dictionaries)
         ):
             raise PostgresRuntimeError()
-        unsupported |= newer
+        from ..ontology import load_default_ontology
+        retired = {
+            name for name, field in load_default_ontology().fields.items()
+            if field.retired_in_version is not None and field.retired_in_version <= expected_ontology_version
+        }
+        unsupported |= newer | retired
         if not set(transforms).issubset(mapped):
             raise PostgresRuntimeError()
         dictionaries = profile.value_dictionaries
@@ -763,6 +768,11 @@ class LivePostgresContexts(dict):  # type: ignore[type-arg]
 
     def __setitem__(self, key: Any, value: Any) -> None:
         raise PostgresRuntimeError()
+
+    def remove(self, database_id: str) -> None:
+        """Forget a deleted registration in every router sharing this live set."""
+        with self._lock:
+            dict.pop(self, database_id, None)
 
     def __delitem__(self, key: Any) -> None:
         raise PostgresRuntimeError()

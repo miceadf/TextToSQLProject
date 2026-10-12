@@ -51,7 +51,7 @@ def test_registry_lists_two_databases_strict():
     snapshot[0]["database_id"] = "tampered"
     assert "tampered" not in app.state.synthetic_prototype_registry.database_ids()
     assert client.get(DATABASES_PATH).json()["databases"] != snapshot
-    assert "CourseOffering.year" in CANONICAL_SELECT
+    assert "CourseOffering.year" not in CANONICAL_SELECT  # v3 catalog excludes year.
     assert not any(field.startswith("Offering.") for field in CANONICAL_SELECT)
 
 

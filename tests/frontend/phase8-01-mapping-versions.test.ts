@@ -59,6 +59,13 @@ describe('phase8-01 version history parser', () => {
     assert.equal(parseReviewDetail(publishedDetail({ active_mapping_version: null })), null);
   });
 
+  it('accepts an active version without reactivation support', () => {
+    const history = [version(1, { active: true, activatable: false }), version(2, { latest: true })];
+    const parsed = parseReviewDetail(publishedDetail({ mapping_versions: history }));
+    assert.ok(parsed);
+    assert.deepEqual(parsed.mapping_versions, history);
+  });
+
   it('rejects inconsistent or malformed histories', () => {
     const cases: Record<string, unknown>[] = [
       { active_mapping_version: 2 },
@@ -68,7 +75,6 @@ describe('phase8-01 version history parser', () => {
       { mapping_versions: [version(1, { active: true, latest: true })] },
       { mapping_versions: [version(1, { active: true }), version(3, { latest: true })] },
       { mapping_versions: [version(1, { active: true }), version(2)] },
-      { mapping_versions: [version(1, { active: true, activatable: false }), version(2, { latest: true })] },
       { mapping_versions: [version(1, { active: true, extra: 1 }), version(2, { latest: true })] },
       { mapping_versions: [version(1, { active: true, published_at: '2026-09-29' }), version(2, { latest: true })] },
       { mapping_versions: [version(1, { active: true, published_by: ' x' }), version(2, { latest: true })] },

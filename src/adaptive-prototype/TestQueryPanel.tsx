@@ -1,3 +1,5 @@
+import ReviewerHint from './ReviewerHint.tsx';
+import { adminStyles, disabledTitle } from './adminStyles.ts';
 import { useEffect, useRef, useState } from 'react';
 import {
   fetchTestQueryList,
@@ -111,25 +113,25 @@ export default function TestQueryPanel({ databaseId, activeVersion, reviewer, fe
   }
 
   return (
-    <div className="rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-800">
-      <div className="font-semibold">test query 미리보기 (실행 중 mapping-v{activeVersion})</div>
+    <div className={`${adminStyles.box} text-xs text-slate-800`}>
+      <div className={adminStyles.title}>test query 미리보기 (실행 중 mapping-v{activeVersion})</div>
       {queries === null && error === null ? <div role="status">목록을 불러오는 중입니다.</div> : null}
       {queries !== null ? (
         <div className="mt-1 flex flex-wrap items-center gap-2">
-          <select value={selected} onChange={(event) => setQueryId(event.target.value)} disabled={loading}>
+          <select value={selected} onChange={(event) => setQueryId(event.target.value)} disabled={loading} className={adminStyles.input}>
             {queries.map((entry) => (
               <option key={entry.query_id} value={entry.query_id}>
                 {entry.title}
               </option>
             ))}
           </select>
-          <button type="button" onClick={() => void handleRun()} disabled={loading}>
+          <button type="button" onClick={() => void handleRun()} disabled={loading} className={adminStyles.primary} title={disabledTitle([loading, "불러오거나 처리 중입니다."])}>
             {loading ? '실행 중' : '실행'}
           </button>
         </div>
       ) : null}
       {error !== null ? (
-        <div className="mt-1 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 font-medium text-rose-900" role="alert">
+        <div className={`${adminStyles.error} mt-1`} role="alert">
           {error}
         </div>
       ) : null}
@@ -139,11 +141,12 @@ export default function TestQueryPanel({ databaseId, activeVersion, reviewer, fe
             mapping-v{result.mapping_version} · 전체 {result.row_count}
             {result.row_count_capped ? '+' : ''}행 중 {result.rows.length}행 표시
           </div>
-          <table className="border-collapse">
+          {(result.omitted_fields?.length ?? 0) > 0 ? <div>이 DB에 없어 뺀 항목: {result.omitted_fields?.join(', ')}</div> : null}
+          <table className={adminStyles.table}>
             <thead>
               <tr>
                 {result.columns.map((column) => (
-                  <th key={column} className="border border-slate-200 px-1 text-left">
+                  <th key={column} className={adminStyles.th}>
                     {column}
                   </th>
                 ))}
@@ -153,7 +156,7 @@ export default function TestQueryPanel({ databaseId, activeVersion, reviewer, fe
               {result.rows.map((row, rowIndex) => (
                 <tr key={rowIndex}>
                   {row.map((cell, cellIndex) => (
-                    <td key={cellIndex} className="border border-slate-200 px-1">
+                    <td key={cellIndex} className={adminStyles.td}>
                       {cellText(cell)}
                     </td>
                   ))}
@@ -161,11 +164,11 @@ export default function TestQueryPanel({ databaseId, activeVersion, reviewer, fe
               ))}
             </tbody>
           </table>
-          <button type="button" onClick={() => void handleVerify()} disabled={loading || reviewer.trim() === ''}>
-            이 결과를 verified 기준선으로 기록
+          <button type="button" onClick={() => void handleVerify()} disabled={loading || reviewer.trim() === ''} className={adminStyles.primary} title={disabledTitle([loading, "불러오거나 처리 중입니다."], [reviewer.trim() === '', "검토자 이름을 입력해 주세요."])}>
+            기준으로 저장
           </button>
-          {reviewer.trim() === '' ? <span className="ml-2">기록하려면 검토자를 입력해 주세요.</span> : null}
-          {verifiedNote !== null ? <div>{verifiedNote}</div> : null}
+          {reviewer.trim() === '' ? <ReviewerHint /> : null}
+          {verifiedNote !== null ? <div className={adminStyles.success}>{verifiedNote}</div> : null}
         </div>
       ) : null}
     </div>

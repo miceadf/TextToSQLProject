@@ -1,3 +1,6 @@
+import ReviewerHint from './ReviewerHint.tsx';
+import { readReviewer, writeReviewer } from './reviewerMemory.ts';
+import { adminStyles, disabledTitle } from './adminStyles.ts';
 import { useCallback, useEffect, useState } from 'react';
 import { publishReview, toReviewMessage, type ReviewFetchLike } from './mappingReview.ts';
 import {
@@ -23,10 +26,12 @@ const domReviewFetch: ReviewFetchLike = (url, init) =>
 /** Phase 8-19: fields only this database has (a classroom, say), declared as data. */
 export default function ExtensionFieldPanel({
   databaseId,
+  reviewer: sharedReviewer,
   onPublished,
   fetchFn = domFetch,
 }: {
   databaseId: string;
+  reviewer?: string;
   onPublished?: () => void;
   fetchFn?: PgFetchLike;
 }) {
@@ -37,7 +42,11 @@ export default function ExtensionFieldPanel({
   const [table, setTable] = useState('');
   const [column, setColumn] = useState('');
   const [dataType, setDataType] = useState<string>('string');
-  const [reviewer, setReviewer] = useState('');
+  const [localReviewer, setReviewer] = useState(readReviewer);
+  useEffect(() => {
+    if (sharedReviewer === undefined) writeReviewer(localReviewer);
+  }, [localReviewer, sharedReviewer]);
+  const reviewer = sharedReviewer ?? localReviewer;
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -79,22 +88,22 @@ export default function ExtensionFieldPanel({
   }
 
   return (
-    <div className="mt-3 space-y-2 border-t border-slate-200 pt-2 text-xs" data-testid="extension-field-panel">
-      <div className="font-semibold text-slate-700">확장 항목 (이 DB에만 있는 정보)</div>
-      <div className="text-slate-500">
-        강의실처럼 공통 항목에 없는 정보를 이 DB에 추가합니다. 영문 key로 이름을 정하고, 넣은 뒤 게시해야 챗봇이 이해합니다.
+    <div className={`${adminStyles.box} mt-3 space-y-2 text-xs`} data-testid="extension-field-panel" data-reviewer-scope={sharedReviewer === undefined ? true : undefined}>
+      <div className={adminStyles.title}>확장 항목 (이 DB에만 있는 정보)</div>
+      <div className="text-slate-500" hidden={sharedReviewer !== undefined}>
+        공통 항목에 없는 이 DB만의 정보(예: 강의실)를 챗봇이 알 수 있게 추가합니다. 추가 후 게시해야 반영됩니다.
       </div>
       {detail !== null && detail.fields.length > 0 ? (
         <ul className="space-y-1">
           {detail.fields.map((item) => (
-            <li key={item.key} className="flex items-center justify-between gap-2">
+            <li key={item.key} className={`${adminStyles.actions} justify-between`}>
               <span>
                 {item.label} ({item.key}) · {EXTENSION_ENTITY_LABELS[item.entity] ?? item.entity} ·{' '}
                 {item.table}.{item.column} · {EXTENSION_TYPE_LABELS[item.data_type] ?? item.data_type}
               </span>
               <button
                 type="button"
-                className="rounded border border-slate-300 px-2 py-0.5"
+                className={adminStyles.danger}
                 disabled={busy || reviewer.trim() === ''}
                 onClick={() =>
                   void run(async () => {
@@ -105,7 +114,7 @@ export default function ExtensionFieldPanel({
                       setError(toPostgresMessage(reason));
                     }
                   })
-                }
+                } title={disabledTitle([busy, "처리 중입니다."], [reviewer.trim() === '', "검토자 이름을 입력해 주세요."])}
               >
                 삭제
               </button>
@@ -115,22 +124,23 @@ export default function ExtensionFieldPanel({
       ) : (
         <div className="text-slate-500">확장 항목 없음</div>
       )}
-      <label className="block">
+      {sharedReviewer === undefined ? <label className="block">
         검토자
-        <input className="ml-1 rounded border px-1" value={reviewer} placeholder="이름" onChange={(e) => setReviewer(e.target.value)} />
-      </label>
-      <div className="grid grid-cols-2 gap-1">
+        <input className={`${adminStyles.input} ml-1`} data-reviewer-input value={reviewer} placeholder="이름" onChange={(e) => setReviewer(e.target.value)} />
+      </label> : null}
+      {reviewer.trim() === '' ? <ReviewerHint /> : null}
+      <div className="grid gap-2 sm:grid-cols-2">
         <label>
           이름(표시)
-          <input className="block w-full rounded border px-1" value={label} placeholder="예: 강의실" onChange={(e) => setLabel(e.target.value)} />
+          <input className={`${adminStyles.input} block w-full`} value={label} placeholder="예: 강의실" onChange={(e) => setLabel(e.target.value)} />
         </label>
         <label>
           key(영문)
-          <input className="block w-full rounded border px-1" value={key} placeholder="예: classroom" onChange={(e) => setKey(e.target.value)} />
+          <input className={`${adminStyles.input} block w-full`} value={key} placeholder="예: classroom" onChange={(e) => setKey(e.target.value)} />
         </label>
         <label>
           무엇의 정보인가
-          <select className="block w-full rounded border" value={entity} onChange={(e) => setEntity(e.target.value)}>
+          <select className={`${adminStyles.input} block w-full`} value={entity} onChange={(e) => setEntity(e.target.value)}>
             {EXTENSION_ENTITIES.map((item) => (
               <option key={item} value={item}>
                 {EXTENSION_ENTITY_LABELS[item]}
@@ -140,7 +150,7 @@ export default function ExtensionFieldPanel({
         </label>
         <label>
           값 종류
-          <select className="block w-full rounded border" value={dataType} onChange={(e) => setDataType(e.target.value)}>
+          <select className={`${adminStyles.input} block w-full`} value={dataType} onChange={(e) => setDataType(e.target.value)}>
             {EXTENSION_DATA_TYPES.map((item) => (
               <option key={item} value={item}>
                 {EXTENSION_TYPE_LABELS[item]}
@@ -151,7 +161,7 @@ export default function ExtensionFieldPanel({
         <label>
           테이블
           <select
-            className="block w-full rounded border"
+            className={`${adminStyles.input} block w-full`}
             value={table}
             onChange={(e) => {
               setTable(e.target.value);
@@ -167,7 +177,7 @@ export default function ExtensionFieldPanel({
         </label>
         <label>
           컬럼
-          <select className="block w-full rounded border" value={column} onChange={(e) => setColumn(e.target.value)}>
+          <select className={`${adminStyles.input} block w-full`} value={column} onChange={(e) => setColumn(e.target.value)}>
             <option value="">선택</option>
             {columns.map((item) => (
               <option key={item.name} value={item.name}>
@@ -177,10 +187,10 @@ export default function ExtensionFieldPanel({
           </select>
         </label>
       </div>
-      <div className="flex gap-2">
+      <div className={adminStyles.actions}>
         <button
           type="button"
-          className="rounded border border-slate-300 px-2 py-0.5"
+          className={adminStyles.secondary}
           disabled={!ready}
           onClick={() =>
             void run(async () => {
@@ -195,13 +205,13 @@ export default function ExtensionFieldPanel({
                 setError(toPostgresMessage(reason));
               }
             })
-          }
+          } title={disabledTitle([busy, "처리 중입니다."], [reviewer.trim() === '', "검토자 이름을 입력해 주세요."], [!isExtensionLabel(label), "이름(표시)을 확인해 주세요."], [!EXTENSION_KEY_PATTERN.test(key), "key(영문)를 확인해 주세요."], [table === '' || column === '', "테이블과 컬럼을 선택해 주세요."])}
         >
           추가/수정
         </button>
         <button
           type="button"
-          className="rounded border border-slate-300 px-2 py-0.5"
+          className={adminStyles.primary}
           disabled={busy || reviewer.trim() === ''}
           onClick={() =>
             void run(async () => {
@@ -213,14 +223,14 @@ export default function ExtensionFieldPanel({
                 setError(toReviewMessage(reason));
               }
             })
-          }
+          } title={disabledTitle([busy, "처리 중입니다."], [reviewer.trim() === '', "검토자 이름을 입력해 주세요."])}
         >
           확장 항목 적용해 게시
         </button>
       </div>
-      {message !== null ? <div role="status">{message}</div> : null}
+      {message !== null ? <div role="status" className={adminStyles.success}>{message}</div> : null}
       {error !== null ? (
-        <div role="alert" className="whitespace-pre-line text-rose-600">
+        <div role="alert" className={`${adminStyles.error} whitespace-pre-line`}>
           {error}
         </div>
       ) : null}

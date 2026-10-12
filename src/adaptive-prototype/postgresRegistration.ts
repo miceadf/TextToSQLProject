@@ -1,6 +1,6 @@
 // Phase 8-15: register PostgreSQL schemas from server-owned connections.
 // The browser only sees connection IDs and labels; DSNs stay on the server.
-import { isDatabaseId } from './databases.ts';
+import { DATABASE_ID_INPUT_MESSAGE, isDatabaseId, isReservedDatabaseId, RESERVED_DATABASE_ID_MESSAGE } from './databases.ts';
 import { isValidUploadLabel, parseUploadResponse, type SqliteUploadSuccess } from './sqliteUpload.ts';
 
 export const POSTGRES_SOURCES_PATH = '/api/adaptive/v1/postgres/sources';
@@ -14,6 +14,7 @@ const SCHEMA_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,62}$/;
 const ERROR_CODE = /^[A-Z0-9_]{1,128}$/;
 // The PostgreSQL runtime's label rule (the same pattern the registry parser uses).
 export const POSTGRES_LABEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 _().-]{0,63}$/;
+export const POSTGRES_LABEL_INPUT_MESSAGE = '표시 이름은 영문·숫자·공백·( ) _ . -만 쓸 수 있고, 첫 글자는 영문이나 숫자여야 합니다(1~64자). 예: School PG';
 
 export interface PostgresSourceOption {
   source_id: string;
@@ -32,11 +33,11 @@ export type PgFetchLike = (
 ) => Promise<PgFetchResponse>;
 
 export class PostgresRegistrationClientError extends Error {
-  readonly kind: 'transport' | 'contract' | 'server';
+  readonly kind: 'transport' | 'contract' | 'server' | 'reserved' | 'input-id' | 'input-label' | 'input';
   readonly serverCode: string | null;
 
-  constructor(kind: 'transport' | 'contract' | 'server', serverCode: string | null = null) {
-    super(kind);
+  constructor(kind: PostgresRegistrationClientError['kind'], serverCode: string | null = null) {
+    super(kind === 'reserved' ? RESERVED_DATABASE_ID_MESSAGE : kind);
     this.name = 'PostgresRegistrationClientError';
     this.kind = kind;
     this.serverCode = serverCode;
@@ -84,7 +85,7 @@ function parseErrorCode(value: unknown): string | null {
   return typeof code === 'string' && ERROR_CODE.test(code) ? code : null;
 }
 
-async function request(fetchFn: PgFetchLike, url: string, init: Parameters<PgFetchLike>[1]): Promise<unknown> {
+export async function request(fetchFn: PgFetchLike, url: string, init: Parameters<PgFetchLike>[1]): Promise<unknown> {
   let response: PgFetchResponse;
   try {
     response = await fetchFn(url, init);
@@ -125,14 +126,17 @@ export async function registerPostgresSchema(
   input: { sourceId: string; schema: string; databaseId: string; label: string },
   options?: { signal?: AbortSignal },
 ): Promise<SqliteUploadSuccess> {
+  if (isReservedDatabaseId(input.databaseId)) {
+    throw new PostgresRegistrationClientError('reserved', 'POSTGRES_REGISTRATION_INVALID_INPUT');
+  }
   if (!SOURCE_ID.test(input.sourceId) || !SCHEMA_NAME.test(input.schema)) {
-    throw new PostgresRegistrationClientError('contract');
+    throw new PostgresRegistrationClientError('input');
   }
-  if (!isDatabaseId(input.databaseId) || !isValidUploadLabel(input.label)) {
-    throw new PostgresRegistrationClientError('contract');
+  if (!isDatabaseId(input.databaseId)) {
+    throw new PostgresRegistrationClientError('input-id');
   }
-  if (!POSTGRES_LABEL_PATTERN.test(input.label)) {
-    throw new PostgresRegistrationClientError('server', 'POSTGRES_REGISTRATION_INVALID_LABEL');
+  if (!isValidUploadLabel(input.label) || !POSTGRES_LABEL_PATTERN.test(input.label)) {
+    throw new PostgresRegistrationClientError('input-label');
   }
   const payload = await request(fetchFn, POSTGRES_REGISTER_PATH, {
     method: 'POST',
@@ -170,6 +174,10 @@ const MESSAGES: Record<string, string> = {
 
 export function toPostgresMessage(error: unknown): string {
   if (error instanceof PostgresRegistrationClientError) {
+    if (error.kind === 'reserved') return RESERVED_DATABASE_ID_MESSAGE;
+    if (error.kind === 'input-id') return DATABASE_ID_INPUT_MESSAGE;
+    if (error.kind === 'input-label') return POSTGRES_LABEL_INPUT_MESSAGE;
+    if (error.kind === 'input') return '연결과 테이블 묶음(schema)을 확인해 주세요.';
     if (error.kind === 'transport') return '서버에 연결하지 못했습니다.';
     if (error.kind === 'contract') return '서버 응답 형식이 올바르지 않습니다.';
     return (error.serverCode && MESSAGES[error.serverCode]) || '처리 중 오류가 발생했습니다.';
@@ -426,6 +434,19 @@ export async function fetchRegistrations(fetchFn: PgFetchLike, options?: { signa
   const parsed = parseRegistrations(await request(fetchFn, POSTGRES_REGISTER_PATH, { method: 'GET', signal: options?.signal }));
   if (parsed === null) throw new PostgresRegistrationClientError('contract');
   return parsed;
+}
+
+export function canDeleteRegistration(databaseId: string, confirmation: string, busy: boolean): boolean {
+  return isDatabaseId(databaseId) && confirmation === databaseId && !busy;
+}
+
+export async function deletePostgresRegistration(fetchFn: PgFetchLike, databaseId: string): Promise<void> {
+  if (!isDatabaseId(databaseId)) throw new PostgresRegistrationClientError('contract');
+  const payload = await request(fetchFn, `${POSTGRES_REGISTER_PATH}?database_id=${encodeURIComponent(databaseId)}`, { method: 'DELETE' });
+  if (!isPlainObject(payload) || !hasExactKeys(payload, ['database_id', 'deleted']) ||
+      payload['database_id'] !== databaseId || payload['deleted'] !== true) {
+    throw new PostgresRegistrationClientError('contract');
+  }
 }
 
 // --- Phase 8-19: extension fields ------------------------------------------------------

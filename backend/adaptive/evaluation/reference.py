@@ -39,13 +39,15 @@ def seed_fingerprint(seed: FixtureSeed) -> str:
 
 
 def ontology_fingerprint(ontology: DomainOntology) -> str:
-    payload = ontology.model_dump(mode="json")
+    payload = ontology.at_version(ontology.version).model_dump(mode="json")
     for entity in payload["entities"]:
         for field in entity["fields"]:
             field["allowed_operators"] = sorted(field["allowed_operators"])
             # Phase 8-18: bookkeeping only; leaving it out keeps version-1
             # fingerprints unchanged (compare with ``ontology.at_version``).
             field.pop("since_version", None)
+            if field.get("retired_in_version") is None:
+                field.pop("retired_in_version", None)
     canonical = json.dumps(
         payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
     ).encode("utf-8")

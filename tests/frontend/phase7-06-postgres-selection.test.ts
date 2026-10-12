@@ -38,27 +38,19 @@ describe('phase7-06 postgres registry parser', () => {
   });
 
   it('rejects extra keys, unknown schema, invalid id, duplicate id', () => {
-    assert.equal(
-      parseDatabaseRegistry({
+    for (const invalid of [
+      { database_id: PG_ID, label: 'Pg', schema: 'postgres', extra: 1 },
+      { database_id: PG_ID, label: 'Pg', schema: 'postgresql' },
+      { database_id: 'BAD ID', label: 'Pg', schema: 'postgres' },
+    ]) {
+      const valid = pgRegistry().databases[0]!;
+      const warnings: Array<string | null> = [];
+      assert.deepEqual(parseDatabaseRegistry({
         version: 'synthetic-database-registry-v1',
-        databases: [{ database_id: PG_ID, label: 'Pg', schema: 'postgres', extra: 1 }],
-      }),
-      null,
-    );
-    assert.equal(
-      parseDatabaseRegistry({
-        version: 'synthetic-database-registry-v1',
-        databases: [{ database_id: PG_ID, label: 'Pg', schema: 'postgresql' }],
-      }),
-      null,
-    );
-    assert.equal(
-      parseDatabaseRegistry({
-        version: 'synthetic-database-registry-v1',
-        databases: [{ database_id: 'BAD ID', label: 'Pg', schema: 'postgres' }],
-      }),
-      null,
-    );
+        databases: [invalid, valid],
+      }, (message) => warnings.push(message)), [valid]);
+      assert.deepEqual(warnings, ['형식이 올바르지 않은 DB 1개를 목록에서 뺐습니다.']);
+    }
     assert.equal(
       parseDatabaseRegistry({
         version: 'synthetic-database-registry-v1',
@@ -86,14 +78,17 @@ describe('phase7-06 postgres registry parser', () => {
       'Pg$label',
       'a'.repeat(65),
     ]) {
-      assert.equal(
+      const valid = pgRegistry().databases[0]!;
+      const warnings: Array<string | null> = [];
+      assert.deepEqual(
         parseDatabaseRegistry({
           version: 'synthetic-database-registry-v1',
-          databases: [{ database_id: PG_ID, label, schema: 'postgres' }],
-        }),
-        null,
+          databases: [{ database_id: PG_ID, label, schema: 'postgres' }, valid],
+        }, (message) => warnings.push(message)),
+        [valid],
         `label should be rejected: ${JSON.stringify(label)}`,
       );
+      assert.deepEqual(warnings, ['형식이 올바르지 않은 DB 1개를 목록에서 뺐습니다.']);
     }
   });
 
@@ -104,13 +99,16 @@ describe('phase7-06 postgres registry parser', () => {
         databases: [{ database_id: PRIVATE_ID, label: '검토용 강의 DB', schema: 'private' }],
       }) !== null,
     );
-    assert.equal(
+    const valid = { database_id: PRIVATE_ID, label: '검토용 강의 DB', schema: 'private' };
+    const warnings: Array<string | null> = [];
+    assert.deepEqual(
       parseDatabaseRegistry({
         version: 'synthetic-database-registry-v1',
-        databases: [{ database_id: PG_ID, label: '검토용 강의 DB', schema: 'postgres' }],
-      }),
-      null,
+        databases: [{ database_id: PG_ID, label: '검토용 강의 DB', schema: 'postgres' }, valid],
+      }, (message) => warnings.push(message)),
+      [valid],
     );
+    assert.deepEqual(warnings, ['형식이 올바르지 않은 DB 1개를 목록에서 뺐습니다.']);
   });
 
   it('keeps flat and legacy contracts unchanged', () => {
@@ -120,13 +118,16 @@ describe('phase7-06 postgres registry parser', () => {
         databases: [{ database_id: FLAT_ID, label: 'Flat label (v1)', schema: 'flat' }],
       }) !== null,
     );
-    assert.equal(
+    const valid = pgRegistry().databases[1]!;
+    const warnings: Array<string | null> = [];
+    assert.deepEqual(
       parseDatabaseRegistry({
         version: 'synthetic-database-registry-v1',
-        databases: [{ database_id: FLAT_ID, label: '한글', schema: 'flat' }],
-      }),
-      null,
+        databases: [{ database_id: FLAT_ID, label: '한글', schema: 'flat' }, valid],
+      }, (message) => warnings.push(message)),
+      [valid],
     );
+    assert.deepEqual(warnings, ['형식이 올바르지 않은 DB 1개를 목록에서 뺐습니다.']);
   });
 });
 

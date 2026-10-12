@@ -61,7 +61,7 @@ async function readPayload(response: CatalogFetchResponse): Promise<unknown> {
 
 export async function listDatabases(
   fetchFn: CatalogFetchLike,
-  options?: { signal?: AbortSignal },
+  options?: { signal?: AbortSignal; onWarning?: (message: string | null) => void },
 ): Promise<RegistryDatabase[]> {
   let response: CatalogFetchResponse;
   try {
@@ -76,7 +76,7 @@ export async function listDatabases(
   }
   const payload = await readPayload(response);
   if (!response.ok) throw new CatalogClientError('server', parseServerCode(payload));
-  const parsed = parseDatabaseRegistry(payload);
+  const parsed = parseDatabaseRegistry(payload, options?.onWarning);
   if (parsed === null) throw new CatalogClientError('contract');
   return parsed;
 }

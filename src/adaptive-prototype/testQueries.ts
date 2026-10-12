@@ -10,7 +10,7 @@ const QUERY_ID_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
 const CANONICAL_FIELDS = new Set([
   'Course.code', 'Course.name', 'Course.credits', 'Course.category',
   'Department.code', 'Department.name', 'Instructor.name',
-  'CourseOffering.year', 'CourseOffering.semester', 'CourseOffering.section',
+  'CourseOffering.semester', 'CourseOffering.section',
   'CourseOffering.capacity', 'CourseOffering.enrolled',
   'Schedule.day', 'Schedule.start_time', 'Schedule.end_time',
 ]);
@@ -38,6 +38,7 @@ export interface TestQueryResult {
   row_count: number;
   row_count_capped: boolean;
   result_sha256: string;
+  omitted_fields?: string[];
 }
 
 export interface TestQueryFetchResponse {
@@ -122,7 +123,7 @@ const RESULT_KEYS = [
 ];
 
 export function parseTestQueryResult(value: unknown): TestQueryResult | null {
-  if (!isPlainObject(value) || !hasExactKeys(value, RESULT_KEYS)) return null;
+  if (!isPlainObject(value) || !hasExactKeys(value, 'omitted_fields' in value ? [...RESULT_KEYS, 'omitted_fields'] : RESULT_KEYS)) return null;
   if (value['version'] !== TEST_QUERY_RESULT_VERSION) return null;
   if (!isDatabaseId(value['database_id'])) return null;
   const version = value['mapping_version'];
@@ -131,6 +132,9 @@ export function parseTestQueryResult(value: unknown): TestQueryResult | null {
   if (typeof queryId !== 'string' || !QUERY_ID_PATTERN.test(queryId)) return null;
   const columns = value['columns'];
   if (!isFieldList(columns)) return null;
+  const omitted = value['omitted_fields'];
+  if (omitted !== undefined && (!Array.isArray(omitted) ||
+    (omitted.length > 0 && !isFieldList(omitted)) || omitted.some((field) => columns.includes(field)))) return null;
   const rows = value['rows'];
   if (!Array.isArray(rows) || rows.length > MAX_PREVIEW_ROWS) return null;
   for (const row of rows) {
@@ -152,6 +156,7 @@ export function parseTestQueryResult(value: unknown): TestQueryResult | null {
     row_count: count,
     row_count_capped: capped,
     result_sha256: digest,
+    ...(omitted !== undefined ? { omitted_fields: omitted as string[] } : {}),
   };
 }
 
@@ -214,8 +219,9 @@ export async function runTestQuery(
     parsed === null ||
     parsed.database_id !== databaseId ||
     parsed.query_id !== queryId ||
-    parsed.columns.length !== definition.select.length ||
-    parsed.columns.some((column, index) => column !== definition.select[index])
+    (parsed.omitted_fields ?? []).some((field) => !definition.select.includes(field)) ||
+    parsed.columns.length !== definition.select.filter((field) => !(parsed.omitted_fields ?? []).includes(field)).length ||
+    parsed.columns.some((column, index) => column !== definition.select.filter((field) => !(parsed.omitted_fields ?? []).includes(field))[index])
   ) {
     throw new TestQueryClientError('contract');
   }
@@ -227,6 +233,8 @@ export function toTestQueryMessage(error: unknown): string {
     if (error.kind === 'transport') return '연결에 실패했습니다. 다시 시도해 주세요.';
     if (error.kind === 'contract') return '응답 형식이 올바르지 않습니다. 다시 시도해 주세요.';
     if (error.serverCode === 'ADMIN_TEST_QUERY_NOT_FOUND') return '게시·활성화된 DB에서만 test query를 실행할 수 있습니다.';
+    if (error.failureCode === 'TEST_QUERY_UNSUPPORTED') return '이 DB에서는 실행할 수 없음: 조회할 항목이 없습니다.';
+    if (error.failureCode === 'POSTGRES_CURRENT_VERSION_ONLY') return 'PostgreSQL 회귀 확인은 현재 게시 버전에서만 가능합니다.';
     if (error.serverCode === 'ADMIN_TEST_QUERY_FAILED') {
       return `test query가 실행 경로에서 거부되었습니다${error.failureCode !== null ? ` (${error.failureCode})` : ''}.`;
     }

@@ -237,7 +237,9 @@ def _summarize_review(loaded_registration: Any, draft: Any) -> dict[str, Any] | 
             allowed.append({"name": str(table.name), "columns": sorted(columns)})
         allowed.sort(key=lambda item: item["name"])
         fields: list[dict[str, Any]] = []
-        for semantic_field in sorted(draft.fields.keys()):
+        from ..ontology import load_default_ontology
+        retired = load_default_ontology().retired_fields
+        for semantic_field in sorted(set(draft.fields) - retired):
             entry = draft.fields[semantic_field]
             options = list(candidates.get(semantic_field, []))
             parsed_options: list[dict[str, Any]] = []

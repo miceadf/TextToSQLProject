@@ -26,6 +26,7 @@ from backend.adaptive.fixtures.coded import build_coded_database
 from backend.adaptive.fixtures.flat import build_flat_database
 from backend.adaptive.fixtures.hybrid import build_hybrid_database
 from backend.adaptive.fixtures.seed import DEFAULT_SEED
+from backend.adaptive.ontology import load_default_ontology
 from tests.adaptive.test_mapping_version_rollback import _source_with_alternate_title
 from tests.adaptive.test_private_mapping_publish import _action, _make_repo, _publish_flow, _upload
 from tests.adaptive.test_schema_compare import _publish_hybrid
@@ -38,6 +39,9 @@ def _publish_fixture(client: TestClient, raw: bytes, database_id: str, variant) 
     assert _upload(client, database_id, "Label", raw).status_code == 200
     assert _action(client, {"action": "INIT", "database_id": database_id, "reviewer": "tester"}).status_code == 200
     for semantic_field, column in _COLUMNS[variant].items():
+        # Phase 9-24: fixture metadata is historical; current review excludes year.
+        if semantic_field not in load_default_ontology().active_fields:
+            continue
         table = _TABLES[variant][semantic_field.split(".", 1)[0]]
         response = _action(client, {
             "action": "REMAP", "database_id": database_id, "semantic_field": semantic_field,

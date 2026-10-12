@@ -811,7 +811,7 @@ def test_smoke_runs_fixed_queries_through_runtime() -> None:
     executor = RowExecutor()
     results = lvp.run_smoke(make_context(executor=executor))
     assert [item["status"] for item in results] == ["OK"] * len(lvp.SMOKE_QUERIES)
-    assert results[-1]["failure_code"] == "MAPPING_MISSING"
+    assert results[-1]["failure_code"] == "UNKNOWN_FIELD"
     # the unsupported query never reaches the executor
     assert len(executor.queries) == len(lvp.SMOKE_QUERIES) - 1
     text = json.dumps(results, ensure_ascii=False)

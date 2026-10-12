@@ -137,7 +137,7 @@ def validate_evaluation_set(
     if require_full and not 30 <= len(evaluation_set.cases) <= 50:
         raise ValueError("full evaluation set requires 30 to 50 cases")
 
-    fields = ontology.fields
+    fields = ontology.fields_at(evaluation_set.ontology_version)
     entities = {entity.name for entity in ontology.entities}
     known_keys = offering_index(seed)
     normalized_questions: set[str] = set()

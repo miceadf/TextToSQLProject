@@ -139,7 +139,7 @@ def _runtime_ontology() -> Ontology:
             name: OntologyField(
                 name=name, data_type=field.data_type, allowed_operators=field.allowed_operators
             )
-            for name, field in domain.fields.items()
+            for name, field in domain.active_fields.items()
         },
     )
 
@@ -199,24 +199,40 @@ def _map_review_error(exc: Exception) -> AdminTestQueryError:
     return AdminTestQueryError(AdminTestQueryErrorCode.INTERNAL_ERROR)
 
 
-def _execute(loaded: Any, database_id: str, query_id: str) -> dict[str, Any]:
+def _execute(loaded: Any, database_id: str, query_id: str, *, context: Any = None) -> dict[str, Any]:
     """Run one fixed query on an already strictly loaded published mapping."""
     definition = TEST_QUERIES.get(query_id)
     if definition is None:
         raise AdminTestQueryError(AdminTestQueryErrorCode.INVALID_REQUEST)
+    columns = list(definition["select"])
+    omitted = []
+    if context is not None:
+        omitted = [name for name in columns if name in context.unsupported_fields()]
+        columns = [name for name in columns if name not in omitted]
+        if not columns:
+            raise AdminTestQueryError(AdminTestQueryErrorCode.FAILED, "TEST_QUERY_UNSUPPORTED")
     try:
         query_ir = QueryIR.model_validate({
             "entity": definition["entity"],
-            "select": list(definition["select"]),
+            "select": columns,
             "filters": [],
             "limit": MAX_RESULT_ROWS,
         })
-        graph = build_physical_relation_graph(loaded.catalog)
+        if context is None:
+            graph = build_physical_relation_graph(loaded.catalog)
+            compiler = SchemaAdaptiveSQLiteCompiler(graph, loaded.profile)
+            policy = SchemaAdaptiveAstPolicy(graph, loaded.profile)
+            executor = SQLiteReadOnlyExecutor({database_id: loaded.database_path})
+            mapping = to_harness_mapping(loaded.profile)
+        else:
+            from .postgres_runtime import DatabaseRoutingExecutor
+            compiler = context.compiler()
+            policy = context.policy()
+            executor = DatabaseRoutingExecutor(context.executor(), {database_id: context})
+            mapping = context.harness_mapping()
         harness = ExecutionHarness(
             model=FakeModel({query_id: query_ir.model_dump(mode="json")}),
-            compiler=SchemaAdaptiveSQLiteCompiler(graph, loaded.profile),
-            sql_policy=SchemaAdaptiveAstPolicy(graph, loaded.profile),
-            executor=SQLiteReadOnlyExecutor({database_id: loaded.database_path}),
+            compiler=compiler, sql_policy=policy, executor=executor,
         )
         result = harness.run(
             HarnessRequest(
@@ -225,14 +241,13 @@ def _execute(loaded: Any, database_id: str, query_id: str) -> dict[str, Any]:
                 question=query_id,
             ),
             _runtime_ontology(),
-            to_harness_mapping(loaded.profile),
+            mapping,
         )
     except Exception:
         raise AdminTestQueryError(AdminTestQueryErrorCode.INTERNAL_ERROR) from None
     if result.status is not HarnessStatus.SUCCEEDED:
         code = result.error.code.value if result.error is not None else "HARNESS_FAILURE"
         raise AdminTestQueryError(AdminTestQueryErrorCode.FAILED, str(code))
-    columns = list(definition["select"])
     if list(result.columns) != columns:
         raise AdminTestQueryError(AdminTestQueryErrorCode.FAILED, "RESULT_SHAPE_MISMATCH")
     rows: list[list[Any]] = []
@@ -250,19 +265,23 @@ def _execute(loaded: Any, database_id: str, query_id: str) -> dict[str, Any]:
     return {
         "version": TEST_QUERY_RESULT_VERSION,
         "database_id": database_id,
-        "mapping_version": int(loaded.mapping_version),
+        "mapping_version": int(context.published_mapping().version if context is not None else loaded.mapping_version),
         "query_id": query_id,
         "columns": columns,
         "rows": rows[:MAX_PREVIEW_ROWS],
         "row_count": len(rows),
         "row_count_capped": len(rows) >= MAX_RESULT_ROWS,
         "result_sha256": digest,
+        **({"omitted_fields": omitted} if context is not None else {}),
     }
 
 
-def run_test_query(repository_root: str | Path, database_id: str, query_id: str) -> dict[str, Any]:
+def run_test_query(repository_root: str | Path, database_id: str, query_id: str, *, postgres_service: Any = None) -> dict[str, Any]:
     if query_id not in TEST_QUERIES:
         raise AdminTestQueryError(AdminTestQueryErrorCode.INVALID_REQUEST)
+    if postgres_service is not None and postgres_service.handles(Path(repository_root), database_id):
+        context = postgres_service.test_query_context(Path(repository_root), database_id)
+        return _execute(None, database_id, query_id, context=context)
     try:
         activation = review_storage.load_activation(
             repository_root=repository_root, database_id=database_id
@@ -279,10 +298,10 @@ def _baseline_payload(record: Any) -> list[dict[str, Any]]:
 
 
 def verify_test_query(
-    repository_root: str | Path, database_id: str, query_id: str, verified_by: str
+    repository_root: str | Path, database_id: str, query_id: str, verified_by: str, *, postgres_service: Any = None
 ) -> dict[str, Any]:
     """Record the server-computed result of the active version as the baseline."""
-    result = run_test_query(repository_root, database_id, query_id)
+    result = run_test_query(repository_root, database_id, query_id, postgres_service=postgres_service)
     try:
         entry = review_storage.VerifiedQueryEntry(
             query_id=query_id,
@@ -297,9 +316,14 @@ def verify_test_query(
     except Exception:
         raise AdminTestQueryError(AdminTestQueryErrorCode.INTERNAL_ERROR) from None
     try:
-        record = review_storage.record_verified_query(
-            repository_root=repository_root, database_id=database_id, entry=entry
-        )
+        if postgres_service is not None and postgres_service.handles(Path(repository_root), database_id):
+            record = postgres_service.record_verified_query(Path(repository_root), database_id, entry)
+        else:
+            record = review_storage.record_verified_query(
+                repository_root=repository_root, database_id=database_id, entry=entry
+            )
+    except AdminTestQueryError:
+        raise
     except Exception as exc:
         raise _map_review_error(exc) from None
     return {
@@ -309,21 +333,30 @@ def verify_test_query(
     }
 
 
-def run_regression(repository_root: str | Path, database_id: str, mapping_version: int) -> dict[str, Any]:
+def run_regression(repository_root: str | Path, database_id: str, mapping_version: int, *, postgres_service: Any = None) -> dict[str, Any]:
     """Compare every fixed query on one published version with its baseline."""
-    try:
-        target = review_storage.load_published_version(
-            repository_root=repository_root, database_id=database_id, mapping_version=mapping_version
-        )
-    except Exception as exc:
-        raise _map_review_error(exc) from None
-    try:
-        active: int | None = review_storage.load_activation(
-            repository_root=repository_root, database_id=database_id
-        ).mapping_version
-    except Exception:
-        active = None
-    baselines = review_storage.load_verified_queries(repository_root=repository_root, database_id=database_id)
+    context = None
+    if postgres_service is not None and postgres_service.handles(Path(repository_root), database_id):
+        context = postgres_service.test_query_context(Path(repository_root), database_id)
+        active = context.published_mapping().version
+        if type(mapping_version) is not int or mapping_version != active:
+            raise AdminTestQueryError(AdminTestQueryErrorCode.FAILED, "POSTGRES_CURRENT_VERSION_ONLY")
+        target = None
+        baselines = postgres_service.load_verified_queries(Path(repository_root), database_id)
+    else:
+        try:
+            target = review_storage.load_published_version(
+                repository_root=repository_root, database_id=database_id, mapping_version=mapping_version
+            )
+        except Exception as exc:
+            raise _map_review_error(exc) from None
+        try:
+            active: int | None = review_storage.load_activation(
+                repository_root=repository_root, database_id=database_id
+            ).mapping_version
+        except Exception:
+            active = None
+        baselines = review_storage.load_verified_queries(repository_root=repository_root, database_id=database_id)
     by_query = {item.query_id: item for item in (baselines.entries if baselines else [])}
     results: list[dict[str, Any]] = []
     for query_id in TEST_QUERIES:
@@ -336,7 +369,7 @@ def run_regression(repository_root: str | Path, database_id: str, mapping_versio
             "failure_code": None,
         }
         try:
-            outcome = _execute(target, database_id, query_id)
+            outcome = _execute(target, database_id, query_id, context=context)
         except AdminTestQueryError as exc:
             if exc.code is not AdminTestQueryErrorCode.FAILED:
                 raise
@@ -359,7 +392,7 @@ def run_regression(repository_root: str | Path, database_id: str, mapping_versio
     return {
         "version": REGRESSION_VERSION,
         "database_id": database_id,
-        "mapping_version": int(target.mapping_version),
+        "mapping_version": int(active if context is not None else target.mapping_version),
         "active_mapping_version": active,
         "summary": summary,
         "results": results,
@@ -408,7 +441,8 @@ def register_admin_test_query_routes(app: FastAPI) -> None:
                 return _error(AdminTestQueryError(AdminTestQueryErrorCode.INTERNAL_ERROR))
             try:
                 body = verify_test_query(
-                    root, payload["database_id"], payload["query_id"], payload["verified_by"]
+                    root, payload["database_id"], payload["query_id"], payload["verified_by"],
+                    postgres_service=getattr(app.state, "postgres_registration_service", None)
                 )
             except AdminTestQueryError as exc:
                 return _error(exc)
@@ -431,7 +465,7 @@ def register_admin_test_query_routes(app: FastAPI) -> None:
             except Exception:
                 return _error(AdminTestQueryError(AdminTestQueryErrorCode.INTERNAL_ERROR))
             try:
-                body = run_regression(root, params["database_id"], int(version_text))
+                body = run_regression(root, params["database_id"], int(version_text), postgres_service=getattr(app.state, "postgres_registration_service", None))
             except AdminTestQueryError as exc:
                 return _error(exc)
             text = json.dumps(body, ensure_ascii=False, sort_keys=True, allow_nan=False)
@@ -450,7 +484,7 @@ def register_admin_test_query_routes(app: FastAPI) -> None:
             except Exception:
                 return _error(AdminTestQueryError(AdminTestQueryErrorCode.INTERNAL_ERROR))
             try:
-                payload = run_test_query(root, params["database_id"], params["query_id"])
+                payload = run_test_query(root, params["database_id"], params["query_id"], postgres_service=getattr(app.state, "postgres_registration_service", None))
             except AdminTestQueryError as exc:
                 return _error(exc)
             text = json.dumps(payload, ensure_ascii=False, sort_keys=True, allow_nan=False)

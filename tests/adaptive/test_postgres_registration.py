@@ -11,7 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.adaptive.api import dev_launcher
-from backend.adaptive.api.chat_query import answer_chat_query
+from backend.adaptive.api.chat_query import ChatQueryError, ChatQueryErrorCode, answer_chat_query
 from backend.adaptive.api.review_publish import REVIEW_PATH
 from backend.adaptive.api.synthetic_prototype import (
     create_synthetic_clarification_prototype,
@@ -178,6 +178,227 @@ def test_schema_listing_failure_is_a_fixed_code() -> None:
 # --- register, review, publish -------------------------------------------------------------
 
 
+def test_reserved_selection_id_is_invalid_and_writes_nothing(client_repo) -> None:
+    client, repo, _app, _executor = client_repo
+    before = sorted(path.relative_to(repo) for path in repo.rglob("*"))
+    response = _register(client, "legacy")
+    assert response.status_code == 400
+    assert response.json() == {"error": {"code": "POSTGRES_REGISTRATION_INVALID_INPUT"}}
+    assert sorted(path.relative_to(repo) for path in repo.rglob("*")) == before
+
+
+def test_delete_published_registration_without_restart(client_repo) -> None:
+    client, repo, app, _executor = client_repo
+    assert _register(client).status_code == 200
+    _review_all(client)
+    assert _review(client, {"action": "PUBLISH", "database_id": DB_ID, "published_by": "admin"}).status_code == 200
+    service = app.state.postgres_registration_service
+    assert DB_ID in service._reader._configs
+    for folder in ("blind-evals", "direct-sql-pg"):
+        artifact = repo / ".schema-adaptive" / folder / DB_ID / "result.json"
+        artifact.parent.mkdir(parents=True)
+        artifact.write_text('{"keep":true}', encoding="utf-8")
+    registration = pg._private_dir(repo, pg.REGISTRATION_ROOT, DB_ID)[1]
+    for name in ("dictionaries.json", "extensions.json", "verified-queries.json"):
+        (registration / name).write_text("{}", encoding="utf-8")
+    response = client.delete(REGISTER, params={"database_id": DB_ID})
+    assert response.json() == {"database_id": DB_ID, "deleted": True}
+    assert response.status_code == 200
+    assert not registration.exists()
+    assert not pg._private_dir(repo, pg.PROFILE_ROOT, DB_ID)[1].exists()
+    assert DB_ID not in app.state.synthetic_postgres_contexts
+    with pytest.raises(ChatQueryError) as caught:
+        answer_chat_query(database_id=DB_ID, question="강의 목록", pg_contexts=app.state.synthetic_postgres_contexts, model=None)
+    assert caught.value.code == ChatQueryErrorCode.CONTEXT_UNAVAILABLE
+    assert DB_ID not in service._reader._configs
+    assert service._reader.read(DB_ID, VIEW, "category", 10) is None
+    assert all(item["database_id"] != DB_ID for item in client.get(DATABASES_PATH).json()["databases"])
+    assert client.get(REGISTER).json()["registrations"] == []
+    assert client.get(REVIEW_PATH, params={"database_id": DB_ID}).status_code == 404
+    for folder in ("blind-evals", "direct-sql-pg"):
+        assert (repo / ".schema-adaptive" / folder / DB_ID / "result.json").read_text(encoding="utf-8") == '{"keep":true}'
+    assert client.delete(REGISTER, params={"database_id": DB_ID}).status_code == 404
+    assert _register(client).status_code == 200
+
+
+def test_delete_existing_reserved_legacy_registration(client_repo) -> None:
+    client, repo, _app, _executor = client_repo
+    # Imitate a registration saved before Phase 9-17, only in this temp repo.
+    directory = pg._private_dir(repo, pg.REGISTRATION_ROOT, "legacy")[1]
+    directory.mkdir(parents=True)
+    (directory / "registration.json").write_text("{}", encoding="utf-8")
+    profile = pg._private_dir(repo, pg.PROFILE_ROOT, "legacy")[1]
+    profile.mkdir(parents=True)
+    assert client.delete(REGISTER, params={"database_id": "legacy"}).json() == {"database_id": "legacy", "deleted": True}
+    assert not directory.exists() and not profile.exists()
+    assert _register(client, "legacy").status_code == 400
+
+
+def test_delete_forgets_value_hints_before_same_id_and_key_republish(client_repo, monkeypatch) -> None:
+    client, _repo_path, app, _executor = client_repo
+    assert _register(client).status_code == 200
+    _review_all(client)
+    assert _review(client, {"action": "PUBLISH", "database_id": DB_ID, "published_by": "admin"}).status_code == 200
+    service = app.state.postgres_registration_service
+    indexes = service._value_indexes
+    old_context = service._live.get(DB_ID)
+    old_index = indexes.get(old_context)
+    assert old_index.find("교양")
+    # A dictionary alias and an unrelated database entry must also be handled.
+    from backend.adaptive.api.value_hints import ValueIndex
+    from backend.adaptive.mapping.values import ValueDictionary, ValueEntry
+    old_key = next(key for key in indexes._cache if key[0] == DB_ID)
+    old_index = ValueIndex({}, {"Course.category": ValueDictionary(
+        entries=(ValueEntry(stored="교양", label="교양", aliases=("옛별칭",)),),
+        reviewer="test", reason="fixture",
+    )})
+    indexes._cache[old_key] = (old_index, None)
+    other_version_key = (DB_ID, old_key[1], old_key[2] + 1)
+    indexes._cache[other_version_key] = (old_index, None)
+    other_key = ("other-db", old_key[1], old_key[2])
+    indexes._cache[other_key] = (old_index, None)
+    assert old_index.find("옛별칭")
+    assert client.delete(REGISTER, params={"database_id": DB_ID}).status_code == 200
+    assert old_key not in indexes._cache and other_version_key not in indexes._cache
+    assert other_key in indexes._cache
+    assert _register(client).status_code == 200
+    _review_all(client)
+    assert _review(client, {"action": "PUBLISH", "database_id": DB_ID, "published_by": "admin"}).status_code == 200
+    new_context = service._live.get(DB_ID)
+    assert (new_context.database_id, new_context.expected_fingerprint, new_context.published_mapping().version) == old_key
+    reads = []
+    monkeypatch.setattr(service._reader, "read", lambda *args: reads.append(args) or ["새값"])
+    new_index = indexes.get(new_context)
+    assert reads and new_index is not old_index
+    assert new_index.find("새값") and not new_index.find("교양") and not new_index.find("옛별칭")
+
+
+@pytest.mark.parametrize("reparse", [False, True])
+def test_delete_without_path_is_junction_uses_reparse_attributes(client_repo, monkeypatch, reparse) -> None:
+    from types import SimpleNamespace
+    client, repo, _app, _executor = client_repo
+    assert _register(client).status_code == 200
+    registration = pg._private_dir(repo, pg.REGISTRATION_ROOT, DB_ID)[1]
+    marked = registration / "marked"
+    marked.mkdir()
+    # Shadow any PathBase fallback in newer Python as well as Path's method.
+    monkeypatch.setattr(Path, "is_junction", None, raising=False)
+    monkeypatch.delattr(pg.os.path, "isjunction", raising=False)
+    original_lstat = pg.os.lstat
+    def lstat(path, *args, **kwargs):
+        if reparse and Path(path) == marked:
+            return SimpleNamespace(st_file_attributes=0x400, st_mode=original_lstat(path).st_mode)
+        return original_lstat(path, *args, **kwargs)
+    monkeypatch.setattr(pg.os, "lstat", lstat)
+    # os.name is already nt on Windows; isolate the helper's platform on other hosts.
+    monkeypatch.setattr(pg, "os", SimpleNamespace(name="nt", path=pg.os.path, lstat=lstat))
+    if reparse:
+        with pytest.raises(pg.PostgresRegistrationError) as caught:
+            pg.delete_registration(repo, DB_ID)
+        assert caught.value.code == "PRIVATE_STORAGE_INVALID"
+        assert registration.exists() and marked.exists()
+    else:
+        pg.delete_registration(repo, DB_ID)
+        assert not registration.exists()
+
+
+@pytest.mark.parametrize("attributes,expected", [(0, False), (0x400, True), (None, False), (OSError(), False)])
+def test_junction_helper_without_path_method(monkeypatch, attributes, expected) -> None:
+    from types import SimpleNamespace
+    path = SimpleNamespace()  # no is_junction attribute, as in Python 3.10/3.11
+    def lstat(actual):
+        assert actual is path
+        if isinstance(attributes, OSError):
+            raise attributes
+        return SimpleNamespace() if attributes is None else SimpleNamespace(st_file_attributes=attributes)
+    monkeypatch.setattr(pg, "os", SimpleNamespace(name="nt", path=SimpleNamespace(), lstat=lstat))
+    assert pg._is_junction(path) is expected
+
+
+@pytest.mark.parametrize("database_id", ["missing", "legacy-view", "legacy-base", "sqlite-only", *sorted(pg.sqlite_storage.RESERVED_SYNTHETIC_DATABASE_IDS)])
+def test_delete_cannot_remove_non_registration_artifacts(client_repo, database_id: str) -> None:
+    client, repo, _app, _executor = client_repo
+    profile = repo / ".schema-adaptive" / "postgres-profiles" / database_id
+    profile.mkdir(parents=True)
+    marker = profile / "profile.json"
+    marker.write_text("{}", encoding="utf-8")
+    sqlite = repo / ".schema-adaptive" / "registered-databases" / database_id
+    sqlite.mkdir(parents=True)
+    response = client.delete(REGISTER, params={"database_id": database_id})
+    assert response.status_code == 404
+    assert response.json() == {"error": {"code": "POSTGRES_REGISTRATION_NOT_FOUND"}}
+    assert marker.exists() and sqlite.exists()
+
+
+@pytest.mark.parametrize("query,body", [
+    ("", b""), ("database_id=", b""), ("database_id=..%2Foutside", b""),
+    ("database_id=C%3A%5Coutside", b""), ("database_id=campus-pg&extra=x", b""),
+    ("database_id=campus-pg&database_id=other", b""), ("database_id=campus-pg", b"{}"),
+])
+def test_delete_strict_request_validation(client_repo, query: str, body: bytes) -> None:
+    client, _repo_path, _app, _executor = client_repo
+    assert _register(client).status_code == 200
+    response = client.request("DELETE", REGISTER + "?" + query, content=body)
+    assert response.status_code == 400
+    assert response.json() == {"error": {"code": "POSTGRES_REGISTRATION_INVALID_INPUT"}}
+    assert len(client.get(REGISTER).json()["registrations"]) == 1
+
+
+@pytest.mark.parametrize("location", ["registration", "profile", "nested"])
+@pytest.mark.parametrize("link_kind", ["symlink", "junction"])
+def test_delete_rejects_symlinks_before_removing_either_tree(client_repo, location: str, link_kind: str) -> None:
+    client, repo, _app, _executor = client_repo
+    assert _register(client).status_code == 200
+    registration = pg._private_dir(repo, pg.REGISTRATION_ROOT, DB_ID)[1]
+    profile = pg._private_dir(repo, pg.PROFILE_ROOT, DB_ID)[1]
+    outside = repo / "outside"
+    outside.mkdir()
+    (outside / "registration.json").write_text("{}", encoding="utf-8")
+    (outside / "keep.txt").write_text("keep", encoding="utf-8")
+    link = registration / "linked" if location == "nested" else profile
+    moved = repo / "saved-registration"
+    if location == "registration":
+        registration.rename(moved)
+        link = registration
+    else:
+        profile.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        if link_kind == "junction":
+            import sys
+            if sys.platform != "win32":
+                pytest.skip("Windows junction test")
+            # Both resolved paths are inside this fixture's temporary repository.
+            assert link.absolute().is_relative_to(repo) and outside.resolve().is_relative_to(repo)
+            subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(outside)],
+                           check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            link.symlink_to(outside, target_is_directory=True)
+    except (OSError, subprocess.CalledProcessError):
+        pytest.skip("Windows symlink privilege unavailable")
+    response = client.delete(REGISTER, params={"database_id": DB_ID})
+    assert response.status_code == 500
+    assert response.json() == {"error": {"code": "POSTGRES_REGISTRATION_INTERNAL_ERROR"}}
+    assert (outside / "keep.txt").read_text(encoding="utf-8") == "keep"
+    assert link.is_symlink() or link.is_junction()
+    assert (moved if location == "registration" else registration).is_dir()
+
+
+def test_storage_rejects_reserved_selection_id_before_inspection(tmp_path: Path) -> None:
+    def forbidden(*_args: Any) -> Any:
+        pytest.fail("reserved registration must not inspect or call a model")
+
+    with pytest.raises(pg.PostgresRegistrationError) as caught:
+        pg.register_postgres_database(
+            repository_root=tmp_path, source=pg.PostgresSource("campus", "Campus", SECRET_DSN),
+            schema="public", database_id="legacy", label="Legacy", adapter_factory=forbidden,
+            mapping_proposer=forbidden,
+        )
+    assert caught.value.code == "INVALID_INPUT"
+    assert list(tmp_path.iterdir()) == []
+    # Existing records still pass the ID validator used by loaders.
+    assert pg.sqlite_storage.validate_database_id("legacy") == "legacy"
+
+
 def test_register_review_publish_and_serve_without_restart(client_repo) -> None:
     client, repo, app, executor = client_repo
     registered = _register(client)
@@ -189,6 +410,8 @@ def test_register_review_publish_and_serve_without_restart(client_repo) -> None:
     assert client.get(REVIEW_PATH, params={"database_id": DB_ID}).status_code == 404  # before INIT
 
     decisions = _review_all(client)
+    assert "CourseOffering.year" not in decisions
+    assert pg.load_draft(repository_root=repo, database_id=DB_ID).ontology_version == 3
     assert decisions["Department.code"] == "IGNORED"
     assert _review(client, {"action": "ACTIVATE", "database_id": DB_ID, "mapping_version": 1, "activated_by": "admin"}).status_code == 400
     published = _review(client, {"action": "PUBLISH", "database_id": DB_ID, "published_by": "admin"})
@@ -225,11 +448,50 @@ def test_register_review_publish_and_serve_without_restart(client_repo) -> None:
     assert answer["status"] == "SUCCEEDED"
     assert "SPLIT_PART" in executor.queries[-1].sql
     detail = client.get(REVIEW_PATH, params={"database_id": DB_ID}).json()
-    assert detail["status"] == "PUBLISHED" and detail["mapping_versions"][0]["activatable"] is False
+    assert detail["status"] == "PUBLISHED" and detail["mapping_versions"][0]["activatable"] is True
 
     # Publishing again makes a new version.
     again = _review(client, {"action": "PUBLISH", "database_id": DB_ID, "published_by": "admin"})
     assert again.json()["mapping_version"] == 2
+
+
+@pytest.mark.parametrize("action", ["GET", "INIT"])
+@pytest.mark.parametrize("stored_at", ["2026-10-12T12:39:49.389950Z", "2026-10-12T12:39:49Z"])
+def test_published_review_matches_frontend_history_contract(client_repo, action: str, stored_at: str) -> None:
+    client, repo, _app, _executor = client_repo
+    assert _register(client).status_code == 200
+    _review_all(client)
+    for version in (1, 2):
+        published = _review(client, {"action": "PUBLISH", "database_id": DB_ID, "published_by": "admin"})
+        assert published.status_code == 200
+        assert published.json()["mapping_version"] == version
+
+    # Existing records retain their microseconds; only the review response normalizes them.
+    path = repo / ".schema-adaptive" / "postgres-registrations" / DB_ID / "published.json"
+    record = json.loads(path.read_text(encoding="utf-8"))
+    record["published_at"] = stored_at
+    path.write_text(json.dumps(record), encoding="utf-8")
+    stored_bytes = path.read_bytes()
+    assert pg.load_published(repository_root=repo, database_id=DB_ID).published_at == stored_at
+
+    if action == "GET":
+        response = client.get(REVIEW_PATH, params={"database_id": DB_ID})
+    else:
+        response = _review(client, {"action": "INIT", "database_id": DB_ID, "reviewer": "admin"})
+    assert response.status_code == 200
+    detail = response.json()
+    assert detail["status"] == "PUBLISHED"
+    assert detail["mapping_version"] == detail["active_mapping_version"] == 2
+    assert detail["mapping_versions"] == [{
+        "version": 2, "published_by": "admin", "published_at": "2026-10-12T12:39:49Z",
+        "active": True, "latest": True, "activatable": True,
+    }]
+    assert path.read_bytes() == stored_bytes
+    # The history flag does not add PostgreSQL rollback support.
+    assert _review(client, {
+        "action": "ACTIVATE", "database_id": DB_ID, "mapping_version": 1, "activated_by": "admin",
+    }).status_code == 400
+    assert path.read_bytes() == stored_bytes
 
 
 def test_publish_waits_for_every_field(client_repo) -> None:
@@ -482,3 +744,102 @@ def test_the_list_skips_damaged_drafts(client_repo) -> None:
     assert [item["database_id"] for item in client.get(REGISTER).json()["registrations"]] == [DB_ID]
     (repo / ".schema-adaptive" / "postgres-registrations" / DB_ID / "draft.json").write_text("{", encoding="utf-8")
     assert client.get(REGISTER).json()["registrations"] == []
+
+
+# Phase 9-13: fixed PostgreSQL queries share the published chat runtime.
+def _publish_for_test_queries(client):
+    assert _register(client).status_code == 200
+    _review_all(client)
+    assert _review(client, {"action": "PUBLISH", "database_id": DB_ID, "published_by": "admin"}).status_code == 200
+
+
+def test_postgres_fixed_queries_baseline_and_regression(client_repo):
+    from backend.adaptive.api.admin_test_queries import TEST_QUERIES, TEST_QUERY_PATH, VERIFIED_QUERIES_PATH, REGRESSION_PATH
+
+    client, repo, app, executor = client_repo
+    _publish_for_test_queries(client)
+    context = app.state.postgres_registration_service.test_query_context(repo, DB_ID)
+    for query_id, definition in TEST_QUERIES.items():
+        response = client.get(TEST_QUERY_PATH, params={"database_id": DB_ID, "query_id": query_id})
+        assert response.status_code == 200, response.text
+        result = response.json()
+        omitted = [field for field in definition["select"] if field in context.unsupported_fields()]
+        assert result["omitted_fields"] == omitted
+        assert result["columns"] == [field for field in definition["select"] if field not in omitted]
+        assert result["mapping_version"] == 1
+        assert result["rows"] == [] and result["row_count"] == 0
+        assert result["row_count_capped"] is False
+        assert len(result["result_sha256"]) == 64
+        assert VIEW in executor.queries[-1].sql
+        verified = client.post(VERIFIED_QUERIES_PATH, json={"action": "VERIFY", "database_id": DB_ID, "query_id": query_id, "verified_by": "admin"})
+        assert verified.status_code == 200, verified.text
+    baseline = repo / ".schema-adaptive" / "postgres-registrations" / DB_ID / "verified-queries.json"
+    saved = json.loads(baseline.read_text(encoding="utf-8"))
+    assert len(saved["entries"]) == 5
+    assert all(set(entry) == {"query_id", "mapping_version", "result_sha256", "row_count", "verified_by", "verified_at"} for entry in saved["entries"])
+    response = client.get(REGRESSION_PATH, params={"database_id": DB_ID, "mapping_version": 1})
+    assert response.status_code == 200, response.text
+    assert response.json()["summary"] == {"match": 5, "changed": 0, "failed": 0, "unverified": 0}
+    # Return one row using the compiled canonical projection, including normalized values.
+    def changed(database_id, compiled):
+        columns = list(compiled.expected_columns)
+        return columns, [{field: None for field in columns}]
+    executor.execute = changed
+    response = client.get(REGRESSION_PATH, params={"database_id": DB_ID, "mapping_version": 1})
+    assert response.json()["summary"]["changed"] == 5
+    response = client.get(REGRESSION_PATH, params={"database_id": DB_ID, "mapping_version": 2})
+    assert response.status_code == 422
+    assert response.json()["error"]["failure_code"] == "POSTGRES_CURRENT_VERSION_ONLY"
+    assert "s3cret" not in baseline.read_text(encoding="utf-8")
+
+
+def test_postgres_all_unsupported_query_and_stale_profile(client_repo):
+    from backend.adaptive.api.admin_test_queries import TEST_QUERIES, TEST_QUERY_PATH
+
+    client, repo, app, executor = client_repo
+    assert _register(client).status_code == 200
+    _review_all(client)
+    for name in TEST_QUERIES["seats"]["select"]:
+        assert _review(client, {"action": "IGNORE", "database_id": DB_ID, "semantic_field": name, "reviewer": "admin", "reason": "absent"}).status_code == 200
+    assert _review(client, {"action": "PUBLISH", "database_id": DB_ID, "published_by": "admin"}).status_code == 200
+    response = client.get(TEST_QUERY_PATH, params={"database_id": DB_ID, "query_id": "seats"})
+    assert response.status_code == 422, response.text
+    assert response.json()["error"]["failure_code"] == "TEST_QUERY_UNSUPPORTED"
+    assert not executor.queries
+
+    path = repo / ".schema-adaptive" / "postgres-profiles" / DB_ID / "mapping.json"
+    path.write_text('{}', encoding="utf-8")
+    response = client.get(TEST_QUERY_PATH, params={"database_id": DB_ID, "query_id": "offerings"})
+    assert response.status_code == 404
+    assert not executor.queries
+
+
+def test_postgres_preview_cap_normalization_and_verifier_validation(client_repo):
+    from decimal import Decimal
+    from backend.adaptive.api.admin_test_queries import TEST_QUERY_PATH, VERIFIED_QUERIES_PATH
+
+    client, repo, _app, executor = client_repo
+    _publish_for_test_queries(client)
+
+    def execute(database_id, compiled):
+        columns = list(compiled.expected_columns)
+        assert compiled.parameters[-1] == 200
+        rows = [
+            {field: Decimal("3") if field == "Course.credits" else str(index) for field in columns}
+            for index in range(200)
+        ]
+        return columns, rows
+
+    executor.execute = execute
+    result = client.get(TEST_QUERY_PATH, params={"database_id": DB_ID, "query_id": "courses"})
+    assert result.status_code == 200, result.text
+    body = result.json()
+    assert len(body["rows"]) == 5
+    assert body["row_count"] == 200 and body["row_count_capped"] is True
+    credit_index = body["columns"].index("Course.credits")
+    assert all(row[credit_index] == 3 for row in body["rows"])
+    result = client.post(VERIFIED_QUERIES_PATH, json={
+        "action": "VERIFY", "database_id": DB_ID, "query_id": "courses", "verified_by": "",
+    })
+    assert result.status_code == 400
+    assert not (repo / ".schema-adaptive" / "postgres-registrations" / DB_ID / "verified-queries.json").exists()

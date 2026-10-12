@@ -48,6 +48,7 @@ from .run_contracts import (
 )
 from .run_report import build_run_report, deterministic_request_id
 from .validator import validate_evaluation_set
+from .ontology_version import recorded_ontology
 
 
 class _ModelInvocationFailure(Exception):
@@ -109,7 +110,7 @@ def _runtime_ontology(ontology: DomainOntology) -> Ontology:
                 data_type=field.data_type,
                 allowed_operators=field.allowed_operators,
             )
-            for name, field in ontology.fields.items()
+            for name, field in ontology.active_fields.items()
         },
     )
 
@@ -125,7 +126,7 @@ def _prepare_fixture_contexts(
     contexts = {}
     metadata = []
     runtime_ontology = _runtime_ontology(ontology)
-    all_fields = sorted(FIELD_TO_ATTRIBUTE)
+    all_fields = sorted(set(FIELD_TO_ATTRIBUTE) & set(ontology.active_fields))
     preflight_ir = QueryIR(entity="CourseOffering", select=all_fields, limit=200)
     expected_rows = semantic_row_multiset(
         [semantic_row(offering, all_fields) for offering in seed.offerings],
@@ -212,6 +213,7 @@ def run_evaluation(
 
     domain_ontology = ontology or load_default_ontology()
     validate_evaluation_set(gold, seed, domain_ontology)
+    domain_ontology = recorded_ontology(domain_ontology, version=gold.ontology_version)
     contexts, fixture_metadata = _prepare_fixture_contexts(
         bundle, seed, domain_ontology, published_mappings
     )

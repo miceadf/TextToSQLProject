@@ -207,6 +207,7 @@ def test_answer_must_cover_the_canonical_fields() -> None:
 
 
 def test_rule_baseline_is_deterministic_and_locked() -> None:
+    # The unversioned benchmark selects v2 itself; product registration uses v3.
     scores = vb.offline_scores()
     assert vb.offline_scores() == scores
     rules = {name: record["rules"]["field"] for name, record in scores.items()}
@@ -245,7 +246,7 @@ def test_execute_answer_classifies_outcomes() -> None:
     )
     outcomes = result["outcomes"]
     assert result["profile"] == "ACCEPTED"
-    # year questions are correctly refused without reaching the executor
+    # Offline benchmark uses the profile's declared v1, preserving refusals.
     assert outcomes["v09"] == "CORRECT" and outcomes["v19"] == "CORRECT"
     assert outcomes["v01"] == "WRONG_ROWS"  # the fake executor returns no rows
     assert len(executor.queries) == len(vb.QUESTIONS) - 2

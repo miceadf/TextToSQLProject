@@ -1,3 +1,4 @@
+import { adminStyles, disabledTitle } from './adminStyles.ts';
 import { useEffect, useRef, useState } from 'react';
 import {
   fetchSchemaComparison,
@@ -77,12 +78,12 @@ export default function SchemaComparePanel({ candidateDatabaseId, baseOptions, f
   }
 
   return (
-    <div className="mt-2 space-y-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-800">
-      <div className="font-semibold">기존 DB와 schema 비교 (읽기 전용)</div>
+    <div className={`${adminStyles.box} mt-2 space-y-2 text-xs text-slate-800`}>
+      <div className={adminStyles.title}>기존 DB와 schema 비교 (읽기 전용)</div>
       <div className="flex flex-wrap items-center gap-2">
         <label className="flex items-center gap-1">
           기준 DB
-          <select value={effectiveBase} onChange={(event) => setBaseId(event.target.value)} disabled={loading}>
+          <select value={effectiveBase} onChange={(event) => setBaseId(event.target.value)} disabled={loading} className={adminStyles.input}>
             {options.map((entry) => (
               <option key={entry.database_id} value={entry.database_id}>
                 {entry.label} ({entry.database_id})
@@ -90,12 +91,12 @@ export default function SchemaComparePanel({ candidateDatabaseId, baseOptions, f
             ))}
           </select>
         </label>
-        <button type="button" onClick={() => void handleCompare()} disabled={loading}>
+        <button type="button" onClick={() => void handleCompare()} disabled={loading} className={adminStyles.secondary} title={disabledTitle([loading, "불러오거나 처리 중입니다."])}>
           {loading ? '비교 중' : '비교'}
         </button>
       </div>
       {error !== null ? (
-        <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 font-medium text-rose-900" role="alert">
+        <div className={adminStyles.error} role="alert">
           {error}
         </div>
       ) : null}
@@ -125,7 +126,7 @@ export default function SchemaComparePanel({ candidateDatabaseId, baseOptions, f
             </div>
           ))}
           {result.truncated ? <div>변경이 많아 일부만 표시했습니다.</div> : null}
-          <div className="pt-1 font-semibold">활성 mapping 영향</div>
+          <div className={adminStyles.title}>활성 mapping 영향</div>
           {result.field_impacts.map((item) => (
             <div key={item.semantic_field}>
               {item.semantic_field} · {item.table}.{item.column} · {FIELD_STATUS_LABELS[item.status] ?? item.status}

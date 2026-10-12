@@ -45,6 +45,7 @@ from ..ontology.outside_concepts import default_outside_concepts
 from .postgres_runtime import DatabaseRoutingExecutor, is_postgres_context_current
 from .unknown_conditions import mentioned_fields, outside_concepts, output_filter_values
 from .time_hints import apply_time_conditions, find_time_conditions
+from .unmatched_terms import find_unmatched_terms
 from .value_hints import MAX_HINTS, ChatValueIndexes, repair_output
 from .review_publish import _parse_strict_body, _read_limited_body
 from ..mapping.extensions import DATA_TYPES as EXTENSION_TYPES
@@ -136,7 +137,7 @@ def _runtime_ontology(extensions: dict[str, Any] | None = None) -> tuple[Ontolog
         name: OntologyField(
             name=name, data_type=field.data_type, allowed_operators=field.allowed_operators
         )
-        for name, field in domain.fields.items()
+        for name, field in domain.active_fields.items()
     }
     labels = {name: field.label for name, field in domain.fields.items()}
     for name, extension in (extensions or {}).items():
@@ -474,12 +475,19 @@ def answer_chat_query(
         extensions = _extensions_of(context)
         ontology, labels = _runtime_ontology(extensions)
         mapping = context.harness_mapping()
-        unsupported = set(context.unsupported_fields())
+        unsupported = set(context.unsupported_fields()) | _domain_ontology().retired_fields
         request = HarnessRequest(
             request_id=f"chat-{uuid4()}", database_id=database_id, question=question
         )
     except Exception:
         raise ChatQueryError(ChatQueryErrorCode.EXECUTION_FAILED, "CONTEXT_ERROR") from None
+
+    # A retired condition must never be silently discarded by a model.
+    named_retired = mentioned_fields(question, _domain_ontology(), _domain_ontology().retired_fields)
+    if _UNLABELLED_REQUESTS["CourseOffering.year"].search(question):
+        named_retired.append("CourseOffering.year")
+    if named_retired:
+        return _unsupported(database_id, list(dict.fromkeys(named_retired)), labels, [])
 
     # Phase 8-25: time words are read by closed rules; a time field this
     # database lacks makes the question unsupported whatever the model says.
@@ -500,7 +508,7 @@ def answer_chat_query(
         try:
             index = value_indexes.get(context)
             if index is not None:
-                hints = index.find(question, allowed_fields=set(mapping.fields))
+                hints = index.find(question, allowed_fields=set(mapping.fields) & set(ontology.fields) - unsupported)
         except Exception:
             index, hints = None, []  # hints are optional help, never a failure
 
@@ -557,6 +565,8 @@ def answer_chat_query(
         return _not_understood(database_id, "MODEL_INVALID_OUTPUT")
 
 
+    if any(field in _domain_ontology().retired_fields for field in _referenced_fields(query_ir)):
+        return _not_understood(database_id, "UNKNOWN_FIELD")
     query_ir = _drop_unasked_select(query_ir, question, unsupported, set(mapping.fields))
     requested_unsupported = [
         field for field in dict.fromkeys(_referenced_fields(query_ir)) if field in unsupported
@@ -635,6 +645,9 @@ def answer_chat_query(
     ]
     if no_period:
         answer = _empty_answer(database_id, card_fields, executed, labels, transforms, dictionaries)
+        terms = find_unmatched_terms(question, _domain_ontology(), executed.filters, hints=hints, timed=timed, extensions=extensions)
+        if terms:
+            answer["unmatched_terms"] = terms
         answer["unmatched"] = [
             {
                 "field": item.field,
@@ -705,6 +718,9 @@ def answer_chat_query(
         if unmatched:
             answer["unmatched"] = unmatched
     _add_extensions(answer, extension_cards, extensions)
+    terms = find_unmatched_terms(question, _domain_ontology(), executed.filters, hints=hints, timed=timed, extensions=extensions)
+    if terms:
+        answer["unmatched_terms"] = terms
     if show_sql and recorder.compiled is not None:
         try:
             answer["sql"] = render_sql_preview(
@@ -762,6 +778,7 @@ def register_chat_query_routes(
     pg_contexts: dict[str, Any],
     model: Any | None,
     value_reader: Any | None = None,
+    value_indexes: ChatValueIndexes | None = None,
     show_sql: bool = False,
     models: tuple[ChatModelChoice, ...] | list[ChatModelChoice] | None = None,
 ) -> None:
@@ -782,7 +799,7 @@ def register_chat_query_routes(
 
     contexts = shared_or_copy(pg_contexts)
     # Phase 8-13: value hints only with a server-owned distinct-value reader.
-    value_indexes = (
+    value_indexes = value_indexes if value_indexes is not None else (
         None if value_reader is None else ChatValueIndexes(value_reader, load_default_ontology())
     )
 

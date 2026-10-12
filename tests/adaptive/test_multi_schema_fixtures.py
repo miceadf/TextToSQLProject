@@ -8,6 +8,7 @@ from pathlib import Path
 from backend.adaptive.catalog import DatabaseCatalog
 from backend.adaptive.fixtures import CORE_VARIANTS, DEFAULT_SEED, FixtureVariant, build_fixture_bundle
 from backend.adaptive.mapping import MappingProposal
+from backend.adaptive.evaluation.ontology_version import recorded_ontology
 
 
 FLAT_QUERY = """
@@ -157,7 +158,8 @@ class MultiSchemaFixtureTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.output = Path(self.temp_dir.name) / "fixtures"
-        self.bundle = build_fixture_bundle(self.output)
+        # Phase 9-24: this unversioned historical mapping baseline uses v2.
+        self.bundle = build_fixture_bundle(self.output, ontology=recorded_ontology())
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
@@ -292,7 +294,7 @@ class MultiSchemaFixtureTest(unittest.TestCase):
             ).schema_fingerprint
             for variant, artifact in self.bundle.artifacts.items()
         }
-        rebuilt = build_fixture_bundle(self.output)
+        rebuilt = build_fixture_bundle(self.output, ontology=recorded_ontology())
 
         self.assertNotEqual(rebuilt.generation_id, self.bundle.generation_id)
         committed = type(rebuilt).model_validate_json(

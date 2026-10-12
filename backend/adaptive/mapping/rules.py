@@ -93,7 +93,7 @@ class RuleBasedSchemaAligner:
         candidates: dict[str, list[MappingCandidate]] = {}
         unmapped_fields: list[str] = []
 
-        for entity in ontology.entities:
+        for entity in ontology.at_version(ontology.version).entities:
             for field in entity.fields:
                 ranked = self._rank_field(catalog, entity, field)
                 candidates[field.name] = ranked[: self._candidates_per_field]
@@ -116,7 +116,7 @@ class RuleBasedSchemaAligner:
         column: ColumnCatalog,
     ) -> MappingCandidate:
         """The rule score of one given column, even below the candidate minimum."""
-        for entity in ontology.entities:
+        for entity in ontology.at_version(ontology.version).entities:
             for field in entity.fields:
                 if field.name == semantic_field:
                     return self._score_candidate(entity, field, table, column)

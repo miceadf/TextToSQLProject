@@ -5,6 +5,7 @@ import {
   describeAnswer,
   describeChatModel,
   describeUnmatched,
+  describeUnmatchedTerms,
   describeUnderstood,
   fetchChatModels,
   postChatQuery,
@@ -716,7 +717,12 @@ export default function ChatPopup({
       setLastUnderstood(answer.status === 'SUCCEEDED' ? describeUnderstood(answer.filters) : '')
       setLastSql(answer.status === 'SUCCEEDED' ? (answer.sql ?? '') : '')
       if (answer.status !== 'SUCCEEDED') setLastWarning(describeAnswer(answer))
+      else if (answer.unmatchedTerms !== undefined) setLastWarning([
+        describeUnmatchedTerms(answer.unmatchedTerms ?? []),
+        describeUnmatched(answer.unmatched ?? []),
+      ].filter(Boolean).join(' '))
       else if (answer.unmatched !== undefined) setLastWarning(describeUnmatched(answer.unmatched))
+      else setLastWarning('')
       setMessages((prev) => [...prev, { id: makeId('sys'), role: 'system', text: describeAnswer(answer) }])
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') return

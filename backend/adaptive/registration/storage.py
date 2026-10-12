@@ -67,6 +67,9 @@ MAX_JSON_ARTIFACT_BYTES = 8 * 1024 * 1024
 RESERVED_SYNTHETIC_DATABASE_IDS = frozenset(
     {"synth-clarification-prototype", "synth-clarification-legacy"}
 )
+# Internal UI selection IDs, distinct from registered databases. Loading old
+# records must remain possible; only new registrations use this restriction.
+RESERVED_SELECTION_DATABASE_IDS = frozenset({"legacy"})
 
 
 @dataclass(frozen=True)
@@ -200,6 +203,13 @@ def validate_database_id(value: Any) -> str:
     if value in RESERVED_SYNTHETIC_DATABASE_IDS:
         raise _fail(RegistrationErrorCode.REGISTRATION_CONFLICT)
     return value
+
+
+def validate_new_database_id(value: Any) -> str:
+    database_id = validate_database_id(value)
+    if database_id in RESERVED_SELECTION_DATABASE_IDS:
+        raise _fail(RegistrationErrorCode.INVALID_INPUT)
+    return database_id
 
 
 def validate_label(value: Any) -> str:
@@ -591,7 +601,7 @@ def register_database(
     local model may reorder the review candidates; any failure keeps the
     rule proposal.
     """
-    database_id = validate_database_id(database_id)
+    database_id = validate_new_database_id(database_id)
     label = validate_label(label)
     if not isinstance(source_path, (str, Path)):
         raise _fail(RegistrationErrorCode.INVALID_INPUT)

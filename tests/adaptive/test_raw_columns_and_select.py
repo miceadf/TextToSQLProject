@@ -72,8 +72,10 @@ def test_an_unasked_missing_select_field_is_dropped_not_declined() -> None:
     body, executor, _model = ask(ir(["CourseOffering.semester"], [CREDITS]), "3학점 과목 보여줘")
     assert body["status"] == "SUCCEEDED", body
     assert executor.queries
-    body, _executor, _model = ask(ir(["Course.name", "CourseOffering.year"], [CREDITS]), "3학점 과목")
-    assert body["status"] == "SUCCEEDED"
+    # ADR-101: model-generated retired fields are unknown in the v3 runtime.
+    body, executor, _model = ask(ir(["Course.name", "CourseOffering.year"], [CREDITS]), "3학점 과목")
+    assert body["status"] == "NOT_UNDERSTOOD" and body["failure_code"] == "UNKNOWN_FIELD"
+    assert executor.queries == []
 
 
 @pytest.mark.parametrize(

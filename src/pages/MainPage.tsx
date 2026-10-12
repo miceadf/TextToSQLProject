@@ -1,3 +1,4 @@
+import { adminStyles, disabledTitle } from '../adaptive-prototype/adminStyles.ts';
 import { useEffect, useMemo, useRef, useState } from 'react'
 import ChatPopup from '../components/ChatPopup'
 import CourseTable from '../components/CourseTable'
@@ -20,6 +21,8 @@ import {
   catalogToCourses,
   databaseLabel,
   isDatabaseId,
+  DATABASE_ID_INPUT_MESSAGE,
+  registrationDatabaseIdMessage,
   readStoredDatabaseId,
   shouldResetCourseUi,
   writeStoredDatabaseId,
@@ -27,6 +30,7 @@ import {
 } from '../adaptive-prototype/databases.ts'
 import {
   PROPOSER_LABELS,
+  SQLITE_LABEL_INPUT_MESSAGE,
   UPLOAD_PENDING_NOTICE,
   canStartUpload,
   toUploadMessage,
@@ -35,6 +39,7 @@ import {
   type SqliteUploadSuccess,
 } from '../adaptive-prototype/sqliteUpload.ts'
 import MappingReviewPanel from '../adaptive-prototype/MappingReviewPanel.tsx'
+import type { RegisteredPostgres } from '../adaptive-prototype/postgresRegistration.ts'
 import PostgresRegistrationPanel from '../adaptive-prototype/PostgresRegistrationPanel.tsx'
 import { chatTargetFor } from '../adaptive-prototype/chatQuery.ts'
 import SchemaComparePanel from '../adaptive-prototype/SchemaComparePanel.tsx'
@@ -143,6 +148,9 @@ export default function MainPage({
   const [registry, setRegistry] = useState<RegistryDatabase[]>([])
   const [registryLoading, setRegistryLoading] = useState(true)
   const [registryError, setRegistryError] = useState<string | null>(null)
+  const [registryWarning, setRegistryWarning] = useState<string | null>(null)
+  const [dbAdminTab, setDbAdminTab] = useState<'use' | 'register' | 'review'>('use')
+  const [pgRegistrations, setPgRegistrations] = useState<RegisteredPostgres[]>([])
   const [dbModalOpen, setDbModalOpen] = useState(false)
   const [pendingDbId, setPendingDbId] = useState<string>(LEGACY_SELECTION_ID)
   const [catalogLoading, setCatalogLoading] = useState(true)
@@ -155,6 +163,7 @@ export default function MainPage({
   const [uploadStatus, setUploadStatus] = useState<SqliteUploadStatus>('idle')
   const [uploadResult, setUploadResult] = useState<SqliteUploadSuccess | null>(null)
   const [uploadError, setUploadError] = useState<string | null>(null)
+  const uploadDbIdError = registrationDatabaseIdMessage(uploadDbId.trim())
 
   const operationRef = useRef(0)
   const abortRef = useRef<AbortController | null>(null)
@@ -186,9 +195,9 @@ export default function MainPage({
     const file = uploadFile
     const databaseId = uploadDbId.trim()
     const label = uploadLabel.trim()
-    if (file === null || databaseId === '' || label === '') {
+    if (file === null) {
       setUploadResult(null)
-      setUploadError(toUploadMessage(new Error('invalid upload input')))
+      setUploadError('SQLite 파일(.sqlite/.sqlite3)을 선택해 주세요.')
       setUploadStatus('error')
       return
     }
@@ -237,7 +246,8 @@ export default function MainPage({
     async function bootstrap() {
       setRegistryLoading(true)
       try {
-        const databases = await listDatabases(adaptiveFetch)
+        let warning: string | null = null
+        const databases = await listDatabases(adaptiveFetch, { onWarning: (message) => { warning = message } })
         if (disposed || !mountedRef.current) return
         const known = databases.map((entry) => entry.database_id)
         let resolved = LEGACY_SELECTION_ID
@@ -261,6 +271,7 @@ export default function MainPage({
         activeDbIdRef.current = resolved
         setRegistry(databases)
         setRegistryError(null)
+        setRegistryWarning(warning)
         setActiveDbId(resolved)
         setPendingDbId(resolved)
         try {
@@ -271,6 +282,7 @@ export default function MainPage({
       } catch {
         if (disposed || !mountedRef.current) return
         setRegistry([])
+        setRegistryWarning(null)
         setRegistryError('DB 목록을 불러오지 못했습니다. legacy 기준선으로 동작합니다.')
         if (activeDbIdRef.current !== LEGACY_SELECTION_ID) {
           operationRef.current = nextOperation(operationRef.current)
@@ -578,6 +590,7 @@ export default function MainPage({
               type="button"
               onClick={() => {
                 setPendingDbId(activeDbId)
+                setDbAdminTab('use')
                 setDbModalOpen(true)
               }}
               className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
@@ -613,172 +626,214 @@ export default function MainPage({
       {dbModalOpen ? (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/35 px-4">
           <div
-            className="max-h-[calc(100vh-2rem)] w-full max-w-sm overflow-y-auto rounded-xl border border-slate-200 bg-white p-5 shadow-2xl"
+            className="flex h-[90vh] w-[95vw] max-w-6xl flex-col overflow-hidden rounded-xl border border-slate-200 bg-white p-5 shadow-2xl"
             role="dialog"
             aria-modal="true"
             aria-labelledby="database-select-title"
           >
-            <div id="database-select-title" className="text-sm font-semibold text-slate-900">
-              사용 DB 선택
+            <div id="database-select-title" className={adminStyles.title}>
+              DB 선택 및 관리
             </div>
-            <div className="mt-1 text-xs text-slate-500">
-              적용을 눌러야 변경됩니다. 변경 시 선택 강의·경고·미리보기가 초기화됩니다.
-            </div>
-            {registryError !== null ? (
-              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-900">
-                {registryError}
-              </div>
-            ) : null}
-            <fieldset className="mt-3 space-y-2">
-              <legend className="text-xs font-semibold text-slate-700">DB 목록</legend>
-              <label className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm">
-                <input
-                  type="radio"
-                  name="active-database"
-                  checked={pendingDbId === LEGACY_SELECTION_ID}
-                  onChange={() => setPendingDbId(LEGACY_SELECTION_ID)}
-                />
-                Legacy 기준선
-              </label>
-              {registry.map((entry) => (
-                <label
-                  key={entry.database_id}
-                  className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm"
-                >
-                  <input
-                    type="radio"
-                    name="active-database"
-                    checked={pendingDbId === entry.database_id}
-                    onChange={() => setPendingDbId(entry.database_id)}
-                  />
-                  {entry.label} ({entry.schema})
-                </label>
-              ))}
-            </fieldset>
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => closeDbModal()}
-                className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-              >
-                취소
-              </button>
-              <button
-                type="button"
-                onClick={() => applyDatabase(pendingDbId)}
-                className="h-9 rounded-lg bg-blue-600 px-3 text-sm font-semibold text-white transition hover:bg-blue-700"
-              >
-                적용
-              </button>
-            </div>
-            <fieldset className="mt-4 space-y-2 border-t border-slate-200 pt-3">
-              <legend className="text-xs font-semibold text-slate-700">
-                SQLite 등록(검토 대기)
-              </legend>
-              <div className="text-xs text-slate-500">
-                standalone SQLite 파일(.sqlite/.sqlite3)을 등록합니다. 등록 결과는
-                검토 대기 상태로만 표시되며 조회·질의에 사용할 수 없습니다.
-              </div>
-              <label className="block text-xs font-medium text-slate-700">
-                Database ID
-                <input
-                  value={uploadDbId}
-                  onChange={(event) => setUploadDbId(event.target.value)}
-                  placeholder="예: my-review-db"
-                  className="mt-1 h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-                />
-              </label>
-              <label className="block text-xs font-medium text-slate-700">
-                Label
-                <input
-                  value={uploadLabel}
-                  onChange={(event) => setUploadLabel(event.target.value)}
-                  placeholder="예: 검토용 강의 DB"
-                  className="mt-1 h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-                />
-              </label>
-              <label className="block text-xs font-medium text-slate-700">
-                SQLite 파일
-                <input
-                  type="file"
-                  accept=".sqlite,.sqlite3"
-                  onChange={(event) => setUploadFile(event.target.files?.[0] ?? null)}
-                  className="mt-1 w-full text-xs text-slate-600"
-                />
-              </label>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => void submitSqliteUpload()}
-                  disabled={uploadStatus === 'uploading'}
-                  className="h-9 rounded-lg bg-slate-900 px-3 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:opacity-50"
-                >
-                  {uploadStatus === 'uploading' ? '등록 중' : '등록'}
+            <div className="mt-3 flex shrink-0 flex-col gap-2 border-b border-slate-200 pb-3 md:flex-row" aria-label="DB 관리 메뉴">
+              {([['use', '사용할 DB'], ['register', 'DB 등록'], ['review', '검토·게시']] as const).map(([tab, title]) => (
+                <button key={tab} type="button" aria-pressed={dbAdminTab === tab}
+                  onClick={() => setDbAdminTab(tab)}
+                  className={dbAdminTab === tab ? adminStyles.primary : adminStyles.secondary}>
+                  {title}
                 </button>
-                {uploadStatus === 'uploading' ? (
-                  <span className="text-xs text-slate-500" role="status">
-                    업로드 중입니다. 중복 등록은 차단됩니다.
-                  </span>
+              ))}
+              <button type="button" onClick={() => closeDbModal()} className={`${adminStyles.secondary} md:ml-auto`}>닫기</button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto py-4">
+              <section hidden={dbAdminTab !== 'use'} aria-label="사용할 DB" className={adminStyles.box}>
+                <div className="mt-1 text-xs text-slate-500">
+                  적용을 눌러야 변경됩니다. 변경 시 선택 강의·경고·미리보기가 초기화됩니다.
+                </div>
+                {registryError !== null || registryWarning !== null ? (
+                  <div className={`${adminStyles.notice} mt-3`}>
+                    {registryError ?? registryWarning}
+                  </div>
                 ) : null}
-              </div>
-              {uploadStatus === 'error' && uploadError !== null ? (
-                <div
-                  className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-900"
-                  role="alert"
-                >
-                  {uploadError}
-                </div>
-              ) : null}
-              {uploadStatus === 'success' && uploadResult !== null ? (
-                <div
-                  className="space-y-1 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900"
-                  role="status"
-                >
-                  <div className="font-semibold">
-                    {uploadResult.database_id} · {uploadResult.label} · PENDING_REVIEW
-                  </div>
-                  <div>{UPLOAD_PENDING_NOTICE}</div>
-                  <div>
-                    테이블 {uploadResult.schema.table_count}개 · 컬럼{' '}
-                    {uploadResult.schema.column_count}개 · FK {uploadResult.schema.foreign_key_count}
-                    개
-                  </div>
-                  {uploadResult.schema.tables.map((table) => (
-                    <div key={table.name}>
-                      {table.name} ({table.columns.map((column) => column.name).join(', ')})
-                    </div>
+                <fieldset className={`${adminStyles.box} mt-3 space-y-2`}>
+                  <legend className={adminStyles.title}>DB 목록</legend>
+                  <label className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm">
+                    <input
+                      type="radio"
+                      name="active-database"
+                      checked={pendingDbId === LEGACY_SELECTION_ID}
+                      onChange={() => setPendingDbId(LEGACY_SELECTION_ID)}
+                    />
+                    Legacy 기준선
+                  </label>
+                  {registry.map((entry) => (
+                    <label
+                      key={entry.database_id}
+                      className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                    >
+                      <input
+                        type="radio"
+                        name="active-database"
+                        checked={pendingDbId === entry.database_id}
+                        onChange={() => setPendingDbId(entry.database_id)}
+                      />
+                      <span className="min-w-0 break-all">{entry.label} ({entry.schema})</span>
+                      <span className={`${adminStyles.published} ml-auto shrink-0`}>
+                        게시됨{pgRegistrations.find((item) => item.database_id === entry.database_id)?.mapping_version != null
+                          ? ` v${pgRegistrations.find((item) => item.database_id === entry.database_id)?.mapping_version}` : ''}
+                      </span>
+                    </label>
                   ))}
-                  <div>
-                    매핑 {uploadResult.mapping.field_count}개 필드 · 미매핑{' '}
-                    {uploadResult.mapping.unmapped_count}개 · 제안:{' '}
-                    {PROPOSER_LABELS[uploadResult.mapping.proposer]}
-                  </div>
-                  {uploadResult.mapping.fields.map((field) => (
-                    <div key={field.semantic_field}>
-                      {field.semantic_field} · {field.review_status}
-                      {field.top_candidate !== null
-                        ? ` · ${field.top_candidate.table}.${field.top_candidate.column} (${field.top_candidate.confidence})`
-                        : null}
-                      {field.top_candidate?.reasons.some((reason) => reason.signal === 'AI_PROPOSAL')
-                        ? ' · AI'
-                        : null}
-                    </div>
-                  ))}
-                  <MappingReviewPanel
-                    key={uploadResult.database_id}
-                    databaseId={uploadResult.database_id}
-                    onPublished={() => setRegistryRetry((value) => value + 1)}
-                    baseOptions={registry.filter((entry) => entry.schema === 'private')}
-                  />
-                  <SchemaComparePanel
-                    key={`compare-${uploadResult.database_id}`}
-                    candidateDatabaseId={uploadResult.database_id}
-                    baseOptions={registry.filter((entry) => entry.schema === 'private')}
-                  />
+                </fieldset>
+                <div className="mt-4 flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => closeDbModal()}
+                    className={adminStyles.secondary}
+                  >
+                    취소
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyDatabase(pendingDbId)}
+                    className={adminStyles.primary}
+                  >
+                    적용
+                  </button>
                 </div>
-              ) : null}
-            </fieldset>
-            <PostgresRegistrationPanel onPublished={() => setRegistryRetry((value) => value + 1)} />
+              </section>
+              <PostgresRegistrationPanel
+                view={dbAdminTab === 'review' ? 'review' : 'register'}
+                hidden={dbAdminTab === 'use'}
+                onOpenReview={() => setDbAdminTab('review')}
+                onRegistrations={setPgRegistrations}
+                onPublished={() => setRegistryRetry((value) => value + 1)}
+                onDeleted={(databaseId) => {
+                  if (activeDbIdRef.current === databaseId) applyDatabase(LEGACY_SELECTION_ID)
+                  else if (pendingDbId === databaseId) setPendingDbId(LEGACY_SELECTION_ID)
+                  setRegistry((items) => items.filter((item) => item.database_id !== databaseId))
+                  setRegistryRetry((value) => value + 1)
+                }}
+              />
+              <section hidden={dbAdminTab !== 'register'} className={adminStyles.box}>
+                <details className={`${adminStyles.box} mt-6`}>
+                  <summary className={`${adminStyles.title} cursor-pointer`}>기타: SQLite 파일 등록</summary>
+                  <fieldset className={`${adminStyles.box} mt-4 space-y-2`}>
+                    <legend className={adminStyles.title}>
+                      SQLite 등록(검토 대기)
+                    </legend>
+                    <div className="text-xs text-slate-500">
+                      standalone SQLite 파일(.sqlite/.sqlite3)을 등록합니다. 등록 결과는
+                      검토 대기 상태로만 표시되며 조회·질의에 사용할 수 없습니다.
+                    </div>
+                    <label className="block text-xs font-medium text-slate-700">
+                      Database ID
+                      <input
+                        value={uploadDbId}
+                        onChange={(event) => setUploadDbId(event.target.value)}
+                        placeholder="예: my-review-db"
+                        aria-invalid={uploadDbIdError !== null}
+                        aria-describedby="sqlite-id-guidance"
+                        className={`${adminStyles.input} mt-1 w-full`}
+                      />
+                      <span id="sqlite-id-guidance" className={`mt-1 block text-xs ${uploadDbId !== '' && uploadDbIdError !== null ? 'text-rose-700' : 'text-slate-500'}`}>
+                        {DATABASE_ID_INPUT_MESSAGE}
+                        {uploadDbIdError !== null && uploadDbIdError !== DATABASE_ID_INPUT_MESSAGE ? <span className="block text-rose-700">{uploadDbIdError}</span> : null}
+                      </span>
+                    </label>
+                    <label className="block text-xs font-medium text-slate-700">
+                      Label
+                      <input
+                        value={uploadLabel}
+                        onChange={(event) => setUploadLabel(event.target.value)}
+                        placeholder="예: 검토용 강의 DB"
+                        className={`${adminStyles.input} mt-1 w-full`}
+                      />
+                      <span className="mt-1 block text-xs text-slate-500">{SQLITE_LABEL_INPUT_MESSAGE}</span>
+                    </label>
+                    <label className="block text-xs font-medium text-slate-700">
+                      SQLite 파일
+                      <input
+                        type="file"
+                        accept=".sqlite,.sqlite3"
+                        onChange={(event) => setUploadFile(event.target.files?.[0] ?? null)}
+                        className={`${adminStyles.input} mt-1 w-full`}
+                      />
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void submitSqliteUpload()}
+                        disabled={uploadStatus === 'uploading' || uploadDbIdError !== null}
+                        className={adminStyles.primary} title={disabledTitle([uploadStatus === 'uploading', "업로드 중입니다."], [uploadDbIdError !== null, "DB 식별자(ID)를 확인해 주세요."])}
+                      >
+                        {uploadStatus === 'uploading' ? '등록 중' : '등록'}
+                      </button>
+                      {uploadStatus === 'uploading' ? (
+                        <span className="text-xs text-slate-500" role="status">
+                          업로드 중입니다. 중복 등록은 차단됩니다.
+                        </span>
+                      ) : null}
+                    </div>
+                    {uploadStatus === 'error' && uploadError !== null ? (
+                      <div
+                        className={adminStyles.error}
+                        role="alert"
+                      >
+                        {uploadError}
+                      </div>
+                    ) : null}
+                    {uploadStatus === 'success' && uploadResult !== null ? (
+                      <div
+                        className={`${adminStyles.success} space-y-1`}
+                        role="status"
+                      >
+                        <div className={adminStyles.title}>
+                          {uploadResult.database_id} · {uploadResult.label} · PENDING_REVIEW
+                        </div>
+                        <div>{UPLOAD_PENDING_NOTICE}</div>
+                        <div>
+                          테이블 {uploadResult.schema.table_count}개 · 컬럼{' '}
+                          {uploadResult.schema.column_count}개 · FK {uploadResult.schema.foreign_key_count}
+                          개
+                        </div>
+                        {uploadResult.schema.tables.map((table) => (
+                          <div key={table.name}>
+                            {table.name} ({table.columns.map((column) => column.name).join(', ')})
+                          </div>
+                        ))}
+                        <div>
+                          매핑 {uploadResult.mapping.field_count}개 필드 · 미매핑{' '}
+                          {uploadResult.mapping.unmapped_count}개 · 제안:{' '}
+                          {PROPOSER_LABELS[uploadResult.mapping.proposer]}
+                        </div>
+                        {uploadResult.mapping.fields.map((field) => (
+                          <div key={field.semantic_field}>
+                            {field.semantic_field} · {field.review_status}
+                            {field.top_candidate !== null
+                              ? ` · ${field.top_candidate.table}.${field.top_candidate.column} (${field.top_candidate.confidence})`
+                              : null}
+                            {field.top_candidate?.reasons.some((reason) => reason.signal === 'AI_PROPOSAL')
+                              ? ' · AI'
+                              : null}
+                          </div>
+                        ))}
+                        <MappingReviewPanel
+                          key={uploadResult.database_id}
+                          databaseId={uploadResult.database_id}
+                          onPublished={() => setRegistryRetry((value) => value + 1)}
+                          baseOptions={registry.filter((entry) => entry.schema === 'private')}
+                        />
+                        <SchemaComparePanel
+                          key={`compare-${uploadResult.database_id}`}
+                          candidateDatabaseId={uploadResult.database_id}
+                          baseOptions={registry.filter((entry) => entry.schema === 'private')}
+                        />
+                      </div>
+                    ) : null}
+                  </fieldset>
+                </details>
+              </section>
+            </div>
           </div>
         </div>
       ) : null}
@@ -797,6 +852,7 @@ export default function MainPage({
             </a>
           )}
         </div>
+        {registryWarning !== null ? <div className="mt-2 text-xs text-amber-800" role="status">{registryWarning}</div> : null}
         {registryError !== null ? (
           <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-amber-800" role="alert">
             <span>{registryError}</span>

@@ -6,6 +6,19 @@ export const REGISTRY_VERSION = 'synthetic-database-registry-v1';
 export const CATALOG_VERSION = 'synthetic-course-catalog-v1';
 
 export const LEGACY_SELECTION_ID = 'legacy';
+export const RESERVED_DATABASE_IDS: readonly string[] = [LEGACY_SELECTION_ID];
+export const RESERVED_DATABASE_ID_MESSAGE = '이 ID는 시스템이 쓰는 이름이라 쓸 수 없습니다. 다른 ID를 입력해 주세요.';
+export const DATABASE_ID_INPUT_MESSAGE = 'ID는 영문 소문자·숫자·하이픈(-)만 쓸 수 있고, 첫 글자는 영문 소문자나 숫자여야 합니다(64자 이내). 예: legacy-pg';
+
+/** Shared by registration forms; selection and response parsing keep their own rules. */
+export function registrationDatabaseIdMessage(value: string): string | null {
+  if (isReservedDatabaseId(value)) return RESERVED_DATABASE_ID_MESSAGE;
+  return isDatabaseId(value) ? null : DATABASE_ID_INPUT_MESSAGE;
+}
+
+export function isReservedDatabaseId(value: unknown): boolean {
+  return typeof value === 'string' && RESERVED_DATABASE_IDS.includes(value);
+}
 export const STORAGE_KEY = 'adaptive-active-database-v1';
 
 const DB_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
@@ -41,7 +54,7 @@ export interface CanonicalCourse {
   department_code: string;
   department_name: string;
   instructor_name: string;
-  year: number;
+  year: number | null;
   semester: string;
   section: string;
   capacity: number;
@@ -75,7 +88,7 @@ function parseRegistryEntry(value: unknown): RegistryDatabase | null {
   if (!isPlainObject(value)) return null;
   if (!hasOnlyKeys(value, ['database_id', 'label', 'schema'])) return null;
   if (!isDatabaseId(value['database_id'])) return null;
-  if (value['database_id'] === LEGACY_SELECTION_ID) return null;
+  if (isReservedDatabaseId(value['database_id'])) return null;
   if (value['schema'] !== 'flat' && value['schema'] !== 'legacy' && value['schema'] !== 'private' && value['schema'] !== 'postgres') return null;
   if (value['schema'] === 'private') {
     if (!isValidPrivateLabel(value['label'])) return null;
@@ -100,7 +113,7 @@ function parseRegistryEntry(value: unknown): RegistryDatabase | null {
   };
 }
 
-export function parseDatabaseRegistry(value: unknown): RegistryDatabase[] | null {
+export function parseDatabaseRegistry(value: unknown, onWarning?: (message: string | null) => void): RegistryDatabase[] | null {
   if (!isPlainObject(value)) return null;
   if (!hasOnlyKeys(value, ['version', 'databases'])) return null;
   if (value['version'] !== REGISTRY_VERSION) return null;
@@ -108,13 +121,32 @@ export function parseDatabaseRegistry(value: unknown): RegistryDatabase[] | null
   const list = value['databases'];
   if (list.length < 1 || list.length > MAX_DATABASES) return null;
   const parsed: RegistryDatabase[] = [];
+  const seen = new Set<string>();
+  const reserved = new Set<string>();
+  let malformed = 0;
   for (const entry of list) {
+    if (isPlainObject(entry) && isDatabaseId(entry['database_id'])) {
+      const id = entry['database_id'];
+      if (seen.has(id)) return null;
+      seen.add(id);
+    }
     const item = parseRegistryEntry(entry);
-    if (item === null) return null;
+    if (item === null) {
+      if (isPlainObject(entry) && isReservedDatabaseId(entry['database_id'])) {
+        reserved.add(entry['database_id'] as string);
+      } else {
+        malformed += 1;
+      }
+      continue;
+    }
     parsed.push(item);
   }
   const ids = parsed.map((item) => item.database_id);
   if (new Set(ids).size !== ids.length) return null;
+  const warnings: string[] = [];
+  if (reserved.size > 0) warnings.push(`일부 DB(${[...reserved].join(', ')})는 이름이 예약어와 겹쳐 목록에서 뺐습니다.`);
+  if (malformed > 0) warnings.push(`형식이 올바르지 않은 DB ${malformed}개를 목록에서 뺐습니다.`);
+  onWarning?.(warnings.length > 0 ? warnings.join(' ') : null);
   return parsed;
 }
 
@@ -154,7 +186,7 @@ function parseCanonicalItem(value: unknown): CanonicalCourse | null {
   if (!isNonEmptyString(value['department_code'], 32)) return null;
   if (!isNonEmptyString(value['department_name'], 200)) return null;
   if (!isNonEmptyString(value['instructor_name'], 200)) return null;
-  if (typeof value['year'] !== 'number' || !Number.isInteger(value['year']) || value['year'] < 2000 || value['year'] > 2100) {
+  if (value['year'] !== null && (typeof value['year'] !== 'number' || !Number.isInteger(value['year']) || value['year'] < 2000 || value['year'] > 2100)) {
     return null;
   }
   if (!isNonEmptyString(value['semester'], 16)) return null;

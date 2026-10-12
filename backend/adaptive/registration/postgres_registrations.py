@@ -20,6 +20,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import tempfile
 from collections.abc import Callable
@@ -342,6 +343,59 @@ def registration_exists(repository_root: str | Path, database_id: str) -> bool:
     return (target / "registration.json").is_file()
 
 
+def _is_junction(path: Path) -> bool:
+    check = getattr(path, "is_junction", None)
+    if callable(check):
+        return check()
+    if os.name == "nt":
+        check = getattr(os.path, "isjunction", None)
+        if callable(check):
+            return check(path)
+        try:
+            attributes = getattr(os.lstat(path), "st_file_attributes", 0)
+        except OSError:
+            return False
+        return bool(attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400))
+    return False
+
+
+def delete_registration(repository_root: str | Path, database_id: Any) -> None:
+    """Delete only a registered PostgreSQL DB; leave evaluation artifacts alone."""
+    if isinstance(database_id, str) and database_id in sqlite_storage.RESERVED_SYNTHETIC_DATABASE_IDS:
+        raise _fail("NOT_FOUND")
+    try:
+        database_id = sqlite_storage.validate_database_id(database_id)
+    except Exception:
+        raise _fail("INVALID_INPUT") from None
+    registration = _private_dir(repository_root, REGISTRATION_ROOT, database_id)[1]
+    if not registration.is_dir() or not (registration / "registration.json").is_file():
+        raise _fail("NOT_FOUND")
+    profile = _private_dir(repository_root, PROFILE_ROOT, database_id)[1]
+
+    def check_tree(path: Path) -> None:
+        # Reject Windows junctions as well as symlinks, including nested artifacts.
+        if path.is_symlink() or _is_junction(path):
+            raise _fail("PRIVATE_STORAGE_INVALID")
+        if path.is_dir():
+            for child in path.iterdir():
+                check_tree(child)
+
+    try:
+        # Validate both complete trees before removing either one.
+        for path in (registration, profile):
+            for anchor in (path.parent.parent, path.parent):
+                if anchor.is_symlink() or _is_junction(anchor):
+                    raise _fail("PRIVATE_STORAGE_INVALID")
+            check_tree(path)
+        for path in (profile, registration):
+            if path.exists():
+                shutil.rmtree(path)
+    except PostgresRegistrationError:
+        raise
+    except Exception:
+        raise _fail("STORAGE_ERROR") from None
+
+
 def _id_taken(root: Path, database_id: str) -> bool:
     base = root / ".schema-adaptive"
     return any(
@@ -387,7 +441,7 @@ def register_postgres_database(
     mapping_proposer: Callable[..., Any] | None = None,
 ) -> LoadedPostgresRegistration:
     try:
-        database_id = sqlite_storage.validate_database_id(database_id)
+        database_id = sqlite_storage.validate_new_database_id(database_id)
         label = sqlite_storage.validate_label(label)
     except Exception:
         raise _fail("INVALID_INPUT") from None
@@ -704,12 +758,16 @@ def plan_publish(
         blocked.setdefault(name, BlockedField(name, reason, other))
 
     for name, entry in sorted(draft.fields.items()):
+        if name in load_default_ontology().retired_fields:
+            continue
         if entry.decision is ReviewDecision.PENDING:
             block(name, "PENDING")
     physical = {(t.name, c.name) for t in loaded.catalog.tables for c in t.columns}
     mapped: dict[str, PublishedFieldMapping] = {}
     owner: dict[tuple[str, str], str] = {}
     for name, entry in sorted(draft.fields.items()):
+        if name in load_default_ontology().retired_fields:
+            continue
         if entry.decision in (ReviewDecision.APPROVED, ReviewDecision.REMAPPED):
             target = (entry.table or "", entry.column or "")
             if target not in physical:
@@ -724,7 +782,8 @@ def plan_publish(
             )
     if not mapped:
         for name in sorted(draft.fields):
-            block(name, "NOTHING_MAPPED")
+            if name not in load_default_ontology().retired_fields:
+                block(name, "NOTHING_MAPPED")
         return None, sorted(blocked.values())
     for extension in extensions:
         target = (extension.table, extension.column)

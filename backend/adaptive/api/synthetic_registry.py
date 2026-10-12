@@ -68,7 +68,6 @@ CANONICAL_SELECT = (
     _DEPT_CODE_REF,
     _DEPT_NAME_REF,
     _INSTRUCTOR_NAME_REF,
-    _OFFERING_YEAR_REF,
     _OFFERING_SEMESTER_REF,
     _OFFERING_SECTION_REF,
     _OFFERING_CAPACITY_REF,
@@ -78,8 +77,8 @@ CANONICAL_SELECT = (
     _SCHEDULE_END_REF,
 )
 
-# Phase 8-18: chat cards show every mapped field in ontology order; the
-# course list (``CANONICAL_SELECT``) keeps its fifteen.
+# Chat cards follow active ontology order. Phase 9-16: the course-list
+# projection has fourteen fields; the retired year DTO key stays nullable.
 _TARGET_GRADE_REF = "Course.target_grade"
 CARD_FIELDS = (
     _COURSE_CODE_REF,
@@ -180,7 +179,8 @@ class CanonicalCourse(BaseModel):
     department_code: str = Field(min_length=1, max_length=32)
     department_name: str = Field(min_length=1, max_length=200)
     instructor_name: str = Field(min_length=1, max_length=200)
-    year: int = Field(ge=2000, le=2100)
+    # Preserve the catalog DTO key for older clients; no current year query.
+    year: int | None = Field(default=None, ge=2000, le=2100)
     semester: str = Field(min_length=1, max_length=16)
     section: str = Field(min_length=1, max_length=16)
     capacity: int = Field(gt=0, le=10000)
@@ -587,7 +587,7 @@ def register_synthetic_database_routes(
                     pg_items = sorted(
                         pg_items,
                         key=lambda item: (
-                            int(item["year"]),
+                            int(item["year"] or 0),
                             str(item["semester"]),
                             str(item["course_code"]),
                             str(item["section"]),
@@ -717,7 +717,7 @@ def register_synthetic_database_routes(
                 items = sorted(
                     items,
                     key=lambda item: (
-                        int(item["year"]),
+                        int(item["year"] or 0),
                         str(item["semester"]),
                         str(item["course_code"]),
                         str(item["section"]),

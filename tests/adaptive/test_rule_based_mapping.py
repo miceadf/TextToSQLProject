@@ -65,7 +65,7 @@ class RuleBasedSchemaAlignerTest(unittest.TestCase):
             connection.close()
 
     def test_loads_versioned_course_domain_ontology(self) -> None:
-        self.assertEqual(self.ontology.version, 2)  # Phase 8-18: adds Course.target_grade
+        self.assertEqual(self.ontology.version, 3)
         self.assertEqual(self.ontology.domain, "university-course")
         self.assertIn("Course.name", self.ontology.fields)
         self.assertIn("Department.name", self.ontology.fields)

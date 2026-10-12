@@ -1,3 +1,4 @@
+import { adminStyles, disabledTitle } from './adminStyles.ts';
 import { useEffect, useState } from 'react';
 import {
   describeImport,
@@ -73,7 +74,7 @@ export default function CodeTableImport({
   }
 
   const columnSelect = (value: string, set: (next: string) => void, empty: string) => (
-    <select value={value} onChange={(event) => set(event.target.value)}>
+    <select value={value} onChange={(event) => set(event.target.value)} className={adminStyles.input}>
       <option value="">{empty}</option>
       {columns.map((item) => (
         <option key={item.name} value={item.name}>
@@ -84,10 +85,10 @@ export default function CodeTableImport({
   );
 
   return (
-    <details className="rounded border border-violet-200 bg-white/60 px-2 py-1" data-testid="code-table-import">
-      <summary className="cursor-pointer">코드표에서 가져오기</summary>
-      <div className="mt-1 space-y-1">
-        <div>
+    <details className={adminStyles.box} data-testid="code-table-import">
+      <summary className={`${adminStyles.title} cursor-pointer`}>코드표에서 가져오기</summary>
+      <div className="mt-2 space-y-2">
+        <div className={adminStyles.description}>
           코드와 이름이 들어 있는 table을 고르면, 이 field의 데이터에 있는 코드만 골라 한꺼번에 넣습니다. 공통코드 table처럼 여러
           종류가 섞여 있으면 구분 column과 값(예: code_group = ISU)도 고릅니다. 이미 넣은 약어는 그대로 둡니다.
         </div>
@@ -100,7 +101,7 @@ export default function CodeTableImport({
               setCodeColumn('');
               setNameColumn('');
               setGroupColumn('');
-            }}
+            }} className={adminStyles.input}
           >
             <option value="">선택</option>
             {tables.map((item) => (
@@ -118,13 +119,13 @@ export default function CodeTableImport({
           <label className="flex items-center gap-1">구분 column {columnSelect(groupColumn, setGroupColumn, '(없음)')}</label>
           <label className="flex items-center gap-1">
             구분 값
-            <input value={groupValue} onChange={(event) => setGroupValue(event.target.value)} placeholder="예: ISU" />
+            <input value={groupValue} onChange={(event) => setGroupValue(event.target.value)} placeholder="예: ISU" className={adminStyles.input} />
           </label>
         </div>
-        <button type="button" disabled={disabled || busy || !ready} onClick={() => void submit()}>
+        <button type="button" disabled={disabled || busy || !ready} onClick={() => void submit()} className={adminStyles.secondary} title={disabledTitle([disabled, "처리 중이거나 현재 검토를 편집할 수 없습니다."], [busy, "처리 중입니다."], [reviewer.trim() === '', "검토자 이름을 입력해 주세요."], [table === '', "코드표를 선택해 주세요."], [codeColumn === '' || nameColumn === '', "코드와 이름 column을 선택해 주세요."], [(groupColumn === '') !== (groupValue.trim() === ''), "구분 column과 값을 함께 입력해 주세요."])}>
           가져오기
         </button>
-        {error !== null ? <div className="text-rose-700">{error}</div> : null}
+        {error !== null ? <div className={adminStyles.error}>{error}</div> : null}
       </div>
     </details>
   );

@@ -84,7 +84,7 @@ def build_dictionaries(fields: dict[str, list[ValueEntry]], reviewer: str) -> di
 def editable_fields(loaded: pg.LoadedPostgresRegistration, draft: Any) -> dict[str, tuple[str, str]]:
     """field → (table, column) for mapped text fields that may carry a dictionary,
     and time fields mapped to integer period columns (Phase 8-21)."""
-    ontology = load_default_ontology().fields
+    ontology = load_default_ontology().active_fields
     declared = {(t.name, c.name): str(c.declared_type or "").lower() for t in loaded.catalog.tables for c in t.columns}
     out: dict[str, tuple[str, str]] = {}
     for name, entry in sorted(getattr(draft, "fields", {}).items()):
@@ -110,7 +110,7 @@ _HHMM = re.compile(r"^(?:[01][0-9]|2[0-3]):[0-5][0-9]$")
 
 def is_period_field(name: str) -> bool:
     """Time fields take period tables (Phase 8-21); text fields take ordinary dictionaries."""
-    field = load_default_ontology().fields.get(name)
+    field = load_default_ontology().active_fields.get(name)
     return field is not None and field.data_type is DataType.TIME
 
 

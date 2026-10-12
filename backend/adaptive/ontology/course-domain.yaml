@@ -1,4 +1,4 @@
-version: 2
+version: 3
 domain: university-course
 entities:
   - name: Course
@@ -94,6 +94,7 @@ entities:
     table_name_hints: [course_offering, offering, class, section, lecture]
     fields:
       - name: CourseOffering.year
+        retired_in_version: 3
         label: 개설 연도
         description: 강좌가 개설된 연도
         data_type: integer

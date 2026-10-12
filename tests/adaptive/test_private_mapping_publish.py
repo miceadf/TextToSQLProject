@@ -140,10 +140,11 @@ def test_round_trip_publish_activation(review_client) -> None:
     )
     assert first.status_code == 200
     first_detail = first.json()
+    assert "CourseOffering.year" not in {item["semantic_field"] for item in first_detail["review"]["fields"]}
     assert first_detail["status"] == "PENDING_REVIEW"
-    assert first_detail["review"]["field_count"] == len(load_default_ontology().fields)
+    assert first_detail["review"]["field_count"] == len(load_default_ontology().active_fields)
     assert {item["semantic_field"] for item in first_detail["review"]["fields"]} == set(
-        load_default_ontology().fields
+        load_default_ontology().active_fields
     )
     assert all(item["decision"] == "PENDING" for item in first_detail["review"]["fields"])
 
@@ -439,7 +440,7 @@ def test_publish_blocked_lists_only_safe_field_ids(review_client) -> None:
     assert set(body) == {"error"}
     assert set(body["error"]) == {"code", "fields"}
     assert body["error"]["code"] == "MAPPING_REVIEW_PUBLISH_BLOCKED"
-    assert sorted(body["error"]["fields"]) == sorted(load_default_ontology().fields)
+    assert sorted(body["error"]["fields"]) == sorted(load_default_ontology().active_fields)
     assert "Traceback" not in blocked.text
     assert "SELECT" not in blocked.text
 
@@ -526,7 +527,7 @@ def test_disconnected_join_blocked(review_client, tmp_path: Path) -> None:
     )
     detail = client.get(REVIEW_PATH, params={"database_id": database_id}).json()
     fields = [item["semantic_field"] for item in detail["review"]["fields"]]
-    assert len(fields) == len(load_default_ontology().fields)
+    assert len(fields) == len(load_default_ontology().active_fields)
     for position, semantic_field in enumerate(fields):
         if position < 8:
             response = _action(

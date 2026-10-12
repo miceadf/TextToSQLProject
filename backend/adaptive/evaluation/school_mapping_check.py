@@ -114,13 +114,13 @@ def _propose(schema: str, dsn: str, model: Callable[..., Any] | None) -> tuple[A
     from ..harness.postgres_values import PostgresDistinctValueReader
     from ..mapping.ai_proposal import propose_upload_mapping
     from ..mapping.rules import RuleBasedSchemaAligner
-    from ..ontology.loader import load_default_ontology
+    from .ontology_version import recorded_ontology
     from ..registration.postgres_registrations import _sampled_catalog
 
     database_id = schema.replace("_", "-")
     config = PostgresConnectionConfig(dsn, schema=schema)
     catalog = PostgresAdapter({database_id: config}).inspect(database_id)
-    ontology = load_default_ontology()
+    ontology = recorded_ontology()
     rules = RuleBasedSchemaAligner().align(catalog, ontology)
     if model is None:
         return rules, catalog

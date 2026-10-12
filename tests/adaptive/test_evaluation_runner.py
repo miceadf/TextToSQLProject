@@ -24,6 +24,7 @@ from backend.adaptive.harness.contracts import HarnessStage
 from backend.adaptive.harness.contracts import HarnessErrorCode
 from backend.adaptive.harness.errors import HarnessFailure
 from backend.adaptive.harness.model import FakeModel
+from backend.adaptive.ontology import load_default_ontology
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -95,7 +96,18 @@ class EvaluationRunnerTests(unittest.TestCase):
             model or FakeModel(self.responses),
             self._config(oracle=oracle, variants=variants),
             self.bundle,
+            ontology=load_default_ontology().at_version(2),
         )
+
+    def test_offline_runner_uses_gold_version_without_changing_historical_gold(self):
+        report = run_evaluation(
+            self.gold, FakeModel(self.responses), self._config(variants=["flat"]), self.bundle,
+        )
+        failed = [attempt for attempt in report.attempts if not attempt.execution_success]
+        self.assertEqual(failed, [])
+        self.assertEqual(report.totals.execution_success.count, 40)
+        self.assertEqual({item.mapping_version for item in report.fixture_metadata}, {1})
+        self.assertTrue(all(case.review_status is ReviewStatus.NEEDS_HUMAN_REVIEW for case in self.gold.cases))
 
     @staticmethod
     def _attempts(report, case_id):

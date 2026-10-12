@@ -69,7 +69,8 @@ def test_targets_match_runner_context_and_exclude_gold(prepared) -> None:
             assert target.request.database_id == f"fixture-{variant.value}-v1"
             assert target.mapping.database_id == target.request.database_id
             assert target.mapping.status.value == "PUBLISHED"
-            assert set(target.ontology.fields) == set(ontology.fields)
+            # Offline capture uses the gold's declared version, not current v3.
+            assert set(target.ontology.fields) == set(ontology.fields_at(gold.ontology_version))
     serialized = json.dumps([target.model_dump(mode="json") for target in targets])
     for forbidden in ("gold_query_ir", "expected", "offering_keys", "semantic_correct"):
         assert forbidden not in serialized

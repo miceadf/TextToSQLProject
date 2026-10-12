@@ -1,4 +1,4 @@
-import { isDatabaseId } from './databases.ts';
+import { DATABASE_ID_INPUT_MESSAGE, isDatabaseId, isReservedDatabaseId, RESERVED_DATABASE_ID_MESSAGE } from './databases.ts';
 
 export const SQLITE_UPLOAD_PATH = '/api/adaptive/v1/registrations/upload';
 export const SQLITE_UPLOAD_VERSION = 'private-sqlite-upload-v2';
@@ -9,6 +9,7 @@ export const SQLITE_UPLOAD_STATUS = 'PENDING_REVIEW';
 const ERROR_CODE_PATTERN = /^[A-Z0-9_]{1,128}$/;
 const FINGERPRINT_PATTERN = /^[0-9a-f]{64}$/;
 const MAX_LABEL_LENGTH = 64;
+export const SQLITE_LABEL_INPUT_MESSAGE = '표시 이름은 공백만으로 입력할 수 없고 1~64자여야 합니다. 한글·영문·숫자·기호를 쓸 수 있으며 줄바꿈·제어 문자는 쓸 수 없습니다.';
 const MAPPING_REVIEW_STATUSES = new Set([
   'AUTO_APPROVE_CANDIDATE',
   'NEEDS_REVIEW',
@@ -35,11 +36,11 @@ export type UploadFetchLike = (
 ) => Promise<UploadFetchResponse>;
 
 export class SqliteUploadClientError extends Error {
-  readonly kind: 'transport' | 'contract' | 'server';
+  readonly kind: 'transport' | 'contract' | 'server' | 'reserved' | 'input-id' | 'input-label' | 'input';
   readonly serverCode: string | null;
 
-  constructor(kind: 'transport' | 'contract' | 'server', serverCode: string | null = null) {
-    super(kind === 'transport' ? UPLOAD_TRANSPORT_MESSAGE : UPLOAD_CONTRACT_MESSAGE);
+  constructor(kind: SqliteUploadClientError['kind'], serverCode: string | null = null) {
+    super(kind === 'reserved' ? RESERVED_DATABASE_ID_MESSAGE : kind === 'transport' ? UPLOAD_TRANSPORT_MESSAGE : UPLOAD_CONTRACT_MESSAGE);
     this.name = 'SqliteUploadClientError';
     this.kind = kind;
     this.serverCode = serverCode;
@@ -366,10 +367,11 @@ export async function uploadSqliteDatabase(
   file: Blob,
   options?: { signal?: AbortSignal },
 ): Promise<SqliteUploadSuccess> {
-  if (!isDatabaseId(databaseId)) throw new SqliteUploadClientError('contract');
-  if (!isValidUploadLabel(label)) throw new SqliteUploadClientError('contract');
-  if (!(file instanceof Blob)) throw new SqliteUploadClientError('contract');
-  if (file.size <= 0) throw new SqliteUploadClientError('contract');
+  if (isReservedDatabaseId(databaseId)) throw new SqliteUploadClientError('reserved', 'SQLITE_UPLOAD_INVALID_REQUEST');
+  if (!isDatabaseId(databaseId)) throw new SqliteUploadClientError('input-id');
+  if (!isValidUploadLabel(label)) throw new SqliteUploadClientError('input-label');
+  if (!(file instanceof Blob)) throw new SqliteUploadClientError('input');
+  if (file.size <= 0) throw new SqliteUploadClientError('input');
   const params = new URLSearchParams();
   params.set('database_id', databaseId);
   params.set('label', label);
@@ -419,6 +421,10 @@ export function getUploadErrorMessage(code: string | null): string {
 
 export function toUploadMessage(error: unknown): string {
   if (error instanceof SqliteUploadClientError) {
+    if (error.kind === 'reserved') return RESERVED_DATABASE_ID_MESSAGE;
+    if (error.kind === 'input-id') return DATABASE_ID_INPUT_MESSAGE;
+    if (error.kind === 'input-label') return SQLITE_LABEL_INPUT_MESSAGE;
+    if (error.kind === 'input') return '내용이 있는 SQLite 파일(.sqlite/.sqlite3)을 선택해 주세요.';
     if (error.kind === 'transport') return UPLOAD_TRANSPORT_MESSAGE;
     if (error.kind === 'contract') return UPLOAD_CONTRACT_MESSAGE;
     return getUploadErrorMessage(error.serverCode);

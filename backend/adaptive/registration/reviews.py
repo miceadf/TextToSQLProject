@@ -591,7 +591,7 @@ def _check_canonical_full_coverage(profile: PublishedMappingProfile) -> bool:
     if not ontology.accepts_version(profile.ontology_version):
         return False
     known = set(ontology.fields_at(profile.ontology_version))
-    return set(CANONICAL_SELECT) <= set(profile.fields) <= known
+    return (set(CANONICAL_SELECT) - ontology.retired_fields) <= set(profile.fields) <= known
 
 
 def _validate_canonical_executable(catalog: Any, profile: PublishedMappingProfile) -> None:
@@ -618,7 +618,7 @@ def _validate_canonical_executable(catalog: Any, profile: PublishedMappingProfil
         query_ir = QueryIR.model_validate(
             {
                 "entity": "CourseOffering",
-                "select": list(CANONICAL_SELECT),
+                "select": [name for name in CANONICAL_SELECT if name not in load_default_ontology().retired_fields],
                 "filters": [],
                 "limit": 200,
             }
@@ -1509,11 +1509,11 @@ def incomplete_field_ids(*, repository_root: str | Path, database_id: str) -> li
     pending = sorted(
         name
         for name, entry in draft.fields.items()
-        if entry.decision is ReviewDecision.PENDING
-        or (
+        if name not in load_default_ontology().retired_fields
+        and (entry.decision is ReviewDecision.PENDING or (
             name in CANONICAL_SELECT
             and entry.decision not in {ReviewDecision.APPROVED, ReviewDecision.REMAPPED}
-        )
+        ))
     )
     return pending[:64]
 
@@ -1560,10 +1560,15 @@ def compare_registrations(
     except Exception:
         raise _fail(ReviewErrorCode.STORAGE_ERROR) from None
     diff = compare_catalogs(base.catalog, candidate.catalog)
-    mapped = {name: (entry.table, entry.column) for name, entry in base.profile.fields.items()}
+    # Only the target version's active fields participate in comparison or
+    # carry-over. A historical year mapping must not be remapped into v3.
+    target_fields = load_default_ontology().fields_at(candidate.manifest.ontology_version)
+    mapped = {
+        name: (entry.table, entry.column)
+        for name, entry in base.profile.fields.items() if name in target_fields
+    }
     impacts = mapping_impact(mapped, base.catalog, candidate.catalog)
-    # Phase 8-18: versions only add fields, so an older base carries over; the
-    # fields it never had are recorded as NOT_IN_BASE.
+    # Older bases carry active fields; newly added fields are NOT_IN_BASE.
     ontology_match = 1 <= base.ontology_version <= candidate.manifest.ontology_version
     executable = False
     if ontology_match and all(

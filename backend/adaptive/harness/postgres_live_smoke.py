@@ -53,7 +53,6 @@ SMOKE_EXPECTED_MAPPING: dict[str, tuple[str, str]] = {
     "Course.name": ("courses", "course_name"),
     "Department.name": ("departments", "department_name"),
     "Instructor.name": ("instructors", "instructor_name"),
-    "CourseOffering.year": ("course_offerings", "academic_year"),
     "Schedule.day": ("schedules", "day_of_week"),
 }
 

@@ -24,6 +24,7 @@ from .run_contracts import EvaluationRunConfig
 from .run_report import deterministic_request_id
 from .runner import _prepare_fixture_contexts, _runtime_ontology
 from .validator import validate_evaluation_set
+from .ontology_version import recorded_ontology
 
 
 VARIANTS = (FixtureVariant.FLAT, FixtureVariant.NORMALIZED, FixtureVariant.LEGACY)
@@ -39,6 +40,7 @@ def build_synthetic_capture_targets(
     """Match runner request IDs and runtime contexts after fixture drift checks."""
     domain = ontology or load_default_ontology()
     validate_evaluation_set(gold, DEFAULT_SEED, domain)
+    domain = recorded_ontology(domain, version=gold.ontology_version)
     contexts, _ = _prepare_fixture_contexts(bundle, DEFAULT_SEED, domain, None)
     config = EvaluationRunConfig(
         model_run_id=model_run_id,

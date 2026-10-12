@@ -171,7 +171,7 @@ def test_same_schema_carries_over(client_repo, tmp_path: Path) -> None:
     assert body["ontology_version_match"] is True
     assert body["base_mapping_version"] == 1
     assert {item["status"] for item in body["field_impacts"]} == {"UNCHANGED"}
-    assert len(body["field_impacts"]) == 15
+    assert len(body["field_impacts"]) == 14  # v3 excludes the retired year.
     assert _snapshot(repo) == before
     for marker in (str(repo), "SELECT", "프로그래밍기초", "sample"):
         assert marker not in response.text
@@ -211,6 +211,9 @@ def _publish_hybrid(client: TestClient, raw: bytes, database_id: str) -> None:
     assert _upload(client, database_id, "Label", raw).status_code == 200
     assert _action(client, {"action": "INIT", "database_id": database_id, "reviewer": "tester"}).status_code == 200
     for semantic_field, column in _COLUMNS[FixtureVariant.HYBRID].items():
+        # Phase 9-24: the historical fixture's year is not a v3 review field.
+        if semantic_field == "CourseOffering.year":
+            continue
         table = _TABLES[FixtureVariant.HYBRID][semantic_field.split(".", 1)[0]]
         response = _action(client, {
             "action": "REMAP", "database_id": database_id, "semantic_field": semantic_field,

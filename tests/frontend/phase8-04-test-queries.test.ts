@@ -133,3 +133,20 @@ describe('phase8-04 client', () => {
     }
   });
 });
+
+
+it('accepts omitted canonical fields and validates the remaining projection', async () => {
+  const payload = result({ columns: ['Course.code'], rows: [['CSE101'], ['CSE201']], omitted_fields: ['CourseOffering.section'] });
+  assert.deepEqual(parseTestQueryResult(payload)?.omitted_fields, ['CourseOffering.section']);
+  const caller: TestQueryFetchLike = async () => ({ ok: true, status: 200, json: async () => payload });
+  assert.equal((await runTestQuery(caller, 'tq-flat', { query_id: 'offerings', title: 'test', entity: 'CourseOffering', select: ['Course.code', 'CourseOffering.section'] })).columns.length, 1);
+  for (const omitted_fields of [['Course.code'], ['private.column'], ['CourseOffering.section', 'CourseOffering.section']]) {
+    assert.equal(parseTestQueryResult({ ...payload, omitted_fields }), null);
+  }
+  await assert.rejects(runTestQuery(caller, 'tq-flat', { query_id: 'offerings', title: 'test', entity: 'CourseOffering', select: ['Course.code', 'Instructor.name'] }), TestQueryClientError);
+});
+
+it('explains unsupported queries and the PostgreSQL current-version limit', () => {
+  assert.match(toTestQueryMessage(new TestQueryClientError('server', 'ADMIN_TEST_QUERY_FAILED', 'TEST_QUERY_UNSUPPORTED')), /이 DB에서는 실행할 수 없음/);
+  assert.match(toTestQueryMessage(new TestQueryClientError('server', 'ADMIN_TEST_QUERY_FAILED', 'POSTGRES_CURRENT_VERSION_ONLY')), /현재 게시 버전/);
+});

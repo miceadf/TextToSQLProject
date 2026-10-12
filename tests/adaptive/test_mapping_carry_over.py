@@ -65,7 +65,7 @@ def test_same_schema_carries_every_field_and_publishes(client_repo, tmp_path: Pa
     assert detail["status"] == "PENDING_REVIEW"
     assert detail["succession"]["base_database_id"] == BASE
     assert detail["succession"]["base_mapping_version"] == 1
-    assert len(detail["succession"]["carried_fields"]) == 15
+    assert len(detail["succession"]["carried_fields"]) == 14  # v3 excludes year.
     assert detail["succession"]["stale_fields"] == [{"semantic_field": "Course.target_grade", "status": "NOT_IN_BASE"}]
     # Phase 8-18: a field the base never mapped (target grade) waits for review.
     assert {item["decision"] for item in detail["review"]["fields"] if item["semantic_field"] != "Course.target_grade"} == {"REMAPPED"}
@@ -95,7 +95,7 @@ def test_renamed_column_leaves_only_that_field_stale(client_repo, tmp_path: Path
     ]
     fields = _fields(detail)
     assert fields["Course.name"]["decision"] == "PENDING"
-    assert sum(item["decision"] == "REMAPPED" for item in fields.values()) == 14
+    assert sum(item["decision"] == "REMAPPED" for item in fields.values()) == 13  # v3 excludes year.
     _ignore_newer(client, TARGET, "admin")
     blocked = _action(client, {"action": "PUBLISH", "database_id": TARGET, "published_by": "admin"})
     assert blocked.status_code == 422
@@ -116,7 +116,7 @@ def test_structure_change_marks_every_field_stale(client_repo, tmp_path: Path) -
     detail = _carry(client).json()
     assert detail["succession"]["carried_fields"] == []
     assert {item["status"] for item in detail["succession"]["stale_fields"]} == {"TABLE_MISSING", "NOT_IN_BASE"}
-    assert len(detail["succession"]["stale_fields"]) == 16
+    assert len(detail["succession"]["stale_fields"]) == 15  # v3 excludes year.
 
 
 def test_retry_is_idempotent_and_keeps_later_edits(client_repo, tmp_path: Path) -> None:
@@ -277,8 +277,8 @@ def test_failed_record_write_leaves_no_partial_file(client_repo, tmp_path: Path,
     assert (_review_dir(repo) / "succession.json").exists()
 
 
-def test_a_version_one_base_carries_over_to_a_version_two_target(tmp_path: Path, monkeypatch) -> None:
-    """Phase 8-18: an older base carries its fields; the newer field is NOT_IN_BASE."""
+def test_a_version_one_base_carries_active_fields_to_a_version_three_target(tmp_path: Path, monkeypatch) -> None:
+    """ADR-101: an older base carries active fields, excluding retired year."""
     from backend.adaptive.ontology import load_default_ontology
     from backend.adaptive.registration import storage as registration_storage
 
@@ -299,13 +299,56 @@ def test_a_version_one_base_carries_over_to_a_version_two_target(tmp_path: Path,
         same = _derived(tmp_path, "same", ["UPDATE course_offerings SET enrolled = enrolled"])
         assert _upload(client, TARGET, "Next", same.read_bytes()).status_code == 200
         detail = _carry(client).json()
-        assert len(detail["succession"]["carried_fields"]) == 15
+        assert len(detail["succession"]["carried_fields"]) == 14
+        assert "CourseOffering.year" not in detail["succession"]["carried_fields"]
         assert detail["succession"]["stale_fields"] == [
             {"semantic_field": "Course.target_grade", "status": "NOT_IN_BASE"}
         ]
         _ignore_newer(client, TARGET, "admin")
         published = _action(client, {"action": "PUBLISH", "database_id": TARGET, "published_by": "admin"})
         assert published.status_code == 200, published.text[:300]
+    finally:
+        client.close()
+        set_private_repository_root_for_tests(None)
+
+
+def test_v2_year_mapping_does_not_affect_v3_compare_or_carry_over(tmp_path, monkeypatch):
+    """ADR-101: an actual v2 year mapping is preserved but never copied to v3."""
+    from backend.adaptive import ontology as ontology_module
+    from backend.adaptive.mapping import review as mapping_review
+    from backend.adaptive.registration import storage as registration_storage
+    from backend.adaptive.api.review_publish import COMPARE_PATH
+
+    repo = _make_repo(tmp_path, "repo-v2")
+    app = create_synthetic_clarification_prototype()
+    app.state.sqlite_upload_repository_root = str(repo)
+    app.state.mapping_review_repository_root = str(repo)
+    set_private_repository_root_for_tests(repo)
+    client = TestClient(app, raise_server_exceptions=False)
+    try:
+        version_two = ontology_module.load_default_ontology().at_version(2)
+        with monkeypatch.context() as patch:
+            for module in (ontology_module, registration_storage, review_storage, mapping_review):
+                patch.setattr(module, "load_default_ontology", lambda: version_two)
+            _publish_flow(client, build_flat_database(tmp_path / "base-v2.sqlite3").read_bytes(), BASE)
+        base = review_storage.load_activation(repository_root=repo, database_id=BASE)
+        assert base.ontology_version == 2 and "CourseOffering.year" in base.profile.fields
+        before = {path: path.read_bytes() for path in _review_dir(repo, BASE).iterdir() if path.is_file()}
+        changed = _derived(tmp_path, "year-renamed", ["ALTER TABLE course_offerings RENAME COLUMN year TO old_year"])
+        assert _upload(client, TARGET, "Next", changed.read_bytes()).status_code == 200
+        comparison = client.get(COMPARE_PATH, params={"base_database_id": BASE, "candidate_database_id": TARGET})
+        assert comparison.status_code == 200, comparison.text[:300]
+        assert comparison.json()["carry_over_executable"] is True
+        assert "CourseOffering.year" not in {item["semantic_field"] for item in comparison.json()["field_impacts"]}
+        carried = _carry(client)
+        assert carried.status_code == 200, carried.text[:300]
+        assert len(carried.json()["succession"]["carried_fields"]) == 14
+        assert "CourseOffering.year" not in _fields(carried.json())
+        _ignore_newer(client, TARGET, "admin")
+        assert _action(client, {"action": "PUBLISH", "database_id": TARGET, "published_by": "admin"}).status_code == 200
+        target = review_storage.load_activation(repository_root=repo, database_id=TARGET)
+        assert target.ontology_version == 3 and "CourseOffering.year" not in target.profile.fields
+        assert all(path.read_bytes() == content for path, content in before.items())
     finally:
         client.close()
         set_private_repository_root_for_tests(None)

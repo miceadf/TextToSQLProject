@@ -59,22 +59,22 @@ function catalogPayload() {
 }
 
 describe('phase6-16 databases parser', () => {
-  it('accepts strict registry and rejects extra keys/unknown schema', () => {
+  it('accepts strict top-level registry and skips invalid entries', () => {
     assert.equal(parseDatabaseRegistry(registryPayload())?.length, 2);
     assert.equal(parseDatabaseRegistry({ version: 'synthetic-database-registry-v1', databases: [], extra: 1 }), null);
-    assert.equal(
+    assert.deepEqual(
       parseDatabaseRegistry({
         version: 'synthetic-database-registry-v1',
         databases: [{ database_id: FLAT_ID, label: 'x', schema: 'weird' }],
       }),
-      null,
+      [],
     );
-    assert.equal(
+    assert.deepEqual(
       parseDatabaseRegistry({
         version: 'synthetic-database-registry-v1',
         databases: [{ database_id: 'legacy', label: 'Collision', schema: 'flat' }],
       }),
-      null,
+      [],
     );
     assert.equal(
       parseDatabaseRegistry({
@@ -97,6 +97,14 @@ describe('phase6-16 databases parser', () => {
     assert.equal(parseCatalogResponse({ ...catalogPayload(), injected: 'secret' }), null);
     const bad = catalogPayload() as unknown as { items: Array<Record<string, unknown>>; total: number; version: string; database_id: string };
     assert.equal(parseCatalogResponse({ ...bad, items: [{ ...bad.items[0], enrolled: 99999 }] }), null);
+  });
+
+  it('accepts the retired year as null while preserving the catalog contract', () => {
+    const payload = catalogPayload();
+    const parsed = parseCatalogResponse({ ...payload, items: [{ ...payload.items[0], year: null }] });
+    assert.ok(parsed);
+    assert.equal(parsed.items[0]!.year, null);
+    assert.ok(canonicalToCourse(parsed.items[0]!).id);
   });
 
   it('maps canonical DTO to legacy Course without leaking internals', () => {

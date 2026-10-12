@@ -278,7 +278,6 @@ function parseVersionHistory(
     const previous = versions[versions.length - 1];
     if (previous !== undefined && parsed.version <= previous.version) return null;
     if (parsed.version > latestVersion) return null;
-    if (parsed.active && !parsed.activatable) return null;
     versions.push(parsed);
   }
   const active = versions.filter((entry) => entry.active);

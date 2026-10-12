@@ -92,9 +92,12 @@ def columns(loaded: pg.LoadedPostgresRegistration) -> list[dict[str, Any]]:
 
 def reviewed_columns(draft: Any) -> set[tuple[str, str]]:
     """Columns already given to a common field by the review."""
+    from ..ontology import load_default_ontology
+
     return {
         (entry.table or "", entry.column or "")
-        for entry in getattr(draft, "fields", {}).values()
+        for name, entry in getattr(draft, "fields", {}).items()
+        if name not in load_default_ontology().retired_fields
         if entry.decision in (ReviewDecision.APPROVED, ReviewDecision.REMAPPED)
     }
 
