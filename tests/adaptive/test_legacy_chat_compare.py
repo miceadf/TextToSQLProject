@@ -221,7 +221,10 @@ def test_legacy_errors_and_unkeyed_rows() -> None:
     def post_raises(*_args: Any) -> tuple[int, Any]:
         raise OSError("down")
 
-    assert lcc.ask_queryir(post_raises, "q") == {"answered": False, "error": "TRANSPORT", "seconds": pytest.approx(0, abs=5)}
+    assert lcc.ask_queryir(post_raises, "q") == {
+        "answered": False, "error": "TRANSPORT", "seconds": pytest.approx(0, abs=5),
+        "elapsed_ms": pytest.approx(0, abs=5000),
+    }
 
 
 def test_policy_variants_replay_the_same_filters_without_a_model_call() -> None:

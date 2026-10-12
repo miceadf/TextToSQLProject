@@ -61,6 +61,10 @@ class PostgresDistinctValueReader:
             raise ValueError("invalid reader configuration")
         self._configs = {**self._configs, database_id: config}
 
+    def unregister(self, database_id: str) -> None:
+        """Forget the connection of a deleted PostgreSQL registration."""
+        self._configs = {key: value for key, value in self._configs.items() if key != database_id}
+
     def present(self, database_id: str, table: str, column: str, values: list[str]) -> set[str] | None:
         """Phase 8-07: which of these exact values the column holds (``None`` = unavailable)."""
         config = self._configs.get(database_id)
@@ -156,7 +160,7 @@ class PostgresDistinctValueReader:
             and all(isinstance(item, str) and 0 < len(item) <= MAX_VALUE_LENGTH for item in row)
         )
 
-    def read(self, database_id: str, table: str, column: str, limit: int, *, sample: bool = False) -> Any:
+    def read(self, database_id: str, table: str, column: str, limit: int, *, sample: bool = False, ordered: bool = False) -> Any:
         """``sample`` (Phase 8-21): up to ``limit`` values even when the column
         holds more, for format checks that only need examples."""
         config = self._configs.get(database_id)
@@ -165,10 +169,14 @@ class PostgresDistinctValueReader:
         connection = None
         try:
             quoted = _quote(column)
+            value_sql = f"CAST({quoted} AS text)" + (' COLLATE "C"' if ordered else '')
             query = (
-                f"SELECT DISTINCT CAST({quoted} AS text) FROM {_quote(config.schema)}.{_quote(table)} "
-                f"WHERE {quoted} IS NOT NULL LIMIT %s"
+                f"SELECT DISTINCT {value_sql} FROM {_quote(config.schema)}.{_quote(table)} "
+                f"WHERE {quoted} IS NOT NULL"
             )
+            # Evaluation sampling needs a stable subset before LIMIT. The
+            # existing runtime path keeps its original query by default.
+            query += (" ORDER BY 1" if ordered else "") + " LIMIT %s"
             connection = self._connector(config)
             set_encoding = getattr(connection, "set_client_encoding", None)
             if callable(set_encoding):

@@ -331,8 +331,8 @@ def ask_legacy(post: PostJson, question: str) -> dict[str, Any]:
     try:
         status, payload = post(LEGACY_URL, {"query": question, "excludeCompletedCourses": False}, HTTP_TIMEOUT_SECONDS)
     except Exception:
-        return {"answered": False, "error": "TRANSPORT", "seconds": round(time.perf_counter() - started, 2)}
-    record: dict[str, Any] = {"http_status": status, "seconds": round(time.perf_counter() - started, 2)}
+        return {"answered": False, "error": "TRANSPORT", "seconds": round(time.perf_counter() - started, 2), "elapsed_ms": round((time.perf_counter() - started) * 1000, 3)}
+    record: dict[str, Any] = {"http_status": status, "seconds": round(time.perf_counter() - started, 2), "elapsed_ms": round((time.perf_counter() - started) * 1000, 3)}
     if status != 200 or not isinstance(payload, dict) or payload.get("error") or payload.get("warning"):
         record.update({"answered": False, "error": "LEGACY_ERROR" if status == 200 else f"HTTP_{status}"})
         return record
@@ -356,8 +356,8 @@ def ask_queryir(post: PostJson, question: str, database_id: str = DATABASE_ID) -
     try:
         status, payload = post(QUERYIR_URL, {"database_id": database_id, "query": question}, HTTP_TIMEOUT_SECONDS)
     except Exception:
-        return {"answered": False, "error": "TRANSPORT", "seconds": round(time.perf_counter() - started, 2)}
-    record: dict[str, Any] = {"http_status": status, "seconds": round(time.perf_counter() - started, 2)}
+        return {"answered": False, "error": "TRANSPORT", "seconds": round(time.perf_counter() - started, 2), "elapsed_ms": round((time.perf_counter() - started) * 1000, 3)}
+    record: dict[str, Any] = {"http_status": status, "seconds": round(time.perf_counter() - started, 2), "elapsed_ms": round((time.perf_counter() - started) * 1000, 3)}
     if status != 200 or not isinstance(payload, dict):
         code = (payload or {}).get("error", {}).get("code") if isinstance(payload, dict) else None
         record.update({"answered": False, "error": code or f"HTTP_{status}"})

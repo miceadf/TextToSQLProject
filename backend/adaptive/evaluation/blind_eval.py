@@ -21,6 +21,7 @@ import json
 import re
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -300,8 +301,11 @@ def run(
     ask: Callable[[str, str], dict[str, Any]],
     registration: dict[str, Any] | None = None,
     commit: str | None = None,
-    model: str | None = None,
+    model: str | dict[str, Any] | None = None,
     progress: Callable[[int, int, str], None] | None = None,
+    arm: str | None = None,
+    sanitize: bool = False,
+    run_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Ask every question once and store the run without overwriting any."""
     directory = eval_dir(root, eval_id)
@@ -315,13 +319,21 @@ def run(
     started = datetime.now(timezone.utc).isoformat()
     results = []
     for position, question in enumerate(questions.questions, start=1):
+        timer = time.perf_counter()
         try:
             answer = ask(questions.database_id, question.text)
         except Exception:
             answer = {}
+        elapsed_ms = round((time.perf_counter() - timer) * 1000, 3)
         if not isinstance(answer, dict):
             answer = {}
+        elapsed_ms = answer.get("elapsed_ms", elapsed_ms)
         record = grade(question, answer)
+        record["elapsed_ms"] = elapsed_ms
+        if sanitize:
+            from .direct_sql_pg import safe_record
+            answer.setdefault("elapsed_ms", record["elapsed_ms"])
+            record = safe_record(answer, record)
         results.append(record)
         if progress is not None:
             progress(position, len(questions.questions), record["result"])
@@ -340,6 +352,13 @@ def run(
         "summary": _summary(results),
         "results": results,
     }
+    if arm is not None:
+        document["arm"] = arm
+    if sanitize:
+        from .direct_sql_pg import summary
+        document["metrics"] = summary(results)
+        if run_metadata is not None:
+            document.update(run_metadata)
     run_path.write_text(json.dumps(document, ensure_ascii=False, indent=2), encoding="utf-8")
     return document
 
@@ -375,12 +394,14 @@ def report(root: str | Path, eval_id: str) -> list[dict[str, Any]]:
         rows.append(
             {
                 "run": number,
+                "arm": document.get("arm", "queryir"),
                 "first_run": document.get("first_run"),
                 "questions_sha256": digest,
                 "code_commit": document.get("code_commit"),
                 "model": document.get("model"),
                 "started_at": document.get("started_at"),
                 "summary": document.get("summary"),
+                "metrics": document.get("metrics"),
                 "warnings": warnings,
             }
         )
@@ -454,14 +475,16 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(check(root, args.eval_id), ensure_ascii=False))
             return 0
         if args.command == "report":
-            for row in report(root, args.eval_id):
+            for row in sorted(report(root, args.eval_id), key=lambda row: (row.get("arm", "queryir"), row["run"])):
                 warnings = ", ".join(row["warnings"])
                 if "summary" not in row:
-                    print(f"run {row['run']:03d}: {warnings}")
+                    print(f"{row.get('arm', 'queryir')} run {row['run']:03d}: {warnings}")
                     continue
                 label = "첫 실행" if row["first_run"] else f"재실행(commit {row['code_commit']})"
                 suffix = f" [{warnings}]" if warnings else ""
-                print(f"run {row['run']:03d} {label}: {json.dumps(row['summary'], ensure_ascii=False)}{suffix}")
+                print(f"{row.get('arm', 'queryir')} run {row['run']:03d} {label}: {json.dumps(row['summary'], ensure_ascii=False)}{suffix}")
+                if row.get("metrics") is not None:
+                    print(json.dumps({"arm": row.get("arm", "queryir"), "metrics": row["metrics"]}))
             return 0
         base = _base_url(args.base_url)
         questions, _digest = load_questions(root, args.eval_id)

@@ -50,6 +50,32 @@ def ask(_database_id: str, text: str) -> dict[str, Any]:
     return ANSWERS[text]
 
 
+@pytest.mark.parametrize("sanitize", [False, True])
+@pytest.mark.parametrize("reported_elapsed", [None, 12.5])
+def test_run_latency_excludes_grading_and_preserves_answer_elapsed(tmp_path, monkeypatch, sanitize, reported_elapsed):
+    write_questions(tmp_path)
+    clock = [0.0]
+    monkeypatch.setattr(be.time, "perf_counter", lambda: clock[0])
+    original_grade = be.grade
+
+    def timed_ask(database_id, text):
+        clock[0] += 0.025
+        answer = dict(ANSWERS[text])
+        if reported_elapsed is not None:
+            answer["elapsed_ms"] = reported_elapsed
+        return answer
+
+    def slow_grade(question, answer):
+        clock[0] += 10.0
+        return original_grade(question, answer)
+
+    monkeypatch.setattr(be, "grade", slow_grade)
+    document = be.run(tmp_path, "school-a", ask=timed_ask, sanitize=sanitize)
+    assert [record["elapsed_ms"] for record in document["results"]] == [
+        25.0 if reported_elapsed is None else reported_elapsed
+    ] * 3
+
+
 # --- checking the file without showing it -----------------------------------------------------
 
 
