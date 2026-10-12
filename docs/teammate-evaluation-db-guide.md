@@ -78,5 +78,14 @@ python -m backend.adaptive.evaluation.blind_eval run school-a-v1
 python -m backend.adaptive.evaluation.blind_eval report school-a-v1
 ```
 
+- 챗봇 모델을 고를 수 있다(Phase 9-08). 없으면 서버의 기본 모델(일반 모델)이 답한다.
+  - 두 모델을 비교하려면 같은 평가 ID로 한 번씩 실행한다.
+  - 처음 것이 첫 실행, 다음 것은 재실행으로 기록된다. 결과 파일에는 답한 모델의 id와 이름이 남는다.
+  ```bash
+  python -m backend.adaptive.evaluation.blind_eval run school-a-v1 --model general
+  ```
+  ```bash
+  python -m backend.adaptive.evaluation.blind_eval run school-a-v1 --model legacy-tuned
+  ```
 - 첫 실행 때 질문 파일이 잠긴다. 그 뒤 질문을 고치면 실행이 거부된다. 질문을 바꾸려면 새 평가 ID를 쓴다.
 - 결과 파일(`run-001.json` …)에는 질문마다 PASS/FAIL/CAPPED/ERROR와 개수만 남는다. 결과 행 자체는 남지 않는다.

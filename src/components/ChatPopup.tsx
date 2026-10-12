@@ -3,12 +3,14 @@ import {
   chatErrorMessage,
   chatRowsToLegacyRows,
   describeAnswer,
+  describeChatModel,
   describeUnmatched,
   describeUnderstood,
+  fetchChatModels,
   postChatQuery,
   QUERYIR_TIME_GUIDE,
 } from '../adaptive-prototype/chatQuery.ts'
-import type { ChatTarget } from '../adaptive-prototype/chatQuery.ts'
+import type { ChatModelOption, ChatTarget } from '../adaptive-prototype/chatQuery.ts'
 import { getAccessToken } from '../services/apiClient'
 import type { Course, CourseDetail } from '../types/course'
 import { cn } from '../utils/cn'
@@ -449,6 +451,10 @@ export default function ChatPopup({
   const [guidelineOpen, setGuidelineOpen] = useState(true)
   const [sqlOpen, setSqlOpen] = useState(true)
   const [lastUnderstood, setLastUnderstood] = useState('')
+  // Phase 9-08: the QueryIR chat's model choices (null until loaded) and the pick.
+  const [chatModels, setChatModels] = useState<ChatModelOption[] | null>(null)
+  const [chatModel, setChatModel] = useState<string | null>(null)
+  const isQueryIr = chatTarget.kind === 'queryir'
   const targetKey = chatTargetKey(chatTarget)
   const targetKeyRef = useRef(targetKey)
 
@@ -502,6 +508,33 @@ export default function ChatPopup({
         : prev,
     )
   }, [targetKey, chatTarget])
+
+  useEffect(() => {
+    if (!mounted || !isQueryIr || chatModels !== null) return
+    const controller = new AbortController()
+    fetchChatModels((url, init) => fetch(url, init), { signal: controller.signal })
+      .then((listing) => {
+        setChatModels(listing.models)
+        setChatModel((current) =>
+          current !== null && listing.models.some((option) => option.id === current) ? current : listing.defaultId,
+        )
+      })
+      .catch(() => {
+        // Without a listing the server's default model answers.
+        if (!controller.signal.aborted) setChatModels([])
+      })
+    return () => controller.abort()
+  }, [mounted, isQueryIr, chatModels])
+
+  function changeChatModel(id: string) {
+    const option = chatModels?.find((item) => item.id === id)
+    if (option === undefined || id === chatModel) return
+    setChatModel(id)
+    setMessages((prev) => [
+      ...prev,
+      { id: makeId('sys'), role: 'system', text: `다음 질문부터 이 모델이 답합니다: ${describeChatModel(option)}` },
+    ])
+  }
 
   useEffect(() => {
     if (!mounted) return
@@ -668,7 +701,7 @@ export default function ChatPopup({
         (url, init) => fetch(url, init),
         databaseId,
         text,
-        { signal: controller.signal },
+        { signal: controller.signal, ...(chatModel === null ? {} : { model: chatModel }) },
       )
       // The user may have switched databases while the model was answering.
       if (controller.signal.aborted || targetKeyRef.current !== requestKey) return
@@ -800,6 +833,24 @@ export default function ChatPopup({
                 <span className="font-normal text-slate-400">(QueryIR 경로에서는 미지원)</span>
               ) : null}
             </label>
+            {isQueryIr && chatModels !== null && chatModels.length > 1 ? (
+              <label className="mb-2 flex items-center gap-2 text-xs font-semibold text-slate-700">
+                <span className="shrink-0">모델</span>
+                <select
+                  value={chatModel ?? ''}
+                  onChange={(event) => changeChatModel(event.target.value)}
+                  disabled={loading}
+                  data-testid="chat-model"
+                  className="h-8 min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-2 text-xs font-normal text-slate-900 shadow-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 disabled:opacity-60"
+                >
+                  {chatModels.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {describeChatModel(option)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
             {loading ? (
               <div
                 className="mb-2 flex items-center gap-2 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs font-medium text-blue-700"

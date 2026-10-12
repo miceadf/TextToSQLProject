@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -166,12 +167,71 @@ def test_the_runner_only_talks_to_loopback() -> None:
             be._base_url(url)
 
 
-def test_the_model_name_is_the_only_env_value_read(tmp_path: Path) -> None:
-    (tmp_path / "backend").mkdir()
-    (tmp_path / "backend" / ".env").write_text(
-        "DATABASE_URL=postgresql://u:secret@localhost/db\nOLLAMA_MODEL='text2sql_qwen:latest'\n", encoding="utf-8"
-    )
-    assert be._model_name(tmp_path) == "text2sql_qwen:latest"
+_LISTING = {
+    "version": "adaptive-chat-models-v1",
+    "default": "general",
+    "models": [
+        {"id": "general", "label": "일반 모델", "tag": "qwen2.5-coder:7b-instruct"},
+        {"id": "legacy-tuned", "label": "레거시 학습 모델(비교용)", "tag": "text2sql_qwen:latest"},
+    ],
+}
+
+
+def test_the_recorded_model_comes_from_the_server(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Phase 9-08: the chat may not answer with OLLAMA_MODEL, so .env is not read.
+    asked: list[str] = []
+
+    def fake(method: str, url: str, body: Any = None, timeout: float = 0) -> Any:
+        asked.append(url)
+        return _LISTING
+
+    monkeypatch.setattr(be, "_http_json", fake)
+    base = "http://127.0.0.1:8124"
+    assert be._chat_model(base, None) == {"id": "general", "tag": "qwen2.5-coder:7b-instruct"}
+    assert be._chat_model(base, "legacy-tuned") == {"id": "legacy-tuned", "tag": "text2sql_qwen:latest"}
+    assert asked == [base + be.CHAT_MODELS_PATH] * 2
+    with pytest.raises(be.BlindEvalError, match="UNKNOWN_MODEL"):
+        be._chat_model(base, "gpt")
+
+
+def test_an_older_server_records_no_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(be, "_http_json", lambda *_args, **_kwargs: {"http_status": 404})
+    assert be._chat_model("http://127.0.0.1:8124", None) is None
+    with pytest.raises(be.BlindEvalError, match="UNKNOWN_MODEL"):
+        be._chat_model("http://127.0.0.1:8124", "general")
+
+
+@pytest.mark.parametrize("listing", [{"http_status": 500}, {}, {"version": "x"}, {"models": "general"}])
+def test_an_unreadable_listing_stops_the_run(monkeypatch: pytest.MonkeyPatch, listing: Any) -> None:
+    # Luna 9-08 review: a failed listing must not leave the run's model unknown.
+    monkeypatch.setattr(be, "_http_json", lambda *_args, **_kwargs: listing)
+    with pytest.raises(be.BlindEvalError, match="MODELS_UNAVAILABLE"):
+        be._chat_model("http://127.0.0.1:8124", None)
+
+
+def test_the_chosen_model_goes_into_every_question(monkeypatch: pytest.MonkeyPatch) -> None:
+    sent: list[Any] = []
+    recorded: list[Any] = []
+
+    def fake(method: str, url: str, body: Any = None, timeout: float = 0) -> Any:
+        if url.endswith(be.CHAT_MODELS_PATH):
+            return _LISTING
+        if url.endswith(be.REGISTRATIONS_PATH):
+            return {"registrations": []}
+        sent.append(body)
+        return {}
+
+    def fake_run(_root: Any, _eval_id: str, **kwargs: Any) -> dict[str, Any]:
+        kwargs["ask"]("db", "질문")
+        recorded.append(kwargs["model"])
+        return {"run": 1, "first_run": True, "summary": {}}
+
+    monkeypatch.setattr(be, "_http_json", fake)
+    monkeypatch.setattr(be, "run", fake_run)
+    monkeypatch.setattr(be, "load_questions", lambda _root, _eval_id: (SimpleNamespace(database_id="db"), "x"))
+    assert be.main(["run", "e", "--base-url", "http://127.0.0.1:8124", "--model", "legacy-tuned"]) == 0
+    assert sent == [{"database_id": "db", "query": "질문", "model": "legacy-tuned"}]
+    assert recorded == [{"id": "legacy-tuned", "tag": "text2sql_qwen:latest"}]
 
 
 # --- Luna 8-22 review regressions ---------------------------------------------------------------

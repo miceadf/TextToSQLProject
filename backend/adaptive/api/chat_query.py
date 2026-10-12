@@ -51,6 +51,15 @@ from ..mapping.extensions import DATA_TYPES as EXTENSION_TYPES
 from ..mapping.extensions import dto_key as extension_dto_key
 from ..mapping.extensions import operators_for as extension_operators
 from .synthetic_registry import _REF_TO_DTO_KEY, CARD_FIELDS, is_valid_database_id
+from .chat_models import (
+    CHAT_MODELS_PATH,
+    CHAT_MODELS_VERSION,
+    DEFAULT_MODEL_ID,
+    MODEL_ID_PATTERN,
+    MODEL_LABELS,
+    ChatModelChoice,
+    validate_choices,
+)
 
 CHAT_QUERY_PATH = "/api/adaptive/v1/chat/query"
 CHAT_QUERY_VERSION = "adaptive-chat-query-v1"
@@ -74,6 +83,8 @@ MAX_DIAGNOSIS_PROBES = 4
 _PROBED_OPERATORS = frozenset({Operator.EQUALS, Operator.CONTAINS})
 
 _REQUEST_KEYS = frozenset({"database_id", "query"})
+# Phase 9-08: the chat model the user picked, by the server's choice id.
+_OPTIONAL_REQUEST_KEYS = frozenset({"model"})
 _NOT_UNDERSTOOD_STAGES = frozenset({HarnessStage.IR_GENERATED, HarnessStage.IR_VALIDATED})
 
 __all__ = [
@@ -704,8 +715,17 @@ def answer_chat_query(
     return answer
 
 
-def _parse_request(payload: dict[str, Any] | None) -> tuple[str, str]:
-    if payload is None or set(payload) != _REQUEST_KEYS:
+def _parse_request(payload: dict[str, Any] | None) -> tuple[str, str, str | None]:
+    if (
+        payload is None
+        or not _REQUEST_KEYS <= set(payload)
+        or not set(payload) <= _REQUEST_KEYS | _OPTIONAL_REQUEST_KEYS
+    ):
+        raise ChatQueryError(ChatQueryErrorCode.INVALID_REQUEST)
+    model_id = payload.get("model")
+    if "model" in payload and (
+        not isinstance(model_id, str) or MODEL_ID_PATTERN.fullmatch(model_id) is None
+    ):
         raise ChatQueryError(ChatQueryErrorCode.INVALID_REQUEST)
     database_id = payload["database_id"]
     question = payload["query"]
@@ -718,7 +738,22 @@ def _parse_request(payload: dict[str, Any] | None) -> tuple[str, str]:
         or any(ord(char) < 0x20 and char not in "\t\n\r" for char in question)
     ):
         raise ChatQueryError(ChatQueryErrorCode.INVALID_REQUEST)
-    return database_id, question.strip()
+    return database_id, question.strip(), model_id
+
+
+def _single_choice(model: Any | None) -> tuple[ChatModelChoice, ...]:
+    """The pre-9-08 way: one model passed alone becomes the only choice."""
+    if model is None:
+        return ()
+    tag = getattr(model, "_model_tag", None)
+    return (
+        ChatModelChoice(
+            id=DEFAULT_MODEL_ID,
+            label=MODEL_LABELS[DEFAULT_MODEL_ID],
+            tag=tag if isinstance(tag, str) else None,  # type: ignore[arg-type]
+            model=model,
+        ),
+    )
 
 
 def register_chat_query_routes(
@@ -728,9 +763,21 @@ def register_chat_query_routes(
     model: Any | None,
     value_reader: Any | None = None,
     show_sql: bool = False,
+    models: tuple[ChatModelChoice, ...] | list[ChatModelChoice] | None = None,
 ) -> None:
+    """``models`` (Phase 9-08) lists the choices, default first; without it
+    ``model`` alone is the only choice."""
     if not isinstance(pg_contexts, dict):
         raise ValueError("pg_contexts must be a dict")
+    if models is not None and model is not None:
+        raise ValueError("pass model or models, not both")
+    choices = _single_choice(model) if models is None else validate_choices(models)
+    by_id = {choice.id: choice for choice in choices}
+    listing = {
+        "version": CHAT_MODELS_VERSION,
+        "default": choices[0].id if choices else None,
+        "models": [choice.listing() for choice in choices],
+    }
     from .postgres_runtime import shared_or_copy
 
     contexts = shared_or_copy(pg_contexts)
@@ -739,19 +786,29 @@ def register_chat_query_routes(
         None if value_reader is None else ChatValueIndexes(value_reader, load_default_ontology())
     )
 
+    @app.get(CHAT_MODELS_PATH)
+    async def chat_models() -> JSONResponse:
+        return JSONResponse(status_code=200, content=listing)
+
     @app.post(CHAT_QUERY_PATH)
     async def chat_query(http_request: Request) -> JSONResponse:
         try:
             raw = await _read_limited_body(http_request)
-            database_id, question = _parse_request(
+            database_id, question, model_id = _parse_request(
                 None if raw is None else _parse_strict_body(raw)
             )
+            if model_id is None:
+                chosen = choices[0].model if choices else None
+            elif model_id in by_id:
+                chosen = by_id[model_id].model
+            else:
+                raise ChatQueryError(ChatQueryErrorCode.INVALID_REQUEST)
             answer = await run_in_threadpool(
                 answer_chat_query,
                 database_id=database_id,
                 question=question,
                 pg_contexts=contexts,
-                model=model,
+                model=chosen,
                 value_indexes=value_indexes,
                 show_sql=bool(show_sql),
             )

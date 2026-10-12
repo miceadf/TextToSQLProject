@@ -25,6 +25,9 @@ from dataclasses import dataclass
 from urllib import error, request
 
 from ..harness.ollama import (
+    OUTPUT_FORMAT_NONE,
+    OUTPUT_FORMATS,
+    PROMPT_VERSIONS,
     OllamaQueryModel,
     _finite_float,
     _reject_duplicate_keys,
@@ -80,6 +83,9 @@ class OllamaStartupConfig:
     model_tag: str
     timeout_seconds: float
     request_format: str = REQUEST_FORMAT_MODEL_TEMPLATE
+    # Phase 9-08: ``queryir-schema-v1`` for a general model (ADR-098).
+    output_format: str = OUTPUT_FORMAT_NONE
+    prompt_version: str = OLLAMA_STARTUP_PROMPT_VERSION
 
     def __repr__(self) -> str:
         return _CONFIG_REPR
@@ -125,6 +131,8 @@ def parse_ollama_startup_config(
     base_url: object = None,
     timeout: object = None,
     request_format: object = None,
+    output_format: object = None,
+    prompt_version: object = None,
 ) -> OllamaStartupConfig:
     """Build a config from raw CLI strings; ``None`` selects the default.
 
@@ -136,10 +144,14 @@ def parse_ollama_startup_config(
         url = DEFAULT_OLLAMA_BASE_URL if base_url is None else base_url
         raw_timeout = DEFAULT_OLLAMA_TIMEOUT if timeout is None else timeout
         fmt = REQUEST_FORMAT_MODEL_TEMPLATE if request_format is None else request_format
+        output = OUTPUT_FORMAT_NONE if output_format is None else output_format
+        prompt = OLLAMA_STARTUP_PROMPT_VERSION if prompt_version is None else prompt_version
         if (
             not _valid_model_tag(model_tag)
             or not _valid_base_url(url)
             or not _valid_request_format(fmt)
+            or not _valid_output_format(output)
+            or not _valid_prompt_version(prompt)
         ):
             raise OllamaStartupConfigError()
         return OllamaStartupConfig(
@@ -147,6 +159,8 @@ def parse_ollama_startup_config(
             model_tag=model_tag,  # type: ignore[arg-type]
             timeout_seconds=_parse_timeout(raw_timeout),
             request_format=fmt,  # type: ignore[arg-type]
+            output_format=output,  # type: ignore[arg-type]
+            prompt_version=prompt,  # type: ignore[arg-type]
         )
     except OllamaStartupConfigError:
         raise OllamaStartupConfigError() from None
@@ -158,6 +172,14 @@ def _valid_request_format(value: object) -> bool:
     return type(value) is str and value in REQUEST_FORMATS
 
 
+def _valid_output_format(value: object) -> bool:
+    return type(value) is str and value in OUTPUT_FORMATS
+
+
+def _valid_prompt_version(value: object) -> bool:
+    return type(value) is str and value in PROMPT_VERSIONS
+
+
 def _validate_config(config: object) -> OllamaStartupConfig:
     if (
         type(config) is not OllamaStartupConfig
@@ -165,6 +187,8 @@ def _validate_config(config: object) -> OllamaStartupConfig:
         or not _valid_model_tag(config.model_tag)
         or not _valid_timeout_seconds(config.timeout_seconds)
         or not _valid_request_format(config.request_format)
+        or not _valid_output_format(config.output_format)
+        or not _valid_prompt_version(config.prompt_version)
     ):
         raise OllamaStartupConfigError()
     return config
@@ -274,8 +298,9 @@ def build_startup_ollama_model(
             valid.model_tag,
             valid.timeout_seconds,
             transport=bound,  # type: ignore[arg-type]
-            prompt_version=OLLAMA_STARTUP_PROMPT_VERSION,
+            prompt_version=valid.prompt_version,
             request_format=valid.request_format,
+            output_format=valid.output_format,
         )
     except Exception:
         raise OllamaStartupConfigError() from None

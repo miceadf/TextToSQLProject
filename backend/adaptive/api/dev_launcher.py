@@ -9,8 +9,11 @@ chatbot see the same database and model:
   DSN variable (never printed, never written) only when that Git-ignored
   profile exists and the variable is not already set (Phase 7-17: the view
   profile and the base-table profile);
-- Ollama is enabled only for a loopback base URL, with the no-system request
-  format the fine-tuned model needs (ADR-059);
+- Ollama is enabled only for a loopback base URL. Phase 9-08 (ADR-098): the
+  QueryIR chat offers a general model (``CHAT_MODEL``, default
+  ``qwen2.5-coder:7b-instruct``, model template) as its default and the
+  legacy chatbot's fine-tuned ``OLLAMA_MODEL`` (no-system request format,
+  ADR-059) as a comparison choice; the user picks one per question;
 - upload mapping proposals (Phase 8-12) use the same loopback base URL (or the
   default one) with ``MAPPING_MODEL`` or the benchmarked default tag;
 - the chat shows the executed SQL like the legacy chatbot (Phase 8-14, a
@@ -41,10 +44,12 @@ LEGACY_SPECS = (BASE_SPEC, VIEW_SPEC)
 ENV_FILE = Path("backend/.env")
 REQUEST_FORMAT = "alpaca-raw-no-system-v1"
 OLLAMA_TIMEOUT = "120"
-_ENV_KEYS = frozenset({"DATABASE_URL", "OLLAMA_BASE_URL", "OLLAMA_MODEL", "MAPPING_MODEL", "SHOW_SQL"})
+_ENV_KEYS = frozenset(
+    {"DATABASE_URL", "OLLAMA_BASE_URL", "OLLAMA_MODEL", "CHAT_MODEL", "MAPPING_MODEL", "SHOW_SQL"}
+)
 _FIXED_HOST = "127.0.0.1"
 
-__all__ = ["main", "plan_launch", "plan_mapping_model", "read_env_file"]
+__all__ = ["main", "plan_chat_models", "plan_launch", "plan_mapping_model", "read_env_file"]
 
 
 def read_env_file(path: Path) -> dict[str, str]:
@@ -84,22 +89,55 @@ def plan_launch(
         else:
             status[spec.database_id] = "disabled (DSN_MISSING)"
 
-    model_tag = env_values.get("OLLAMA_MODEL")
-    base_url = (env_values.get("OLLAMA_BASE_URL") or "").rstrip("/")
-    ollama: dict[str, str] | None = None
-    if not model_tag:
-        status["ollama"] = "disabled (MODEL_MISSING)"
-    else:
-        try:
-            from .ollama_startup import parse_ollama_startup_config
-
-            parse_ollama_startup_config(model_tag, base_url or None, OLLAMA_TIMEOUT, REQUEST_FORMAT)
-        except Exception:
-            status["ollama"] = "disabled (INVALID_OR_NON_LOOPBACK_CONFIG)"
-        else:
-            ollama = {"model_tag": model_tag, "base_url": base_url}
-            status["ollama"] = "enabled"
+    ollama, model_status = plan_chat_models(env_values)
+    status.update(model_status)
     return profile_ids, ollama, status
+
+
+def plan_chat_models(
+    env_values: dict[str, str],
+) -> tuple[list[dict[str, str]] | None, dict[str, str]]:
+    """The chat's model choices, default first (Phase 9-08), and status lines.
+
+    ``general`` is ``CHAT_MODEL`` or the default tag with the model template;
+    ``legacy-tuned`` is the legacy chatbot's ``OLLAMA_MODEL`` with the
+    no-system format. The same tag twice keeps only ``legacy-tuned``.
+    """
+    from .chat_models import DEFAULT_CHAT_MODEL, GENERAL_MODEL_ID, LEGACY_TUNED_MODEL_ID
+    from .ollama_startup import parse_ollama_startup_config
+
+    base_url = (env_values.get("OLLAMA_BASE_URL") or "").rstrip("/")
+    general = env_values.get("CHAT_MODEL") or DEFAULT_CHAT_MODEL
+    tuned = env_values.get("OLLAMA_MODEL")
+    # A general model is held to the QueryIR shape by a JSON schema and told
+    # what the fine-tuned one learned (query-ir-v3); the fine-tuned one keeps
+    # its exact pre-9-08 request.
+    wanted = [] if general == tuned else [
+        (GENERAL_MODEL_ID, general, "model-template", "queryir-schema-v1", "query-ir-v3")
+    ]
+    if tuned:
+        wanted.append((LEGACY_TUNED_MODEL_ID, tuned, REQUEST_FORMAT, "none", "query-ir-v1"))
+    status: dict[str, str] = {}
+    choices: list[dict[str, str]] = []
+    for model_id, tag, request_format, output_format, prompt_version in wanted:
+        try:
+            parse_ollama_startup_config(
+                tag, base_url or None, OLLAMA_TIMEOUT, request_format, output_format, prompt_version
+            )
+        except Exception:
+            status[f"chat_model.{model_id}"] = "disabled (INVALID_OR_NON_LOOPBACK_CONFIG)"
+            continue
+        choices.append({
+            "id": model_id, "model_tag": tag, "base_url": base_url,
+            "request_format": request_format, "output_format": output_format,
+            "prompt_version": prompt_version,
+        })
+        status[f"chat_model.{model_id}"] = "enabled"
+    if not choices:
+        status["ollama"] = "disabled (INVALID_OR_NON_LOOPBACK_CONFIG)"
+        return None, status
+    status["ollama"] = "enabled"
+    return choices, status
 
 
 def plan_mapping_model(env_values: dict[str, str]) -> tuple[dict[str, str] | None, str]:
@@ -135,9 +173,32 @@ def _build_model(ollama: dict[str, str]) -> Any:
 
     return build_startup_ollama_model(
         parse_ollama_startup_config(
-            ollama["model_tag"], ollama["base_url"] or None, OLLAMA_TIMEOUT, REQUEST_FORMAT
+            ollama["model_tag"], ollama["base_url"] or None, OLLAMA_TIMEOUT,
+            ollama["request_format"], ollama["output_format"], ollama["prompt_version"],
         )
     )
+
+
+def _build_choices(ollama: list[dict[str, str]], status: dict[str, str]) -> list[Any] | None:
+    """Build each chat model on its own; one failing keeps the others."""
+    from .chat_models import MODEL_LABELS, ChatModelChoice
+
+    choices: list[Any] = []
+    for spec in ollama:
+        try:
+            model = _build_model(spec)
+        except Exception:
+            status[f"chat_model.{spec['id']}"] = "disabled (STARTUP_FAILED)"
+            continue
+        choices.append(
+            ChatModelChoice(
+                id=spec["id"], label=MODEL_LABELS[spec["id"]], tag=spec["model_tag"], model=model
+            )
+        )
+    if not choices:
+        status["ollama"] = "disabled (STARTUP_FAILED)"
+        return None
+    return choices
 
 
 def _postgres_sources(env_values: dict[str, str]) -> dict[str, Any]:
@@ -160,7 +221,7 @@ def _dsn_env_for(database_id: str) -> str:
 
 def _create_app(
     profiles: list[Any] | None,
-    model: Any | None,
+    model: list[Any] | None,
     mapping_model: Any | None = None,
     show_sql: bool = False,
     postgres_sources: dict[str, Any] | None = None,
@@ -175,7 +236,7 @@ def _create_app(
     if profiles:
         kwargs["postgres_profiles"] = profiles
     if model is not None:
-        kwargs["ollama_model"] = model
+        kwargs["chat_models"] = model
     if mapping_model is not None:
         kwargs["mapping_model"] = mapping_model
     return create_synthetic_clarification_prototype(**kwargs)
@@ -232,12 +293,9 @@ def main(argv: list[str] | None = None) -> int:
             status[database_id] = "disabled (PROFILE_INVALID)"
         else:
             loaded.append((database_id, profile))
-    model: Any | None = None
+    model: list[Any] | None = None
     if ollama is not None:
-        try:
-            model = _build_model(ollama)
-        except Exception:
-            status["ollama"] = "disabled (STARTUP_FAILED)"
+        model = _build_choices(ollama, status)
     mapping_settings, status["mapping_ai"] = plan_mapping_model(env_values)
     show_sql = env_values.get("SHOW_SQL", "1").strip() != "0"
     status["chat_sql"] = "shown" if show_sql else "hidden"

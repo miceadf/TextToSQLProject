@@ -185,6 +185,28 @@ def test_values_move_only_to_the_one_hinted_field_that_holds_them() -> None:
     assert repair_output(own, ONTOLOGY, index=index, hints=hints)["filters"] == own["filters"]
 
 
+@pytest.mark.parametrize("identity", ["CourseOffering.section", "Course.code", "Department.code"])
+def test_a_hinted_name_in_an_identity_field_moves(identity: str) -> None:
+    # Phase 9-08: a general model put department names into the section.
+    index = make_index()
+    hints = index.find("전자공학과 전공 과목")
+    wrong = ir(["Course.name"], [{"field": identity, "operator": "contains", "value": "전자공학과"}])
+    repaired = repair_output(wrong, ONTOLOGY, index=index, hints=hints)
+    assert repaired["filters"][0]["field"] == "Department.name"
+
+
+def test_identity_values_without_an_equal_hint_stay() -> None:
+    index = make_index()
+    hints = index.find("전자공학과 전공 과목")
+    for value in ("01", "1101-7019", "전자", "전자공학과 01분반"):
+        # A code, a part of a hinted name, or a longer text never moves.
+        own = ir(["Course.name"], [{"field": "CourseOffering.section", "operator": "equals", "value": value}])
+        assert repair_output(own, ONTOLOGY, index=index, hints=hints)["filters"] == own["filters"]
+    wrong = ir(["Course.name"], [{"field": "CourseOffering.section", "operator": "contains", "value": "전자공학과"}])
+    assert repair_output(wrong, ONTOLOGY, index=index, hints=[])["filters"] == wrong["filters"]
+    assert repair_output(wrong, ONTOLOGY, index=None, hints=hints)["filters"] == wrong["filters"]
+
+
 def test_repair_leaves_malformed_output_alone() -> None:
     for output in ("SELECT 1", None, {"filters": "x"}, {"select": "Course.department"}):
         assert repair_output(output, ONTOLOGY) == output

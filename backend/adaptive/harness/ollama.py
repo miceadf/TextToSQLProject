@@ -13,7 +13,7 @@ from concurrent.futures import CancelledError
 from dataclasses import dataclass, field
 from urllib import error, parse, request
 
-from .contracts import HarnessRequest, MappingProfile, MappingStatus, Ontology
+from .contracts import DataType, HarnessRequest, MappingProfile, MappingStatus, Ontology
 from .ollama_request_format import (
     ALPACA_NO_SYSTEM_SHA256,
     REQUEST_FORMAT_MODEL_TEMPLATE,
@@ -30,6 +30,26 @@ from .recording_bundle_contracts import (
 )
 from .recording_orchestrator import RecordingProviderError
 
+
+# Phase 9-08 (ADR-098): a general model is held to the QueryIR shape by the
+# request's JSON schema (Ollama structured outputs). The fine-tuned model
+# learned the shape and keeps its exact pre-9-08 request ("none").
+OUTPUT_FORMAT_NONE = "none"
+OUTPUT_FORMAT_QUERYIR_SCHEMA = "queryir-schema-v1"
+OUTPUT_FORMATS = (OUTPUT_FORMAT_NONE, OUTPUT_FORMAT_QUERYIR_SCHEMA)
+# Bounds a generation that repeats conditions until the timeout (seen without
+# a bound, Phase 9-08). Far above what a question states (three or four), so
+# no stated condition is cut in practice; a longer question is a known limit.
+MAX_SCHEMA_FILTERS = 12
+# JSON value type per data type, as ``validator._validate_value_type`` checks it.
+_JSON_TYPES = {
+    DataType.STRING: "string",
+    DataType.DATE: "string",
+    DataType.TIME: "string",
+    DataType.INTEGER: "integer",
+    DataType.NUMBER: "number",
+    DataType.BOOLEAN: "boolean",
+}
 
 PROMPT_VERSION = "query-ir-v1"
 GENERATION_OPTIONS = {"temperature": 0}
@@ -54,14 +74,28 @@ PROMPT_TEMPLATE_V2 = (
     "Context: {context}\n"
     "Question: {question}"
 )
+# Phase 9-08 (ADR-098): v2 plus what the fine-tuned model learned from its
+# data and a general model must be told: state no condition the question
+# does not, and follow the value hints.
+PROMPT_TEMPLATE_V3 = PROMPT_TEMPLATE_V2.replace(
+    "Return JSON only;",
+    "Add a filter only for a condition the question states; do not add any other condition. "
+    "When Value hints are given, use each hint's field and value for its text. "
+    "Return JSON only;",
+)
+PROMPT_VERSIONS = ("query-ir-v1", "query-ir-v2", "query-ir-v3")
 OllamaTransport = Callable[[str, dict[str, object], float], object]
 
 
 def _versioned_template(prompt_version: str | None = None) -> str:
     version = PROMPT_VERSION if prompt_version is None else prompt_version
-    if version not in {"query-ir-v1", "query-ir-v2"}:
+    if version not in PROMPT_VERSIONS:
         raise ValueError("INVALID_PROMPT_VERSION")
-    template = PROMPT_TEMPLATE if version == "query-ir-v1" else PROMPT_TEMPLATE_V2
+    template = {
+        "query-ir-v1": PROMPT_TEMPLATE,
+        "query-ir-v2": PROMPT_TEMPLATE_V2,
+        "query-ir-v3": PROMPT_TEMPLATE_V3,
+    }[version]
     return template.replace("{prompt_version}", version)
 
 
@@ -185,6 +219,60 @@ def _prompt(
     return prefix + encoded_context + hint_line + between + question + suffix
 
 
+def queryir_schema(ontology: Ontology, mapping: MappingProfile) -> dict[str, object] | None:
+    """The QueryIR JSON schema for one request: shape only, validation still runs.
+
+    Fields are every field the prompt lists, not only the mapped ones, so a
+    question about a field this database lacks still names it and is
+    refused as unsupported. ``None`` when the database maps no field.
+    """
+    if not set(ontology.fields).intersection(mapping.fields) or not ontology.entities:
+        return None
+    fields = sorted(ontology.fields)
+    # One filter shape per value type, the validator's own type rule, so a
+    # number is never written as text.
+    groups: dict[str, list[str]] = {}
+    for name in fields:
+        groups.setdefault(_JSON_TYPES[ontology.fields[name].data_type], []).append(name)
+    filter_shapes = [
+        {
+            "type": "object",
+            "properties": {
+                "field": {"type": "string", "enum": names},
+                "operator": {
+                    "type": "string",
+                    "enum": sorted(
+                        {item.value for name in names for item in ontology.fields[name].allowed_operators}
+                    ),
+                },
+                "value": {"type": json_type},
+            },
+            "required": ["field", "operator", "value"],
+        }
+        for json_type, names in sorted(groups.items())
+    ]
+    return {
+        "type": "object",
+        "properties": {
+            "entity": {"type": "string", "enum": sorted(ontology.entities)},
+            "select": {
+                "type": "array",
+                "items": {"type": "string", "enum": fields},
+                "minItems": 1,
+                "maxItems": len(fields),
+                "uniqueItems": True,
+            },
+            "filters": {
+                "type": "array",
+                "items": filter_shapes[0] if len(filter_shapes) == 1 else {"anyOf": filter_shapes},
+                "maxItems": MAX_SCHEMA_FILTERS,
+            },
+            "limit": {"type": "integer", "minimum": 1, "maximum": 200},
+        },
+        "required": ["entity", "select", "filters", "limit"],
+    }
+
+
 class OllamaQueryModel:
     """One /api/generate call per request; no retries or model substitution.
 
@@ -201,6 +289,7 @@ class OllamaQueryModel:
         transport: OllamaTransport = _default_transport,
         prompt_version: str | None = None,
         request_format: str | None = None,
+        output_format: str | None = None,
     ) -> None:
         try:
             parsed = parse.urlsplit(base_url)
@@ -225,6 +314,9 @@ class OllamaQueryModel:
         fmt = REQUEST_FORMAT_MODEL_TEMPLATE if request_format is None else request_format
         if type(fmt) is not str or fmt not in REQUEST_FORMATS:
             raise ValueError("INVALID_OLLAMA_REQUEST_FORMAT")
+        output = OUTPUT_FORMAT_NONE if output_format is None else output_format
+        if type(output) is not str or output not in OUTPUT_FORMATS:
+            raise ValueError("INVALID_OLLAMA_OUTPUT_FORMAT")
         version = PROMPT_VERSION if prompt_version is None else prompt_version
         _versioned_template(version)
         self._url = base_url.rstrip("/") + "/api/generate"
@@ -234,6 +326,7 @@ class OllamaQueryModel:
         self._transport = apply_request_format(transport, fmt)
         self.prompt_version = version
         self.request_format = fmt
+        self.output_format = output
 
     def declared_provenance(
         self, provider_version: str, model_digest: str | None = None
@@ -259,6 +352,9 @@ class OllamaQueryModel:
             generation_config["request_format"] = self.request_format
             generation_config["raw"] = True
             generation_config["request_template_sha256"] = ALPACA_NO_SYSTEM_SHA256
+        # Declared only when used, so earlier hashes stay the same.
+        if self.output_format != OUTPUT_FORMAT_NONE:
+            generation_config["output_format"] = self.output_format
         config_bytes = json.dumps(
             generation_config,
             ensure_ascii=False,
@@ -308,6 +404,10 @@ class OllamaQueryModel:
             "stream": False,
             "options": dict(GENERATION_OPTIONS),
         }
+        if self.output_format == OUTPUT_FORMAT_QUERYIR_SCHEMA:
+            schema = queryir_schema(ontology, mapping)
+            if schema is not None:
+                payload["format"] = schema
         failure_code: RecordedFailureCode | None = None
         envelope: object = None
         try:

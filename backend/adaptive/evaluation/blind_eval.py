@@ -34,6 +34,7 @@ QUESTIONS_FORMAT = "blind-eval-questions-v1"
 LOCK_FORMAT = "blind-eval-lock-v1"
 RUN_FORMAT = "blind-eval-run-v1"
 CHAT_PATH = "/api/adaptive/v1/chat/query"
+CHAT_MODELS_PATH = "/api/adaptive/v1/chat/models"
 REGISTRATIONS_PATH = "/api/adaptive/v1/postgres/registrations"
 EVAL_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
 DATABASE_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
@@ -407,15 +408,27 @@ def _git_commit(root: Path) -> str | None:
     return commit + ("+dirty" if dirty else "")
 
 
-def _model_name(root: Path) -> str | None:
-    """``OLLAMA_MODEL`` from ``backend/.env``; nothing else is read."""
-    try:
-        for line in (root / "backend" / ".env").read_text(encoding="utf-8").splitlines():
-            key, _, value = line.partition("=")
-            if key.strip() == "OLLAMA_MODEL":
-                return value.strip().strip("'\"") or None
-    except OSError:
-        return None
+def _chat_model(base: str, wanted: str | None) -> dict[str, Any] | None:
+    """The model the server answers with: its choice id and tag (Phase 9-08).
+
+    Read from the server, not from ``.env``: the chat may answer with a
+    model other than ``OLLAMA_MODEL``. ``wanted`` must be one the server
+    offers; without it the server's default answers.
+    """
+    listing = _http_json("GET", base + CHAT_MODELS_PATH, timeout=30)
+    if listing == {"http_status": 404} and wanted is None:
+        return None  # a server from before Phase 9-08 has no such route
+    models = listing.get("models") if isinstance(listing, dict) else None
+    if not isinstance(models, list):
+        # Any other failure: the run would not know which model answered
+        # (Luna 9-08 review).
+        raise BlindEvalError("UNKNOWN_MODEL" if wanted is not None else "MODELS_UNAVAILABLE")
+    chosen = listing.get("default") if wanted is None else wanted
+    for item in models:
+        if isinstance(item, dict) and item.get("id") == chosen:
+            return {"id": item.get("id"), "tag": item.get("tag")}
+    if wanted is not None:
+        raise BlindEvalError("UNKNOWN_MODEL")
     return None
 
 
@@ -433,6 +446,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("eval_id")
     parser.add_argument("--base-url", default="http://127.0.0.1:8123")
     parser.add_argument("--root", default=".")
+    parser.add_argument("--model", default=None, help="chat model choice id (e.g. general, legacy-tuned)")
     args = parser.parse_args(argv)
     root = Path(args.root).resolve()
     try:
@@ -452,8 +466,11 @@ def main(argv: list[str] | None = None) -> int:
         base = _base_url(args.base_url)
         questions, _digest = load_questions(root, args.eval_id)
 
+        model = _chat_model(base, args.model)
+        extra = {} if args.model is None else {"model": args.model}
+
         def ask(database_id: str, text: str) -> dict[str, Any]:
-            return _http_json("POST", base + CHAT_PATH, {"database_id": database_id, "query": text})
+            return _http_json("POST", base + CHAT_PATH, {"database_id": database_id, "query": text, **extra})
 
         document = run(
             root,
@@ -461,7 +478,7 @@ def main(argv: list[str] | None = None) -> int:
             ask=ask,
             registration=_registration(base, questions.database_id),
             commit=_git_commit(root),
-            model=_model_name(root),
+            model=model,
             progress=lambda done, total, result: print(f"{done}/{total} {result}", flush=True),
         )
         label = "첫 실행" if document["first_run"] else "재실행"

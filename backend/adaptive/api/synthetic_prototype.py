@@ -406,8 +406,13 @@ def create_synthetic_clarification_prototype(
     show_chat_sql: bool = False,
     postgres_sources: dict[str, Any] | None = None,
     postgres_registration_options: dict[str, Any] | None = None,
+    chat_models: list[Any] | None = None,
 ) -> FastAPI:
     """Assemble the synthetic clarification prototype app.
+
+    ``chat_models`` (Phase 9-08) lists the QueryIR chat's model choices,
+    default first; the default also serves the clarification flow. It
+    replaces ``ollama_model`` (pass one or the other).
 
     ``mapping_model`` (Phase 8-12) is a JSON-schema model call used only to
     order the review candidates of uploaded databases.
@@ -426,6 +431,17 @@ def create_synthetic_clarification_prototype(
     """
     tmp: Any = None
     try:
+        chat_choices: tuple[Any, ...] | None = None
+        if chat_models is not None:
+            from .chat_models import validate_choices
+
+            if ollama_model is not None:
+                raise RuntimeError(_PROTOTYPE_CREATION_FAILURE)
+            try:
+                chat_choices = validate_choices(chat_models)
+            except Exception:
+                raise RuntimeError(_PROTOTYPE_CREATION_FAILURE) from None
+            ollama_model = chat_choices[0].model
         if postgres_profiles is None:
             pg_profiles: list[Any] = []
         elif isinstance(postgres_profiles, list):
@@ -546,7 +562,9 @@ def create_synthetic_clarification_prototype(
                 from ..harness.ollama_constraint import OllamaConstraintProvider
             except Exception:
                 raise RuntimeError(_PROTOTYPE_CREATION_FAILURE) from None
-            if not isinstance(ollama_model, OllamaQueryModel):
+            if not isinstance(ollama_model, OllamaQueryModel) or any(
+                not isinstance(choice.model, OllamaQueryModel) for choice in chat_choices or ()
+            ):
                 raise RuntimeError(_PROTOTYPE_CREATION_FAILURE) from None
             try:
                 provider = OllamaConstraintProvider(ollama_model)
@@ -673,7 +691,8 @@ def create_synthetic_clarification_prototype(
             register_chat_query_routes(
                 app,
                 pg_contexts=pg_contexts,
-                model=ollama_model,
+                model=ollama_model if chat_choices is None else None,
+                models=chat_choices,
                 value_reader=value_reader,
                 show_sql=show_chat_sql is True,
             )

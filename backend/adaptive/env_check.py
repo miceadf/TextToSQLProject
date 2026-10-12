@@ -35,10 +35,13 @@ from urllib import request
 # Standard library only at import time: the check must run while the
 # packages it reports on are missing. These copies are pinned to their
 # originals by tests (dev_launcher.read_env_file, ollama_startup's base URL
-# rule, ai_proposal.DEFAULT_MAPPING_MODEL).
-ENV_KEYS = frozenset({"DATABASE_URL", "OLLAMA_BASE_URL", "OLLAMA_MODEL", "MAPPING_MODEL", "SHOW_SQL"})
+# rule, ai_proposal.DEFAULT_MAPPING_MODEL, chat_models.DEFAULT_CHAT_MODEL).
+ENV_KEYS = frozenset(
+    {"DATABASE_URL", "OLLAMA_BASE_URL", "OLLAMA_MODEL", "CHAT_MODEL", "MAPPING_MODEL", "SHOW_SQL"}
+)
 OLLAMA_BASE_URL_PATTERN = re.compile(r"http://(?:127\.0\.0\.1|\[::1\]):([1-9][0-9]{0,4})")
 DEFAULT_MAPPING_MODEL = "qwen2.5-coder:7b-instruct"
+DEFAULT_CHAT_MODEL = "qwen2.5-coder:7b-instruct"
 
 OK, WARN, FAIL = "OK", "WARN", "FAIL"
 SYNTHETIC_DSN_ENV = "SCHEMA_ADAPTIVE_SYNTHETIC_POSTGRES_DSN"
@@ -244,7 +247,8 @@ def _env(values: dict[str, str], exists: bool) -> list[Check]:
         else Check(FAIL, "DATABASE_URL", "없다", "backend/.env에 레거시 PostgreSQL 연결을 넣는다"),
         Check(OK, "OLLAMA_MODEL", _shown(values["OLLAMA_MODEL"]))
         if values.get("OLLAMA_MODEL")
-        else Check(WARN, "OLLAMA_MODEL", "없다(챗봇이 꺼진다)", "backend/.env에 챗봇 모델 이름을 넣는다"),
+        else Check(WARN, "OLLAMA_MODEL", "없다(레거시 챗봇과 비교용 레거시 학습 모델이 꺼진다)",
+                   "backend/.env에 레거시 챗봇 모델 이름을 넣는다"),
     ]
     sources = sorted(key[len("PG_SOURCE_"):].lower().replace("_", "-") for key in values if key.startswith("PG_SOURCE_"))
     checks.append(
@@ -348,7 +352,13 @@ def _ollama(values: dict[str, str], http_get_json: Callable[[str], Any]) -> list
     except Exception as exc:
         return [Check(FAIL, "Ollama", f"응답 없음({type(exc).__name__})", "Ollama를 켠다(ollama serve 또는 앱 실행)")]
     checks = [Check(OK, "Ollama", f"응답함, 모델 {len(names)}개")]
-    wanted = [("챗봇 모델", values.get("OLLAMA_MODEL")), ("mapping 모델", values.get("MAPPING_MODEL") or DEFAULT_MAPPING_MODEL)]
+    # Phase 9-08: the chat's default is the general model; OLLAMA_MODEL is the
+    # legacy chatbot's fine-tuned model, a comparison choice in the new chat.
+    wanted = [
+        ("챗봇 일반 모델", values.get("CHAT_MODEL") or DEFAULT_CHAT_MODEL),
+        ("레거시 학습 모델", values.get("OLLAMA_MODEL")),
+        ("mapping 모델", values.get("MAPPING_MODEL") or DEFAULT_MAPPING_MODEL),
+    ]
     for label, tag in wanted:
         if not tag:
             continue

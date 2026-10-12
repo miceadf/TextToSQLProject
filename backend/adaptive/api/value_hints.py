@@ -419,9 +419,13 @@ def repair_output(
 
 def _move_by_value(entry: dict[str, Any], index: ValueIndex | None, hints: list[ValueHint]) -> str | None:
     field, value = entry.get("field"), entry.get("value")
-    if index is None or not isinstance(value, str) or not index.has_values(str(field)):
+    if index is None or not isinstance(value, str):
         return None
-    if index.contains(str(field), value):
+    # Phase 9-08: identity fields (codes, sections) are never indexed, so a
+    # department name the model put into a section cannot be checked against
+    # stored values; only a value equal to one hint moves.
+    identity = field in IDENTITY_FIELDS
+    if not identity and (not index.has_values(str(field)) or index.contains(str(field), value)):
         return None
     key = lookup_key(value)
     if len(key) < MIN_KEY_LENGTH:
@@ -430,6 +434,9 @@ def _move_by_value(entry: dict[str, Any], index: ValueIndex | None, hints: list[
         hint.field
         for hint in hints
         if hint.field != field
-        and (key in (lookup_key(hint.text), lookup_key(hint.value)) or key in lookup_key(hint.value))
+        and (
+            key in (lookup_key(hint.text), lookup_key(hint.value))
+            or (not identity and key in lookup_key(hint.value))
+        )
     }
     return next(iter(targets)) if len(targets) == 1 else None

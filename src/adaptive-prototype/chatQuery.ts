@@ -5,6 +5,12 @@ import type { RegistryDatabase } from './databases.ts';
 export const CHAT_QUERY_PATH = '/api/adaptive/v1/chat/query';
 export const CHAT_QUERY_VERSION = 'adaptive-chat-query-v1';
 export const MAX_CHAT_QUESTION_LENGTH = 500;
+// Phase 9-08: the chat models the server offers; the request names one by id.
+export const CHAT_MODELS_PATH = '/api/adaptive/v1/chat/models';
+export const CHAT_MODELS_VERSION = 'adaptive-chat-models-v1';
+const MODEL_ID = /^[a-z][a-z0-9-]{0,31}$/;
+const MODEL_TAG = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/;
+const MAX_MODELS = 4;
 // Phase 8-25: the QueryIR chat reads time words with closed rules (a bare
 // 1-7시 is the afternoon), so its guide line differs from the legacy one.
 export const QUERYIR_TIME_GUIDE =
@@ -282,18 +288,90 @@ function parseError(value: unknown): { code: string | null; failure: string | nu
   return { code, failure };
 }
 
+export interface ChatModelOption {
+  id: string;
+  label: string;
+  // The Ollama model name; null for a server that names no tag.
+  tag: string | null;
+}
+
+export interface ChatModelListing {
+  defaultId: string | null;
+  models: ChatModelOption[];
+}
+
+/** Strictly read the server's chat model listing (Phase 9-08). */
+export function parseChatModels(value: unknown): ChatModelListing | null {
+  if (!isPlainObject(value) || !hasExactKeys(value, ['version', 'default', 'models'])) return null;
+  if (value['version'] !== CHAT_MODELS_VERSION) return null;
+  const models = value['models'];
+  if (!Array.isArray(models) || models.length > MAX_MODELS) return null;
+  const out: ChatModelOption[] = [];
+  for (const item of models) {
+    if (!isPlainObject(item) || !hasExactKeys(item, ['id', 'label', 'tag'])) return null;
+    const { id, label, tag } = item;
+    if (typeof id !== 'string' || !MODEL_ID.test(id)) return null;
+    if (typeof label !== 'string' || label.trim().length === 0 || label.length > 40) return null;
+    if (tag !== null && (typeof tag !== 'string' || !MODEL_TAG.test(tag))) return null;
+    out.push({ id, label, tag });
+  }
+  if (new Set(out.map((item) => item.id)).size !== out.length) return null;
+  const defaultId = value['default'];
+  // The default is the first choice, or null when there is none.
+  if (out.length === 0 ? defaultId !== null : defaultId !== out[0].id) return null;
+  return { defaultId: defaultId as string | null, models: out };
+}
+
+export type ChatGetLike = (
+  url: string,
+  init: { method: string; headers: Record<string, string>; signal?: AbortSignal },
+) => Promise<ChatFetchResponse>;
+
+export async function fetchChatModels(
+  getFn: ChatGetLike,
+  options?: { signal?: AbortSignal },
+): Promise<ChatModelListing> {
+  let response: ChatFetchResponse;
+  try {
+    response = await getFn(CHAT_MODELS_PATH, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      signal: options?.signal,
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw error;
+    throw new ChatQueryClientError('transport');
+  }
+  if (!response.ok) throw new ChatQueryClientError('server', response.status);
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new ChatQueryClientError('contract', response.status);
+  }
+  const listing = parseChatModels(payload);
+  if (listing === null) throw new ChatQueryClientError('contract', response.status);
+  return listing;
+}
+
+export function describeChatModel(option: ChatModelOption): string {
+  return option.tag === null ? option.label : `${option.label} · ${option.tag}`;
+}
+
 export async function postChatQuery(
   postFn: ChatPostLike,
   databaseId: string,
   question: string,
-  options?: { signal?: AbortSignal },
+  options?: { signal?: AbortSignal; model?: string },
 ): Promise<ChatQueryAnswer> {
   const text = question.trim();
+  const model = options?.model;
   if (
     !isDatabaseId(databaseId) ||
     text.length === 0 ||
     text.length > MAX_CHAT_QUESTION_LENGTH ||
-    hasControlCharacter(text)
+    hasControlCharacter(text) ||
+    (model !== undefined && !MODEL_ID.test(model))
   ) {
     throw new ChatQueryClientError('contract');
   }
@@ -302,7 +380,9 @@ export async function postChatQuery(
     response = await postFn(CHAT_QUERY_PATH, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ database_id: databaseId, query: text }),
+      body: JSON.stringify(
+        model === undefined ? { database_id: databaseId, query: text } : { database_id: databaseId, query: text, model },
+      ),
       signal: options?.signal,
     });
   } catch (error) {

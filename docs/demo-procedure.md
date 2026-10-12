@@ -12,7 +12,8 @@
 1. `backend/.env`에 다음을 둔다.
    - `DATABASE_URL`: 레거시 PostgreSQL. 화면에서는 "기본 PostgreSQL 서버"로 보인다.
    - `OLLAMA_BASE_URL`: loopback, 예: `http://127.0.0.1:11434`.
-   - `OLLAMA_MODEL`: 챗봇 모델. 예: `text2sql_qwen:latest`.
+   - `OLLAMA_MODEL`: 레거시 챗봇 모델. 예: `text2sql_qwen:latest`. 새 챗봇에서는 "레거시 학습 모델(비교용)" 선택지가 된다.
+   - `CHAT_MODEL`(선택): 새 챗봇의 기본 "일반 모델". 없으면 `qwen2.5-coder:7b-instruct`(Phase 9-08).
    - 선택 항목:
      - `MAPPING_MODEL`: mapping 제안 모델. 없으면 `qwen2.5-coder:7b-instruct`를 쓴다.
      - `PG_SOURCE_<이름>=<DSN>`: 다른 PostgreSQL 연결을 추가한다.
@@ -82,4 +83,4 @@
 - PostgreSQL 등록에는 버전 되돌리기와 test query 미리보기가 아직 없다.
 - 규칙 약어 후보에는 어색한 것도 섞인다. 모두 관리자 승인을 거친다. 한 글자 약어는 넣을 수 없다.
 - 공통 항목 밖 개념(강의실, 수업 방식, 여석 등 11개)을 물으면, 그 DB에 확장 항목이 없을 때 "이 DB에는 강의실 정보가 없어 답할 수 없습니다"라고 답한다(8-20). 목록에 없는 말은 여전히 다른 항목에 들어갈 수 있다. 0건이면 "분반에서 '교111' 값을 찾지 못했습니다"처럼 어느 조건이 맞지 않았는지 알려 준다.
-- 챗봇 모델은 레거시 데이터로 fine-tuning된 7B 모델이다. 복합 조건(예: "오후" + 요일 + 학점)에서는 조건을 빠뜨릴 수 있고, SQL 패널로 확인할 수 있다.
+- 새 챗봇의 기본 모델은 학습하지 않은 일반 7B 모델이다(Phase 9-08). 챗봇 창의 "모델"에서 레거시 데이터로 fine-tuning된 7B 모델로 바꿀 수 있다. 레거시 챗봇은 fine-tuning된 모델이다. 복합 조건(예: "오후" + 요일 + 학점)에서는 조건을 빠뜨릴 수 있고, SQL 패널로 확인할 수 있다.

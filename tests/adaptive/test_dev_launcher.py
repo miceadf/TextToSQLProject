@@ -56,11 +56,21 @@ def test_plan_enables_both_parts_when_configured(tmp_path: Path) -> None:
     }
     profile_ids, ollama, status = dev_launcher.plan_launch(tmp_path, env, {})
     assert profile_ids == ["legacy-view"]
-    assert ollama == {"model_tag": "text2sql_qwen", "base_url": "http://127.0.0.1:11434"}
+    # Phase 9-08: the general model first (the default), the legacy-tuned one to compare.
+    assert ollama == [
+        {"id": "general", "model_tag": "qwen2.5-coder:7b-instruct",
+         "base_url": "http://127.0.0.1:11434", "request_format": "model-template",
+         "output_format": "queryir-schema-v1", "prompt_version": "query-ir-v3"},
+        {"id": "legacy-tuned", "model_tag": "text2sql_qwen",
+         "base_url": "http://127.0.0.1:11434", "request_format": "alpaca-raw-no-system-v1",
+         "output_format": "none", "prompt_version": "query-ir-v1"},
+    ]
     assert status == {
         "legacy-base": "disabled (PROFILE_MISSING)",
         "legacy-view": "enabled",
         "ollama": "enabled",
+        "chat_model.general": "enabled",
+        "chat_model.legacy-tuned": "enabled",
     }
     _write_profile(tmp_path, BASE_PROFILE_DIR)
     profile_ids, _ollama, status = dev_launcher.plan_launch(tmp_path, env, {})
@@ -86,19 +96,66 @@ def test_plan_legacy_view_part(
     assert profile_ids == (["legacy-view"] if expected == "enabled" else [])
 
 
+def test_plan_ollama_part_rejects_a_non_loopback_url(tmp_path: Path) -> None:
+    env = {"OLLAMA_MODEL": "text2sql_qwen", "OLLAMA_BASE_URL": "http://gpu-box:11434"}
+    _profile_ids, ollama, status = dev_launcher.plan_launch(tmp_path, env, {})
+    assert ollama is None and status["ollama"] == "disabled (INVALID_OR_NON_LOOPBACK_CONFIG)"
+
+
 @pytest.mark.parametrize(
-    ("env", "expected"),
+    ("env", "ids", "dropped"),
     [
-        ({}, "disabled (MODEL_MISSING)"),
-        ({"OLLAMA_MODEL": "text2sql_qwen", "OLLAMA_BASE_URL": "http://gpu-box:11434"},
-         "disabled (INVALID_OR_NON_LOOPBACK_CONFIG)"),
+        # Without OLLAMA_MODEL the chat still runs on the general model.
+        ({}, ["general"], None),
         ({"OLLAMA_MODEL": "bad tag with spaces", "OLLAMA_BASE_URL": "http://127.0.0.1:11434"},
-         "disabled (INVALID_OR_NON_LOOPBACK_CONFIG)"),
+         ["general"], "chat_model.legacy-tuned"),
+        ({"CHAT_MODEL": "bad tag", "OLLAMA_MODEL": "text2sql_qwen"}, ["legacy-tuned"], "chat_model.general"),
+        # The same tag twice: only the fine-tuned format, which that model needs.
+        ({"CHAT_MODEL": "text2sql_qwen", "OLLAMA_MODEL": "text2sql_qwen"}, ["legacy-tuned"], None),
+        ({"CHAT_MODEL": "llama3.1:8b", "OLLAMA_MODEL": "text2sql_qwen"}, ["general", "legacy-tuned"], None),
     ],
 )
-def test_plan_ollama_part(tmp_path: Path, env: dict[str, str], expected: str) -> None:
+def test_plan_chat_model_choices(
+    tmp_path: Path, env: dict[str, str], ids: list[str], dropped: str | None
+) -> None:
     _profile_ids, ollama, status = dev_launcher.plan_launch(tmp_path, env, {})
-    assert ollama is None and status["ollama"] == expected
+    assert ollama is not None and [item["id"] for item in ollama] == ids
+    assert status["ollama"] == "enabled"
+    if dropped:
+        assert status[dropped] == "disabled (INVALID_OR_NON_LOOPBACK_CONFIG)"
+    if "CHAT_MODEL" in env and "general" in ids:
+        assert ollama[0]["model_tag"] == env["CHAT_MODEL"]
+
+
+def test_one_chat_model_failing_keeps_the_other(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _write_env(tmp_path, "OLLAMA_MODEL=text2sql_qwen\nOLLAMA_BASE_URL=http://127.0.0.1:11434\n")
+    seen: list[Any] = []
+
+    def build(spec: dict[str, str]) -> Any:
+        if spec["id"] == "general":
+            raise RuntimeError("not pulled")
+        return "tuned-model"
+
+    def fake_create(
+        profiles: Any, model: Any, mapping_model: Any = None, show_sql: bool = False, postgres_sources: Any = None
+    ) -> Any:
+        seen.append(model)
+        return _App()
+
+    monkeypatch.setattr(dev_launcher, "_build_model", build)
+    monkeypatch.setattr(dev_launcher, "_create_app", fake_create)
+    import uvicorn
+
+    monkeypatch.setattr(uvicorn, "run", lambda app, **kwargs: None)
+    assert dev_launcher.main(["--repository-root", str(tmp_path)]) == 0
+    assert [(choice.id, choice.tag, choice.model) for choice in seen[0]] == [
+        ("legacy-tuned", "text2sql_qwen", "tuned-model")
+    ]
+    out = capsys.readouterr().out
+    assert "chat_model.general=disabled (STARTUP_FAILED)" in out and "ollama=enabled" in out
+    assert "text2sql_qwen" not in out  # .env values are never printed
 
 
 class _App:

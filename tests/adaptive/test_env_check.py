@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from backend.adaptive import env_check
-from backend.adaptive.api import dev_launcher, ollama_startup
+from backend.adaptive.api import chat_models, dev_launcher, ollama_startup
 from backend.adaptive.env_check import FAIL, OK, WARN, Check, report, run_checks
 from backend.adaptive.mapping import ai_proposal
 
@@ -178,8 +178,9 @@ def test_a_non_loopback_ollama_url_is_never_requested(tmp_path: Path, url: str) 
 def test_missing_models_and_a_silent_ollama_fail(tmp_path: Path) -> None:
     items, _seen = checks(make_root(tmp_path, GOOD_ENV), http_get_json=lambda _url: {"models": []})
     found = by_name(items)
-    assert found["챗봇 모델"].status == FAIL and found["mapping 모델"].status == FAIL
-    assert "ollama pull" in found["챗봇 모델"].fix
+    assert found["챗봇 일반 모델"].status == FAIL and found["mapping 모델"].status == FAIL
+    assert found["레거시 학습 모델"].status == FAIL
+    assert "ollama pull" in found["챗봇 일반 모델"].fix
 
     def down(_url: str) -> Any:
         raise ConnectionRefusedError()
@@ -218,6 +219,7 @@ def test_the_copies_match_their_originals(tmp_path: Path) -> None:
     assert env_check.ENV_KEYS == dev_launcher._ENV_KEYS
     assert env_check.OLLAMA_BASE_URL_PATTERN.pattern == ollama_startup._BASE_URL_PATTERN.pattern
     assert env_check.DEFAULT_MAPPING_MODEL == ai_proposal.DEFAULT_MAPPING_MODEL
+    assert env_check.DEFAULT_CHAT_MODEL == chat_models.DEFAULT_CHAT_MODEL
 
 
 def test_the_module_imports_only_the_standard_library_at_load() -> None:
