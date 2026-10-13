@@ -1,3 +1,4 @@
+import { useReviewToolsRefresh } from './useReviewToolsRefresh.ts';
 import ReviewerHint from './ReviewerHint.tsx';
 import { readReviewer, writeReviewer } from './reviewerMemory.ts';
 import { adminStyles, disabledTitle } from './adminStyles.ts';
@@ -28,10 +29,12 @@ export default function ExtensionFieldPanel({
   databaseId,
   reviewer: sharedReviewer,
   onPublished,
+  reviewRevision = 'initial',
   fetchFn = domFetch,
 }: {
   databaseId: string;
   reviewer?: string;
+  reviewRevision?: string;
   onPublished?: () => void;
   fetchFn?: PgFetchLike;
 }) {
@@ -51,20 +54,29 @@ export default function ExtensionFieldPanel({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal: AbortSignal) => {
     try {
-      const loaded = await fetchExtensions(fetchFn, databaseId);
+      const loaded = await fetchExtensions(fetchFn, databaseId, { signal });
+      if (signal.aborted) return;
       setDetail(loaded);
       setError(null);
-      setTable((current) => current || loaded.tables[0]?.name || '');
+      setTable(loaded.tables[0]?.name || '');
+      setColumn('');
+      setLabel('');
+      setKey('');
+      setEntity('Schedule');
+      setDataType('string');
     } catch (reason) {
+      if (signal.aborted) return;
       setError(toPostgresMessage(reason));
     }
   }, [databaseId, fetchFn]);
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  const saved = detail?.fields.find((item) => item.key === key);
+  const dirty = saved === undefined
+    ? label !== '' || key !== '' || column !== '' || entity !== 'Schedule' || dataType !== 'string' || table !== (detail?.tables[0]?.name ?? '')
+    : label !== saved.label || entity !== saved.entity || table !== saved.table || column !== saved.column || dataType !== saved.data_type;
+  const { reviewChanged, refresh } = useReviewToolsRefresh(reviewRevision, dirty, busy, load);
 
   const columns = detail?.tables.find((item) => item.name === table)?.columns ?? [];
   const ready =
@@ -89,7 +101,10 @@ export default function ExtensionFieldPanel({
 
   return (
     <div className={`${adminStyles.box} mt-3 space-y-2 text-xs`} data-testid="extension-field-panel" data-reviewer-scope={sharedReviewer === undefined ? true : undefined}>
-      <div className={adminStyles.title}>확장 항목 (이 DB에만 있는 정보)</div>
+      <div className={`${adminStyles.title} flex items-center justify-between gap-2`}>확장 항목 (이 DB에만 있는 정보)
+        <button type="button" disabled={busy} onClick={() => void refresh()} className={adminStyles.secondary} title={disabledTitle([busy, "처리 중입니다."])}>새로고침</button>
+      </div>
+      {reviewChanged ? <div role="status" className={adminStyles.notice}>검토 내용이 바뀌었습니다. <button type="button" disabled={busy} onClick={() => void refresh()} className={adminStyles.secondary} title={disabledTitle([busy, "처리 중입니다."])}>새로고침</button></div> : null}
       <div className="text-slate-500" hidden={sharedReviewer !== undefined}>
         공통 항목에 없는 이 DB만의 정보(예: 강의실)를 챗봇이 알 수 있게 추가합니다. 추가 후 게시해야 반영됩니다.
       </div>

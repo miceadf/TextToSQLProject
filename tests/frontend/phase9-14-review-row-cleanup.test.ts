@@ -54,7 +54,7 @@ describe('phase9-14 review row defaults and save guards', () => {
     const registration = readFileSync('src/adaptive-prototype/PostgresRegistrationPanel.tsx', 'utf8');
     assert.ok(panel.includes('const [rowEdit, setRowEdit]'));
     assert.ok(panel.includes('onEdit={setRowEdit}'));
-    assert.ok(panel.includes('reviewTools(reviewer)'));
+    assert.ok(panel.includes('reviewTools(reviewer, reviewToolsRevision(detail)'));
     assert.equal((panel.match(/value=\{reviewer\}/g) ?? []).length, 1);
     assert.ok(panel.includes('reviewer={reviewer}'));
     assert.equal((registration.match(/reviewer=\{reviewer\}/g) ?? []).length, 2);

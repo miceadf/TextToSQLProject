@@ -1,3 +1,4 @@
+import { useReviewToolsRefresh } from './useReviewToolsRefresh.ts';
 import ReviewerHint from './ReviewerHint.tsx';
 import { readReviewer, writeReviewer } from './reviewerMemory.ts';
 import { adminStyles, disabledTitle } from './adminStyles.ts';
@@ -30,10 +31,12 @@ export default function ValueDictionaryPanel({
   databaseId,
   reviewer: sharedReviewer,
   onPublished,
+  reviewRevision = 'initial',
   fetchFn = domFetch,
 }: {
   databaseId: string;
   reviewer?: string;
+  reviewRevision?: string;
   onPublished?: () => void;
   fetchFn?: PgFetchLike;
 }) {
@@ -55,42 +58,39 @@ export default function ValueDictionaryPanel({
   const [sources, setSources] = useState<DictionarySource[]>([]);
   const [sourceId, setSourceId] = useState('');
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal: AbortSignal) => {
     try {
-      const loaded = await fetchDictionaries(fetchFn, databaseId);
+      const [loaded, loadedSources] = await Promise.all([
+        fetchDictionaries(fetchFn, databaseId, { signal }),
+        fetchDictionarySources(fetchFn, databaseId).catch(() => null),
+      ]);
+      if (signal.aborted) return;
       setDetail(loaded);
+      if (loadedSources !== null) {
+        setSources(loadedSources);
+        setSourceId((current) => loadedSources.some((item) => item.database_id === current) ? current : loadedSources[0]?.database_id ?? '');
+      }
       setError(null);
-      setFieldName((current) => current || loaded.fields[0]?.field || '');
+      setFieldName((current) => loaded.fields.some((item) => item.field === current) ? current : loaded.fields[0]?.field || '');
+      setStored('');
+      setLabel('');
+      setAliasText('');
+      setCandidates([]);
     } catch (reason) {
+      if (signal.aborted) return;
       setError(toPostgresMessage(reason));
     }
   }, [databaseId, fetchFn]);
 
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  useEffect(() => {
-    let current = true;
-    setSources([]);
-    setSourceId('');
-    setMessage(null);
-    void fetchDictionarySources(fetchFn, databaseId).then((loaded) => {
-      if (current) {
-        setSources(loaded);
-        setSourceId(loaded[0]?.database_id ?? '');
-      }
-    }).catch((reason) => { if (current) setError(toPostgresMessage(reason)); });
-    return () => { current = false; };
-  }, [databaseId, fetchFn]);
-
   const field = detail?.fields.find((item) => item.field === fieldName) ?? null;
   const entry = field?.entries.find((item) => item.stored === stored) ?? null;
-  const dirty =
-    stored !== '' &&
-    (entry === null
-      ? (label.trim() !== '' && label !== stored) || aliasText.trim() !== ''
+  const dirty = stored === ''
+    ? label.trim() !== '' || aliasText.trim() !== ''
+    : (entry === null
+      ? true
       : label !== entry.label || splitAliases(aliasText).join(', ') !== entry.aliases.join(', '));
+
+  const { reviewChanged, refresh } = useReviewToolsRefresh(reviewRevision, dirty, busy, load);
 
   async function run(action: () => Promise<void>) {
     if (busy) return;
@@ -124,7 +124,7 @@ export default function ValueDictionaryPanel({
     return (
       <div className={adminStyles.error}>
         값 사전: {error}{' '}
-        <button type="button" onClick={() => void load()} className={adminStyles.secondary}>
+        <button type="button" onClick={() => void refresh()} className={adminStyles.secondary}>
           새로고침
         </button>
       </div>
@@ -135,7 +135,7 @@ export default function ValueDictionaryPanel({
     return (
       <div className="text-xs text-slate-500">
         값 사전: 승인된 문자열 field가 없습니다(검토에서 먼저 승인).{' '}
-        <button type="button" onClick={() => void load()} className={adminStyles.secondary}>
+        <button type="button" onClick={() => void refresh()} className={adminStyles.secondary}>
           새로고침
         </button>
       </div>
@@ -146,10 +146,11 @@ export default function ValueDictionaryPanel({
     <div className={`${adminStyles.box} mt-2 space-y-2 text-xs text-slate-800`} data-testid="value-dictionary" data-reviewer-scope={sharedReviewer === undefined ? true : undefined}>
       <div className={`${adminStyles.title} flex flex-wrap items-center justify-between gap-2`}>
         <span>값 사전 (코드표·약어)</span>
-        <button type="button" disabled={busy} onClick={() => void load()} className={adminStyles.secondary} title={disabledTitle([busy, "처리 중입니다."])}>
+        <button type="button" disabled={busy} onClick={() => void refresh()} className={adminStyles.secondary} title={disabledTitle([busy, "처리 중입니다."])}>
           새로고침
         </button>
       </div>
+      {reviewChanged ? <div role="status" className={adminStyles.notice}>검토 내용이 바뀌었습니다. <button type="button" disabled={busy} onClick={() => void refresh()} className={adminStyles.secondary} title={disabledTitle([busy, "처리 중입니다."])}>새로고침</button></div> : null}
       <div hidden={sharedReviewer !== undefined}>
         DB에 코드로 저장된 값의 뜻과, 사람들이 쓰는 줄임말을 적습니다. 예: GE = 교양, 소웨 = 소프트웨어학부. 적은 뒤 ‘사전 적용해 게시’를 눌러야 챗봇에 반영됩니다.
       </div>

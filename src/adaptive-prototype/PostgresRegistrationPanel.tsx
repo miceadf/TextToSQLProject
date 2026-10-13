@@ -306,20 +306,20 @@ export default function PostgresRegistrationPanel({
             </div>
             <p className="rounded-lg bg-blue-50 p-3 text-sm text-blue-900">① 항목 연결 확인 → ② 값 사전(선택) → ③ 확장 항목(선택) → ④ 게시</p>
             <MappingReviewPanel key={opened} databaseId={opened} onPublished={published} adminLayout
-              reviewTools={(reviewer) => <>
+              reviewTools={(reviewer, revision, onToolsPublished) => <>
                 <details className={adminStyles.box}>
                     <summary className={`${adminStyles.title} cursor-pointer`}>
                       값 사전
                       <span className="mt-1 block text-xs font-normal text-slate-500">DB에 코드로 저장된 값의 뜻과, 사람들이 쓰는 줄임말을 적습니다. 예: GE = 교양, 소웨 = 소프트웨어학부. 적은 뒤 ‘사전 적용해 게시’를 눌러야 챗봇에 반영됩니다.</span>
                     </summary>
-                  <ValueDictionaryPanel key={`dictionary-${opened}`} databaseId={opened} reviewer={reviewer} onPublished={published} />
+                  <ValueDictionaryPanel key={`dictionary-${opened}`} databaseId={opened} reviewer={reviewer} reviewRevision={revision} onPublished={onToolsPublished} />
                 </details>
                 <details className={adminStyles.box}>
                     <summary className={`${adminStyles.title} cursor-pointer`}>
                       확장 항목
                       <span className="mt-1 block text-xs font-normal text-slate-500">공통 항목에 없는 이 DB만의 정보(예: 강의실)를 챗봇이 알 수 있게 추가합니다. 추가 후 게시해야 반영됩니다.</span>
                     </summary>
-                  <ExtensionFieldPanel key={`extension-${opened}`} databaseId={opened} reviewer={reviewer} onPublished={published} />
+                  <ExtensionFieldPanel key={`extension-${opened}`} databaseId={opened} reviewer={reviewer} reviewRevision={revision} onPublished={onToolsPublished} />
                 </details>
               </>} />
           </div>

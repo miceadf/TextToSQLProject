@@ -1,3 +1,4 @@
+import { reviewToolsRevision } from './reviewToolsRefresh.ts';
 import ReviewerHint from './ReviewerHint.tsx';
 import { readReviewer, writeReviewer } from './reviewerMemory.ts';
 import { adminStyles, disabledTitle } from './adminStyles.ts';
@@ -39,7 +40,7 @@ const domReviewFetch: ReviewFetchLike = (url, init) =>
 
 interface MappingReviewPanelProps {
   adminLayout?: boolean;
-  reviewTools?: ReactNode | ((reviewer: string) => ReactNode);
+  reviewTools?: ReactNode | ((reviewer: string, revision: string, onToolsPublished: () => void) => ReactNode);
   databaseId: string;
   fetchFn?: ReviewFetchLike;
   onPublished?: (databaseId: string) => void;
@@ -316,6 +317,8 @@ export default function MappingReviewPanel({ databaseId, fetchFn, onPublished, b
   const [activatedVersion, setActivatedVersion] = useState<number | null>(null);
   // Bumped on every committed publish/activation so previews never outlive them.
   const [previewEpoch, setPreviewEpoch] = useState(0);
+  const [toolsPublishEpoch, setToolsPublishEpoch] = useState(0);
+  const refreshedToolsPublish = useRef(0);
   const [regression, setRegression] = useState<RegressionResult | null>(null);
   const [regressionError, setRegressionError] = useState<string | null>(null);
   const regressionRef = useRef(0);
@@ -334,10 +337,21 @@ export default function MappingReviewPanel({ databaseId, fetchFn, onPublished, b
 
   // Panel state resets via the parent key when databaseId changes.
 
-  const caller: ReviewFetchLike =
-    fetchFn ??
-    ((url, init) =>
-      domReviewFetch(url, init));
+  const caller: ReviewFetchLike = fetchFn ?? domReviewFetch;
+
+  useEffect(() => {
+    if (isBusy(status) || toolsPublishEpoch === refreshedToolsPublish.current) return;
+    const controller = new AbortController();
+    void fetchReviewDetail(caller, databaseId, { signal: controller.signal }).then((next) => {
+      if (controller.signal.aborted) return;
+      refreshedToolsPublish.current = toolsPublishEpoch;
+      setDetail(next);
+      setPublishedVersion(next.mapping_version);
+    }).catch((reason) => {
+      if (!controller.signal.aborted) setError(toReviewMessage(reason));
+    });
+    return () => controller.abort();
+  }, [caller, databaseId, status, toolsPublishEpoch]);
 
   async function runDetailAction(load: (signal: AbortSignal) => Promise<ReviewDetail>): Promise<void> {
     if (isBusy(status)) return;
@@ -836,7 +850,11 @@ export default function MappingReviewPanel({ databaseId, fetchFn, onPublished, b
           </div>
         ) : null}
       </div>
-      {adminLayout ? <aside className="min-w-0 space-y-3">{typeof reviewTools === 'function' ? reviewTools(reviewer) : reviewTools}{supplementaryPanels}</aside> : null}
+      {adminLayout ? <aside className="min-w-0 space-y-3">{typeof reviewTools === 'function' ? reviewTools(reviewer, reviewToolsRevision(detail), () => {
+        onPublished?.(databaseId);
+        setPreviewEpoch((value) => value + 1);
+        setToolsPublishEpoch((value) => value + 1);
+      }) : reviewTools}{supplementaryPanels}</aside> : null}
     </div>
     </fieldset>
   );
