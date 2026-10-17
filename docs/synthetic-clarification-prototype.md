@@ -5,7 +5,7 @@
 ## 안전 실행
 
 ```bash
-.venv/Scripts/python.exe -m backend.adaptive.api.synthetic_prototype --port 8123
+.venv/Scripts/python.exe -m backend.adaptive.api.app_factory --port 8123
 ```
 
 - host는 `127.0.0.1` 고정이며 외부 bind 옵션이 없다.

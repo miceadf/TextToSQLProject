@@ -29,7 +29,7 @@
 | 모델 평가 기반 | FakeModel runner, RecordedModel replay/CLI, capture session, private bundle storage, provider-neutral orchestrator | 실제 Ollama adapter·수집 CLI, live 모델 정확도·지연·VRAM |
 | 제품 통합 | 기존 FastAPI/React legacy 경로 보존 | 새 adaptive 경로의 기존 API/화면 통합, repair loop·관리자 UI·schema evolution |
 
-마지막 확인된 노트북 테스트(2026-09-18): `python -m pytest tests -q`에서 **254 passed, 3 skipped, 322 subtests passed**. 프론트 lint/build와 Python `compileall`도 직전 점검에서 통과했다. 이는 데스크톱의 새 환경 통과를 보증하지 않는다. 세 skip은 Windows에서 symlink 생성 권한이 없었던 보안 테스트다. 저장소 루트 `python -m pytest`는 별개로 `backend/test_correction.py`의 `import keyword_extract` 오류 때문에 수집이 중단된다. 실패를 숨기지 말고 별도 이슈로 남긴다.
+마지막 확인된 노트북 테스트(2026-09-18): `python -m pytest tests -q`에서 **254 passed, 3 skipped, 322 subtests passed**. 프론트 lint/build와 Python `compileall`도 직전 점검에서 통과했다. 이는 데스크톱의 새 환경 통과를 보증하지 않는다. 세 skip은 Windows에서 symlink 생성 권한이 없었던 보안 테스트다. 2026-10-17 Phase 9-27에서 assertion 없는 NER 보정 예제를 `backend/scripts/demo_ner_correction.py`로 옮겨 pytest 수집 대상에서 제외했다. 예제 실행은 `python -m backend.scripts.demo_ner_correction`이며, 전체 pytest 최종 확인은 별도로 수행한다.
 
 `run-smoke`는 gold IR을 그대로 돌려주는 **oracle smoke**다. 실제 모델 정확도가 아니다. `run-recorded`는 외부에서 이미 만든 recording을 재생할 뿐 live 모델을 호출하지 않으며, recording의 provenance도 독립 증명이 아니다.
 

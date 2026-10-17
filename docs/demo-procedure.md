@@ -1,87 +1,66 @@
-# 시연 절차: 화면에서 DB를 등록하고 바로 질문하기 (프로토타입)
+# 시연 절차: 화면에서 DB를 등록하고 질문하기
 
-작성일: 2026-09-30. Phase 8-16 browser smoke에서 실제로 끝까지 돌린 순서다.
-
-> **주의 (사람 관문)**
-> - 실제 학교 자료를 쓰거나 외부에서 시연하기 전에는 E3/L5 판단이 필요하다([human-validation-checkpoints.md](human-validation-checkpoints.md)).
-> - 외부 시연에서는 SQL 표시를 끈다(`SHOW_SQL=0`). 켜 두면 실제 table·column 이름이 보인다.
-> - 모든 결과는 L1/L3 전 잠정치다.
+갱신일: 2026-10-17(Phase 9-28). 현재 관리자 화면·ontology v3 기준이다. 아래 과거 수치는 당시 관찰값이며 이번 문서 갱신에서 재측정하지 않았다.
 
 ## 1. 준비
 
-1. `backend/.env`에 다음을 둔다.
-   - `DATABASE_URL`: 레거시 PostgreSQL. 화면에서는 "기본 PostgreSQL 서버"로 보인다.
-   - `OLLAMA_BASE_URL`: loopback, 예: `http://127.0.0.1:11434`.
-   - `OLLAMA_MODEL`: 레거시 챗봇 모델. 예: `text2sql_qwen:latest`. 새 챗봇에서는 "레거시 학습 모델(비교용)" 선택지가 된다.
-   - `CHAT_MODEL`(선택): 새 챗봇의 기본 "일반 모델". 없으면 `qwen2.5-coder:7b-instruct`(Phase 9-08).
-   - `OPENAI_API_KEY`(선택): 넣으면 "ChatGPT(외부 API)" 선택지가 생긴다. 모델은 `OPENAI_MODEL`, 없으면 `gpt-5-mini`(Phase 9-09). 질문·공통 항목·값 힌트가 OpenAI로 간다.
-   - 선택 항목:
-     - `MAPPING_MODEL`: mapping 제안 모델. 없으면 `qwen2.5-coder:7b-instruct`를 쓴다.
-     - `PG_SOURCE_<이름>=<DSN>`: 다른 PostgreSQL 연결을 추가한다.
-     - `SHOW_SQL=0`: SQL 표시를 끈다.
-2. Ollama에 두 모델이 있는지 확인한다. `ollama list`에 `text2sql_qwen`과 `qwen2.5-coder:7b-instruct`가 보여야 한다.
-3. 서버 세 개(레거시 8000, adaptive 8123, 화면 5173)를 켠다.
-   ```bash
-   npm run dev:all
-   ```
-4. adaptive 상태 줄을 확인한다: `chat_sql=shown, mapping_ai=enabled, ollama=enabled, pg_registration=enabled (N sources)`.
-5. 브라우저에서 `http://localhost:5173`을 연다.
+1. [루트 README](../README.md)의 설치·설정을 따른다. `backend/.env.example`을 복사해 본인 환경 값을 채운다. 접속 문자열·키는 화면이나 시연 자료에 노출하지 않는다.
+2. PostgreSQL과 Ollama를 준비한다. 일반 모델은 `qwen2.5-coder:7b-instruct`, 레거시 모델은 본인이 만든 `OLLAMA_MODEL` 이름이다. `CHAT_MODEL`·`MAPPING_MODEL`로 각각 바꿀 수 있다.
+3. 선택적 `OPENAI_API_KEY`가 있으면 ChatGPT 선택지가 생긴다. 선택 시 질문·공통 항목·값 힌트가 외부로 전송되고 비용이 발생한다.
+4. `.venv` Python으로 `python -m backend.adaptive.env_check`를 실행해 FAIL을 해결한 뒤 `npm run dev:all`을 실행한다. 레거시 8000·적응형 8123·화면 5173을 사용한다.
+5. `http://localhost:5173`을 연다. 외부 시연은 `SHOW_SQL=0`으로 SQL 표시를 끈다. 켜면 물리 table·column과 조회 값이 보인다.
 
-## 2. 시연 순서 (약 10분)
+자료는 팀이 이전 학기 수강편람으로 만든 레거시 DB와 공개 수강정보를 모사한 DB다(2026-10-01 사용자 결정). 출처를 밝히고 학교 밖 공개 자료의 교수명은 가린다. 원본 엑셀·DB dump는 공개하지 않는다. 실제 학교 DB를 새로 얻게 되면 정책을 다시 검토한다. L1/L3 전 성능은 잠정치이며, 사람 승인 상태는 [사람 검토 기준](human-validation-checkpoints.md)을 따른다.
 
-| 단계 | 화면 조작 | 말할 요점 |
+## 2. 현재 화면에서 진행하는 순서
+
+**DB 변경**을 열면 **사용할 DB / DB 등록 / 검토·게시** 세 탭이 있다.
+
+| 단계 | 화면 조작 | 설명할 점 |
 |---|---|---|
-| 1 | **DB 변경** → "PostgreSQL 등록"에서 연결 `기본 PostgreSQL 서버`, schema `public`. Database ID `demo-legacy`, Label `Legacy DB (screen)` → **등록** | 접속 정보는 서버에만 있다. Label은 영문·숫자만 쓴다. AI 제안에 20~30초 걸린다. |
-| 2 | 결과 요약에 "제안: AI 제안", table 8개·column 38개 | 로컬 모델이 column 이름과 저장 값 예시를 보고 field마다 첫 후보를 골랐다. |
-| 3 | 검토자 이름 → **mapping 검토 시작** | 사람 검토 없이는 게시되지 않는다. |
-| 4 | 13개 field **승인**. 학기(`enrollment.semester`)와 개설 연도(`course_year`)는 사유를 적고 **이 DB에 없음** | **이름 함정 사례:** `course_year`는 수강 대상 학년이고, `enrollment`는 학생 수강 기록 table이다. 사람이 걸러야 하는 부분이다. |
-| 5 | 값 사전 **새로고침** → field `학과명` → `공과대학 컴퓨터융합학부` → 약어 `컴융, 컴융부` → **추가** | 약어는 학교마다 다르므로 DB별 데이터로 넣는다. **약어 후보(규칙/규칙+AI)** 버튼도 보여 준다. 겹치면 막고, 다른 글자 속에 들어 있으면 경고한다. |
-| 6 | **사전 적용해 게시** → "게시했습니다 (mapping v1)" | 변환(학점 `3/3/0`, 시간, 요일)과 기준 table은 서버가 규칙으로 정했다. 서버 재시작은 필요 없다. |
-| 7 | 페이지 새로고침 → DB 변경 → "등록된 PostgreSQL DB"에서 `게시됨(v1)` → **열기** | 새로고침해도 검토를 다시 열 수 있다. |
-| 8 | DB 목록에서 `Legacy DB (screen)` 선택 → **적용** → 챗봇 열기 | 목록에 바로 추가됐다. |
-| 9 | "컴융 전공 과목 보여줘" | 82건. 이해한 조건은 `학과명 = 공과대학 컴퓨터융합학부, 이수 구분에 "전공" 포함`. SQL 패널에 `dept_name = '공과대학 컴퓨터융합학부' AND category LIKE '%전공%'`. |
-| 10 | "학과공통 과목 보여줘", "월요일 오전 수업 보여줘" | 약어 없이도 DB 값 조각(`학과공통`)과 요일·시간을 이해한다. |
-| 11 | (개발자 profile `Legacy DB (QueryIR)`에서) "컴융 3학년 전공 과목 보여줘" | 대상 학년(8-18)으로 33건. 화면 등록한 DB에서는 검토에서 대상 학년을 `subject.target_year`에 연결하면 같다. |
-| 12 | (개발자 profile `Legacy DB (QueryIR)`에서) "교111 강의실 수업 보여줘", "교111에서 하는 수업" | 이 DB에 없는 정보는 "없어 답할 수 없습니다"로 답한다. 0건이면 어느 조건이 맞지 않았는지 알려 준다(8-20). |
+| 1 | **DB 등록** → PostgreSQL 연결과 schema 선택 → ID·표시 이름 입력 → **등록** | 연결 정보는 서버에만 있다. ID 규칙 안내를 따르며 `legacy`는 예약 이름이다. 표시 이름은 영문·숫자로 시작하고 공백·괄호·밑줄·점·하이픈을 쓸 수 있다. |
+| 2 | 등록 요약의 table·column·FK 개수와 제안 출처 확인 → **열기** | 실제 등록 결과를 읽는다. AI 제안 시간·정확도는 DB와 환경에 따라 다르다. |
+| 3 | **검토·게시**에서 검토자 이름 입력 → **항목 연결 검토 시작** → 항목 연결 표 훑어보기 | 공통 항목·연결된 칸·추천을 비교한다. 각 행의 승인·다른 칸으로 변경·사유를 적어 **이 DB에 없음**을 선택한다. 확정한 행은 **다시 정하기**로 펼쳐 고친다. |
+| 4 | 첫 후보들을 확인했다면 **AI 추천 모두 승인** → 확인 | 대기 중이며 후보가 있는 항목의 첫 후보를 순서대로 승인한다. 후보 없는 항목은 직접 처리한다. 첫 실패에서 멈추며 자동 게시하지 않는다. |
+| 5 | 학기·대상 학년 등 이름이 비슷한 칸을 다시 점검 | 현재 ontology v3에는 **개설 연도 항목이 없다**. `course_year`라는 이름만 보고 학년·연도를 판단하지 않는다. 학기는 유지되며 학생 수강 기록의 학기와 개설 학기를 구별한다. |
+| 6 | 선택 도구의 **값 사전** → 학과·학기·요일 등의 약어와 뜻 검토 | 예: 학과 저장 값에 `컴융` 약어 추가. 규칙/AI 약어 후보도 사람이 확인한다. 코드가 있다면 **코드표에서 가져오기**로 뜻을 연결한다. |
+| 7 | 기존 사전을 재사용하려면 **다른 DB 사전 가져오기** → 출처 선택 → **가져오기** | 게시된 출처 DB의 연결 가능한 값만 편집 중 사전으로 가져온다. 기존 뜻은 유지하고 별칭을 합친다. 저장하지 않은 편집부터 정리한다. 가져오기만으로 게시되지 않는다. |
+| 8 | 필요하면 **확장 항목**에 강의실 등 DB별 정보 추가 → 게시 | **검토한 항목 연결 게시** 또는 **사전 적용해 게시**를 사용한다. 게시가 막히면 표시된 항목·이유를 해결한다. 숫자·시간 칸은 게시 규칙을 만족해야 한다. |
+| 9 | 게시 후 **시험 질의** → 조회 선택 → **실행** → 확인 후 **기준으로 저장** | 실제 표를 확인하고 이후 **회귀 확인**과 비교한다. 시험 질의는 고정 조회 확인이며 모델 성능 평가를 대신하지 않는다. |
+| 10 | **사용할 DB** → 게시된 DB 선택 → **적용** → 챗봇 | DB 변경 시 선택 강의·경고·미리보기가 초기화된다. 일반 모델이 기본이고 레거시 모델은 비교용이다. |
+| 11 | 약어·요일·학점 질문을 입력하고 이해한 조건·결과 확인 | 개발용 SQL 표시를 켰다면 실행 SQL도 대조한다. 사전에 연결되지 않은 말의 안내는 조건을 추가하거나 답을 고치는 기능이 아니다. |
 
-단계 9~10은 smoke에서 확인한 결과다. 모델 출력은 매번 같다고 보장할 수 없다(temperature 0이어도 환경에 따라 달라질 수 있음).
+승인·변경·게시 뒤 값 사전과 확장 항목은 새 검토 상태를 반영한다. 저장하지 않은 편집이 있으면 보존되므로 새로고침 안내를 확인한다. 등록·게시 후 서버를 다시 켤 필요는 없다.
 
-## 2-1. (선택) 다른 학교 DB 장면 (약 5분, Phase 8-17)
+## 3. 선택 장면: 다른 학교형 DB
 
-모델이 레거시 DB에 묶이지 않는다는 것을 보여 주는 장면이다. 데이터는 모두 지어낸 합성 데이터다.
+개발자가 만든 합성 `other_school` fixture로 구조가 다른 DB 등록을 보여 줄 수 있다. 최종 독립 평가용 팀원 DB·질문·정답과는 별개다.
 
-준비(한 번만):
-1. 합성 DB DSN을 `SCHEMA_ADAPTIVE_SYNTHETIC_POSTGRES_DSN`에 두고 schema를 만든다. 이 DSN은 loopback, DB 이름 `schema_adaptive_synthetic`이어야 한다.
-   ```bash
-   python -m backend.adaptive.fixtures.other_school create
-   ```
-2. `backend/.env`에 `PG_SOURCE_OTHER_SCHOOL=<같은 DSN>`을 넣고 서버를 다시 켠다. 화면 연결 목록에 `other-school`이 보인다.
+1. fixture용 환경변수 `SCHEMA_ADAPTIVE_SYNTHETIC_POSTGRES_DSN`을 별도로 준비한다. 도구는 loopback의 `schema_adaptive_synthetic` DB만 허용한다.
+2. 한 번만 `python -m backend.adaptive.fixtures.other_school create`로 합성 schema를 만든다.
+3. `backend/.env`의 `PG_SOURCE_OTHER_SCHOOL`에 같은 연결을 넣고 서버를 다시 시작한다. 연결 이름은 `other-school`이다.
+4. **DB 등록**에서 연결 `other-school`, schema `other_school`을 선택하고 새 ID·표시 이름으로 등록한다.
+5. 표를 확인하며 학기 `gangjwa.hakgi_cd`, 교수명 `gyosu.gs_nm`, 대상 학년 `gyogwamok.suggang_hangnyeon` 등의 실제 후보를 점검한다. 고정 개수만큼 일괄 승인한다고 가정하지 않는다.
+6. 값 사전에서 학기 코드·요일·학과 약어를 검토한다. 필요하면 `siganpyo.gangui_sil`에 강의실 확장 항목을 연결한다.
+7. 게시·시험 질의·DB 선택 후 “소웨 전공필수 과목 보여줘”, “금요일 오전 수업 보여줘” 등으로 조건과 결과를 확인한다.
 
-| 단계 | 화면 조작 | 말할 요점 |
-|---|---|---|
-| 1 | 연결 `other-school`, schema `other_school`, ID `other-school`, Label `Other School` → **등록** | 이름이 `hg_nm`, `gm_nm`처럼 전혀 다르고, 요일은 `MON`, 시간은 `0900`이다. |
-| 2 | 검토: 13개 승인, 학기 → `gangjwa.hakgi_cd`, 교수명 → `gyosu.gs_nm`, 대상 학년 → `gyogwamok.suggang_hangnyeon` remap | AI가 처음 보는 이름에서도 대부분 맞게 골랐다. 대상 학년은 AI가 학기 코드로 잘못 골라 사람이 고친다(8-18). |
-| 3 | 값 사전: 학과 `소웨`·`전전`·`기공`, 학기 `10=1학기`·`20=2학기`, 요일 `MON=월요일` … | 약어와 코드의 뜻은 그 학교 관리자가 넣는다. 코드표 table이 있으면 "코드표에서 가져오기"로 한꺼번에 넣는다(8-24). |
-| 3-1 | 확장 항목: 이름 `강의실`, key `classroom`, 강의 시간, `siganpyo.gangui_sil`, 글자 → **추가/수정**. 필요하면 `단과대학`(`hakgwa.dh_nm`, 학과)도 | 공통 항목에 없는 그 학교만의 정보를 코드 수정 없이 더한다(8-19). |
-| 4 | **사전 적용해 게시** → DB 선택 | 강의 목록에서 주 2회 수업이 한 줄에 두 시간으로 보인다. |
-| 5 | "소웨 전공필수 과목 보여줘", "금요일 오전 수업 보여줘", "소웨 1학년 과목 보여줘", "IT관 303호 수업 보여줘", "IT대학 과목 보여줘" | SQL 패널에 이 학교의 table 이름이 보인다. 시간은 `HH:MM`으로 바꿔 비교한다. 대상 학년이 카드 상세에 보인다. |
+정식 팀원 평가 준비·등록 비용 기록·질문 고정·평가 실행은 [팀원 평가 DB 안내](teammate-evaluation-db-guide.md)를 따른다. agent는 평가 전에 팀원의 질문·정답을 열어보지 않는다.
 
-지우기(게시한 DB는 켜 있는 서버에 남으므로 서버를 끈 뒤): `python -m backend.adaptive.fixtures.other_school drop`, 그리고 `.schema-adaptive/postgres-registrations/other-school`·`.schema-adaptive/postgres-profiles/other-school`.
+## 4. 시연 등록 삭제와 다시 시작
 
-## 3. 되돌리기 (다시 시연하기 전)
+**DB 등록** 탭의 등록된 PostgreSQL DB 목록에서 시연용 항목의 **삭제**를 누르고 **정확한 ID**를 입력해 확인한다. 등록·검토·게시 내용, 값 사전, 확장 항목, 시험 질의 기준이 지워지며 되돌릴 수 없다. 평가 기록은 남는다. 사용 중인 등록을 삭제하면 선택은 Legacy 기준선으로 돌아간다.
 
-1. 서버를 끈다(Ctrl+C).
-2. 시연용 등록을 지운다.
-   ```bash
-   rm -rf .schema-adaptive/postgres-registrations/demo-legacy .schema-adaptive/postgres-profiles/demo-legacy
-   ```
-3. `legacy-base`·`legacy-view`(개발자가 만든 profile)는 지우지 않는다.
-4. 레거시 DB는 읽기만 했으므로 되돌릴 것이 없다.
+이 작업은 앱의 등록만 지우며 원본 PostgreSQL schema·table·행을 지우지 않는다. 개발자가 만든 profile 전용 `legacy-base`·`legacy-view`는 등록 삭제 대상이 아니다. 합성 fixture 자체를 정리해야 할 때는 사용 중인 등록을 먼저 정리하고 서버를 끈 뒤 `python -m backend.adaptive.fixtures.other_school drop`을 사용한다. 재시연에 필요한 합성 schema라면 유지해도 된다.
 
-## 4. 알려진 한계 (질문이 나오면)
+## 5. 과거 시연의 당시 관찰값
 
-- 업로드한 SQLite DB는 QueryIR 챗봇·값 사전을 지원하지 않는다. 이번 개발 범위는 PostgreSQL 전용이다(ADR-089).
-- PostgreSQL 등록에는 버전 되돌리기와 test query 미리보기가 아직 없다.
-- 규칙 약어 후보에는 어색한 것도 섞인다. 모두 관리자 승인을 거친다. 한 글자 약어는 넣을 수 없다.
-- 공통 항목 밖 개념(강의실, 수업 방식, 여석 등 11개)을 물으면, 그 DB에 확장 항목이 없을 때 "이 DB에는 강의실 정보가 없어 답할 수 없습니다"라고 답한다(8-20). 목록에 없는 말은 여전히 다른 항목에 들어갈 수 있다. 0건이면 "분반에서 '교111' 값을 찾지 못했습니다"처럼 어느 조건이 맞지 않았는지 알려 준다.
-- 새 챗봇의 기본 모델은 학습하지 않은 일반 7B 모델이다(Phase 9-08). 챗봇 창의 "모델"에서 레거시 데이터로 fine-tuning된 7B 모델로 바꿀 수 있다. 레거시 챗봇은 fine-tuning된 모델이다. 복합 조건(예: "오후" + 요일 + 학점)에서는 조건을 빠뜨릴 수 있고, SQL 패널로 확인할 수 있다.
+2026-09-30 Phase 8-16~18 시연에서는 등록 AI 제안 20~30초, table 8개·column 38개, “컴융 전공 과목 보여줘” 82건, 개발자 profile에서 “컴융 3학년 전공 과목 보여줘” 33건을 관찰했다. **모두 당시 관찰값**이다. 당시 승인 개수·개설 연도 검토 순서는 ontology v3의 현재 절차로 쓰지 않는다. 모델 출력·행 수는 현재 DB·mapping·모델에서 다시 확인해야 한다.
+
+## 6. 알려진 한계
+
+- PostgreSQL 전용이다(ADR-089). SQLite 등록은 검토 대기만 지원하며 QueryIR 챗봇·값 사전을 지원하지 않는다.
+- PostgreSQL은 현재 게시 버전만 보관하므로 과거 버전 되돌리기를 시연한다고 약속하지 않는다. 화면의 시험 질의·기준 저장·회귀 확인으로 현재 결과를 점검한다.
+- 약어 후보와 첫 연결 후보는 틀릴 수 있다. 한 글자 약어는 넣을 수 없으며 승인 전에 뜻·저장 값을 확인한다.
+- 공통 항목 밖 개념은 해당 DB의 확장 항목이 없으면 미지원으로 안내한다. 알려진 규칙 밖 표현은 잘못 해석될 수 있다.
+- 복합 질문에서는 조건이 빠질 수 있다. 이해한 조건·개발용 SQL과 실제 결과를 함께 확인하며, 빈 결과·연결되지 않은 낱말 안내만으로 정확성을 보장하지 않는다.
+- 사람이 L1/L3·L4를 완료한 것으로 간주하지 않는다. 개발 DB의 시연 수치로 처음 보는 학교의 성능을 주장하지 않는다.

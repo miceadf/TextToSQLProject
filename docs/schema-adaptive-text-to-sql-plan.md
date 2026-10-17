@@ -343,6 +343,8 @@ Department.name: dept_mst.dept_nm
                                결과·SQL·근거 반환
 ```
 
+현재 구현 위치(2026-10-17, Phase 9-27): 앱 조립은 `backend/adaptive/api/app_factory.py`, DB 목록·catalog는 `backend/adaptive/api/database_registry.py`, 관리자 화면·client는 `src/adaptive/`, clarification 시연은 `src/adaptive/ClarificationDemoPage.tsx`다. NER 보정 예제는 `backend/scripts/demo_ner_correction.py`에 있다. 역사 문서의 옛 이름은 [문서 목차](README.md)의 이름 변경 표로 대조한다.
+
 ## 9. 관리자 개입 과정
 
 관리자 개입은 부가 기능이 아니라 시스템 신뢰성과 논문 평가의 핵심이다.
@@ -801,6 +803,8 @@ Phase 8 분할 계획(상세는 [`docs/prompts/phase8-01-mapping-version-rollbac
 
 ### Phase 9. 최종 평가와 논문
 
+- [x] Phase 9-27: 팀원 안내를 위한 앱 조립·DB 목록 모듈, 적응형 frontend 폴더·clarification 시연 화면·NER 예제 이름 정리
+- [x] Phase 9-28: 팀원 첫 실행 README·환경 예시·문서 목차·인수인계·현재 시연 절차와 핵심 모듈 설명 정리(문서·주석만)
 - [ ] 독립 unseen schema 확보
 - [ ] baseline과 제안 시스템 비교
 - [ ] confidence threshold ablation
@@ -847,6 +851,8 @@ HarnessRequest
 `AUTO_APPROVE_CANDIDATE`는 자동 publish를 뜻하지 않는다. 관리자 검토·수정과 명시적인 publish gate는 다음 개발 단계다. threshold와 가중치는 향후 여러 스키마 평가에서 조정할 실험 변수다.
 
 ### 현재 개발 체크포인트와 다음 시작점
+
+2026-10-17 Phase 9-27 현재 코드 위치: 적응형 FastAPI 앱 조립은 `backend/adaptive/api/app_factory.py`, DB 목록·course catalog는 `backend/adaptive/api/database_registry.py`, 공용 적응형 frontend는 `src/adaptive/`, clarification 시연 화면은 `src/adaptive/ClarificationDemoPage.tsx`다. NER 보정 예제는 `backend/scripts/demo_ner_correction.py`로 옮겼고 `python -m backend.scripts.demo_ner_correction`으로 실행한다. 앱 내부 state 속성의 접두사도 `adaptive_app_`로 맞췄다. 계약 버전·DB ID·HTTP/브라우저 URL·localStorage 키·저장 형식·npm 스크립트 이름은 유지하며 호환 shim은 두지 않는다. 동작 변경 없는 이름 정리라 새 ADR은 없다. 아래 날짜별 구현 기록과 ADR 본문의 당시 경로는 보존한다.
 
 2026-09-07 기준 관리자 교정과 publish gate까지 완료했다.
 
@@ -2834,3 +2840,9 @@ SQLite DB 입력
 - 2026-10-14 9-25 팀원 안내서 갱신: 현재 DB 관리 탭·등록/삭제·검토/게시·값 사전·ontology v3·챗봇 알림·평가 담당 구분·등록 비용 기록을 반영했다(문서만, UTF-8; 코드·서버·모델 실행·commit 없음).
 
 - 2026-10-14 9-26 사용자 지침(`docs/prompts/phase9-26-dictionary-refresh.md`): frontend에서 검토 detail revision을 값 사전·확장 항목에 공유하여 승인·변경·없음·일괄 승인·게시 뒤 자동 새로고침하고, 저장하지 않은 편집은 보존하며 새로고침 안내를 표시한다. 두 도구의 게시 성공 뒤 mapping 최신 버전도 다시 읽으며 기존 새로고침 버튼을 유지한다. `npx tsc -b`·관련 ESLint·전체 frontend 206개 통과(Node 기본 실행은 sandbox spawn EPERM으로 중단, `--test-isolation=none` 재실행 통과). UTF-8·diff check 확인, API·레거시·기존 미커밋 변경 유지; 서버·사용자 데이터 조작·live 모델 호출·commit 없음. Luna/opencode 독립 리뷰는 사용자 no-live-model 제약으로 대기, 새 ADR·사람 관문 승인 없음.
+
+- 2026-10-17 Phase 9-27 사용자 지침(`docs/prompts/phase9-27-renames.md`): `git mv`로 앱 조립 모듈을 `app_factory.py`, DB 목록·catalog 모듈을 `database_registry.py`, frontend 폴더를 `src/adaptive/`, 시연 화면을 `ClarificationDemoPage.tsx`, NER 보정 예제를 `backend/scripts/demo_ner_correction.py`로 옮겼다. import·CLI·monkeypatch·테스트 문자열과 현재 실행 안내를 갱신하고 내부 app state 접두사는 `adaptive_app_`로 맞췄다. 예제는 main guard 안에서 패키지 import·명시적 참조 값만 쓰며, 참조 0건을 확인한 기본 SVG 2개를 삭제했다. 계약 버전·DB ID·HTTP/브라우저 URL·localStorage 키·저장 형식·npm 스크립트 이름과 역사 기록은 보존한다. `.git` 쓰기 금지 환경이라 `.venv/phase9-27-tools/git-index`의 별도 index로 `git mv`를 실행했으며 실제 index는 변경하지 않았다. TypeScript·src ESLint·frontend 206개·compileall·UTF-8·diff check·예제 실행/무실행 import 검증 통과. Node 기본 실행과 기본 build는 spawn EPERM, Node `--test-isolation=none` 및 build `--configLoader native` 통과. Backend 관련 25개 파일 최초 결과는 593 passed·24 skipped·6 failed·3 errors(15분 26초); 실패/오류 9건은 모두 임시 fixture 등록·업로드 중 500이었고, 정확한 9건만 새 임시 경로에서 코드 변경 없이 재실행하여 9 passed(1분 43초), 합계 602개 통과를 확인했다. 일시적 등록 실패의 근본 원인은 확정하지 않고 제품 코드는 추가 변경하지 않았다. 24 skip 중 20개는 서버 시작 금지에 따라 임시 HTTP listener를 여는 transport 테스트를 제외한 것이고 나머지 4개는 기존 skip이다. 테스트 프로세스에만 `.venv` 아래 basetemp·tempfile 경로 및 그 아래 mkdir mode=0777·pytest plugin/cache 비활성화를 적용했다. 앱 조립·registry 모듈 AST와 이동한 frontend 29개 파일이 이름·설명 변경 외에 동일함도 확인했다. 전체 pytest는 실행하지 않았다. 사용자 서버·사용자 데이터·live 모델 호출·commit·backend/.env 값 출력 없음. Luna/opencode 독립 리뷰는 사용자 no-live-model 제약으로 대기, 기존 기준선·미커밋 의존성 수정 유지, 새 ADR·사람 관문 승인 없음.
+
+- 2026-10-17 9-27 이름 정리: 앱 조립·DB 목록·frontend·NER 예제의 현재 경로를 구조 절과 문서 목차에 명시했다. 상세 구현·검증은 위 Phase 9-27 기록을 따른다.
+
+- 2026-10-17 9-28 팀원용 문서·주석 정리: 루트 README·환경 예시·문서 목차, 사람용 인수인계 요약, 현재 관리자 화면·ontology v3 시연 절차와 핵심 모듈 설명을 갱신했다. 문서·주석만 변경하며 기존 미커밋 9-27 이름 정리와 레거시 기준선을 보존한다. compileall·npx tsc -b·npx eslint src·diff check 통과, Python 13개 모듈은 docstring 제외 AST 동일·TypeScript 4개 파일은 첫 주석 추가만 확인했다. 변경 파일 UTF-8·문서 링크·README 200줄 제한·환경 예시의 비밀 값 없음과 Git ignore 제외·기존 인수인계 본문 보존을 확인했다. 전체 pytest·frontend 테스트·제품 build·환경 점검 실행은 이번 문서 단계의 필수 확인 대상이 아니므로 수행하지 않았다. 서버·모델 호출·commit·backend/.env 열람 없음. Luna/opencode 독립 리뷰는 사용자 모델 호출 금지로 실행하지 않았다. 새 설계 결정·사람 관문 승인 없음.
