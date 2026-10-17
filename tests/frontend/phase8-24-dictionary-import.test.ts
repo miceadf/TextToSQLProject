@@ -9,7 +9,7 @@ import {
   parseExtensionDetail,
   toPostgresMessage,
   type PgFetchLike,
-} from '../../src/adaptive-prototype/postgresRegistration.ts';
+} from '../../src/adaptive/postgresRegistration.ts';
 
 const DB = 'code-school';
 const detail = {
@@ -90,7 +90,7 @@ describe('phase8-24 code-table import', () => {
   });
 
   it('the dictionary panel offers the import', () => {
-    const panel = readFileSync(new URL('../../src/adaptive-prototype/ValueDictionaryPanel.tsx', import.meta.url), 'utf8');
+    const panel = readFileSync(new URL('../../src/adaptive/ValueDictionaryPanel.tsx', import.meta.url), 'utf8');
     assert.match(panel, /<CodeTableImport/);
   });
 });

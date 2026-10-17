@@ -15,7 +15,7 @@ from backend.adaptive.api.clarification_http import (
     START_PATH,
     SUBMIT_PATH,
 )
-from backend.adaptive.api.synthetic_prototype import (
+from backend.adaptive.api.app_factory import (
     SYNTHETIC_CLARIFICATION_PROTOTYPE_VERSION,
     SYNTHETIC_PROTOTYPE_DATABASE_ID,
     create_synthetic_clarification_prototype,
@@ -111,10 +111,10 @@ def test_fixed_deps_defensive_copy_readonly_cleanup():
     from backend.adaptive.harness.policy import ConservativeSqlPolicy
 
     app = create_synthetic_clarification_prototype()
-    tmpdir = Path(app.state.synthetic_prototype_tmpdir)
-    cleanup = app.state.synthetic_prototype_cleanup
+    tmpdir = Path(app.state.adaptive_app_tmpdir)
+    cleanup = app.state.adaptive_app_cleanup
     with TestClient(app, raise_server_exceptions=False):
-        loader = app.state.synthetic_prototype_loader
+        loader = app.state.adaptive_app_loader
         first = loader.load(SYNTHETIC_PROTOTYPE_DATABASE_ID)
         second = loader.load(SYNTHETIC_PROTOTYPE_DATABASE_ID)
         assert first[0].model_dump(mode="json") == second[0].model_dump(mode="json")
@@ -123,10 +123,10 @@ def test_fixed_deps_defensive_copy_readonly_cleanup():
         third = loader.load(SYNTHETIC_PROTOTYPE_DATABASE_ID)
         assert "Mutated" not in third[0].entities
 
-        assert isinstance(app.state.synthetic_prototype_executor, SQLiteReadOnlyExecutor)
+        assert isinstance(app.state.adaptive_app_executor, SQLiteReadOnlyExecutor)
         # Phase 8-01 wraps the compiler with the private activation guard.
-        assert isinstance(app.state.synthetic_prototype_compiler.inner, SingleTableSQLiteCompiler)
-        assert isinstance(app.state.synthetic_prototype_policy, ConservativeSqlPolicy)
+        assert isinstance(app.state.adaptive_app_compiler.inner, SingleTableSQLiteCompiler)
+        assert isinstance(app.state.adaptive_app_policy, ConservativeSqlPolicy)
         assert tmpdir.is_dir()
 
     assert not tmpdir.exists()
@@ -144,12 +144,12 @@ def test_cli_loopback_reload_off_access_log_off(monkeypatch, capsys):
             captured.update(kwargs)
 
     monkeypatch.setitem(sys.modules, "uvicorn", _FakeUvicorn())
-    import backend.adaptive.api.synthetic_prototype as proto
+    import backend.adaptive.api.app_factory as proto
 
     cleaned = []
 
     class _State:
-        synthetic_prototype_cleanup = lambda self: cleaned.append(True)
+        adaptive_app_cleanup = lambda self: cleaned.append(True)
 
     class _App:
         state = _State()
@@ -189,7 +189,7 @@ def test_import_isolation_and_package_has_no_app_side_effect():
     assert "psycopg2" not in sys.modules
     assert "dotenv" not in sys.modules
     assert not hasattr(api_pkg, "app")
-    source = Path("backend/adaptive/api/synthetic_prototype.py").read_text(encoding="utf-8")
+    source = Path("backend/adaptive/api/app_factory.py").read_text(encoding="utf-8")
     assert "from backend.main" not in source
     assert "import backend.main" not in source
 
@@ -214,7 +214,7 @@ def test_responses_stdout_stderr_logs_do_not_leak(capsys, caplog):
     assert FAKE_PATH not in blob
     assert QUESTION_BASE not in blob
     assert token not in submitted.text
-    tmpdir = app.state.synthetic_prototype_tmpdir
+    tmpdir = app.state.adaptive_app_tmpdir
     assert tmpdir not in blob
     out, err = capsys.readouterr()
     logs = "\n".join(r.getMessage() for r in caplog.records)

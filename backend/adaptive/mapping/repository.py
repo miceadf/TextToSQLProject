@@ -1,3 +1,9 @@
+"""연결 제안·검토 초안·게시 profile을 DB별 JSON으로 저장하고 읽는다.
+
+제안→검토→게시 흐름의 기록을 원자적으로 쓰고 게시 버전은 덮어쓰지 않는다.
+의미 검증과 사람의 검토 결정은 review 서비스의 책임이다.
+"""
+
 from __future__ import annotations
 
 import os

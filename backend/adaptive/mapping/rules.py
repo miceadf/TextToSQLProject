@@ -1,3 +1,9 @@
+"""DB catalog와 ontology를 받아 근거·신뢰도가 있는 연결 후보를 만든다.
+
+해당 ontology 버전의 활성 항목을 이름·자료형 규칙으로 비교해 MappingProposal을 반환한다.
+자동 승인 후보도 사람의 검토·게시를 거쳐야 실행에 쓰인다.
+"""
+
 from __future__ import annotations
 
 import re

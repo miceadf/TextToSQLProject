@@ -7,7 +7,7 @@ import {
   getReviewErrorMessage,
   parseReviewError,
   toReviewMessage,
-} from '../../src/adaptive-prototype/mappingReview.ts';
+} from '../../src/adaptive/mappingReview.ts';
 
 const BLOCKED = 'MAPPING_REVIEW_PUBLISH_BLOCKED';
 const reasons = [
@@ -60,7 +60,7 @@ describe('phase9-07 publish block reasons', () => {
 
   it('the panels show line breaks in their error area', () => {
     for (const file of ['MappingReviewPanel.tsx', 'ExtensionFieldPanel.tsx', 'ValueDictionaryPanel.tsx']) {
-      const source = readFileSync(new URL(`../../src/adaptive-prototype/${file}`, import.meta.url), 'utf8');
+      const source = readFileSync(new URL(`../../src/adaptive/${file}`, import.meta.url), 'utf8');
       assert.match(source, /whitespace-pre-line[^>]*role="alert"|role="alert"[^>]*whitespace-pre-line/, file);
     }
   });

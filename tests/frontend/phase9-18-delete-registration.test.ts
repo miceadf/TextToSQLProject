@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import {
   canDeleteRegistration, deletePostgresRegistration, fetchRegistrations,
   type PgFetchLike,
-} from '../../src/adaptive-prototype/postgresRegistration.ts';
+} from '../../src/adaptive/postgresRegistration.ts';
 
 it('enables deletion only for an exact ID while idle, including saved legacy', () => {
   assert.equal(canDeleteRegistration('campus-pg', 'campus-pg', false), true);
@@ -44,7 +44,7 @@ it('refuses malformed success and fixed server errors', async () => {
 });
 
 it('UI wires exact confirmation, refresh, closing review and selected DB fallback', () => {
-  const panel = readFileSync(new URL('../../src/adaptive-prototype/PostgresRegistrationPanel.tsx', import.meta.url), 'utf8');
+  const panel = readFileSync(new URL('../../src/adaptive/PostgresRegistrationPanel.tsx', import.meta.url), 'utf8');
   assert.match(panel, /disabled=\{!canDeleteRegistration\(deleting, confirmation, busy\)\}/);
   assert.match(panel, /await deletePostgresRegistration\(fetchFn, id\)/);
   assert.match(panel, /if \(opened === id\) setOpened\(null\)/);

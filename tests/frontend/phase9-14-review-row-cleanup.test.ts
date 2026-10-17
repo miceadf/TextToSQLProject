@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
-import type { ReviewField } from '../../src/adaptive-prototype/mappingReview.ts';
-import { canSaveRowEdit, startRowEdit } from '../../src/adaptive-prototype/mappingRowEditor.ts';
+import type { ReviewField } from '../../src/adaptive/mappingReview.ts';
+import { canSaveRowEdit, startRowEdit } from '../../src/adaptive/mappingRowEditor.ts';
 
 const field: ReviewField = {
   semantic_field: 'CourseOffering.enrolled', decision: 'REMAPPED',
@@ -50,8 +50,8 @@ describe('phase9-14 review row defaults and save guards', () => {
     assert.equal(first.reason, 'old reason');
   });
   it('shares the reviewer with all tools and owns one expanded row in the parent', () => {
-    const panel = readFileSync('src/adaptive-prototype/MappingReviewPanel.tsx', 'utf8');
-    const registration = readFileSync('src/adaptive-prototype/PostgresRegistrationPanel.tsx', 'utf8');
+    const panel = readFileSync('src/adaptive/MappingReviewPanel.tsx', 'utf8');
+    const registration = readFileSync('src/adaptive/PostgresRegistrationPanel.tsx', 'utf8');
     assert.ok(panel.includes('const [rowEdit, setRowEdit]'));
     assert.ok(panel.includes('onEdit={setRowEdit}'));
     assert.ok(panel.includes('reviewTools(reviewer, reviewToolsRevision(detail)'));
@@ -59,7 +59,7 @@ describe('phase9-14 review row defaults and save guards', () => {
     assert.ok(panel.includes('reviewer={reviewer}'));
     assert.equal((registration.match(/reviewer=\{reviewer\}/g) ?? []).length, 2);
     for (const name of ['ValueDictionaryPanel', 'ExtensionFieldPanel']) {
-      const tool = readFileSync(`src/adaptive-prototype/${name}.tsx`, 'utf8');
+      const tool = readFileSync(`src/adaptive/${name}.tsx`, 'utf8');
       assert.ok(tool.includes('const reviewer = sharedReviewer ?? localReviewer'));
       assert.ok(tool.includes('sharedReviewer === undefined ?'));
     }

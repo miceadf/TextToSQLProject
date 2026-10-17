@@ -35,7 +35,7 @@ interface ResultTable {
   rows: Array<Record<string, unknown>>;
 }
 
-export default function AdaptivePrototypePage() {
+export default function ClarificationDemoPage() {
   const [question, setQuestion] = useState('');
   const [status, setStatus] = useState<FlowStatus>('idle');
   const [options, setOptions] = useState<StartOption[]>([]);

@@ -16,11 +16,11 @@ from backend.adaptive.api.postgres_runtime import (
     PostgresRuntimeProfile,
     build_validated_contexts,
 )
-from backend.adaptive.api.synthetic_prototype import (
+from backend.adaptive.api.app_factory import (
     SYNTHETIC_PROTOTYPE_DATABASE_ID,
     create_synthetic_clarification_prototype,
 )
-from backend.adaptive.api.synthetic_registry import (
+from backend.adaptive.api.database_registry import (
     CANONICAL_SELECT,
     CATALOG_PATH,
     DATABASES_PATH,

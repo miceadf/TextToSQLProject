@@ -6,7 +6,7 @@ import {
   initReview,
   parseReviewDetail,
   type ReviewFetchLike,
-} from '../../src/adaptive-prototype/mappingReview.ts';
+} from '../../src/adaptive/mappingReview.ts';
 
 // PostgreSQL review GET and INIT share this published-detail response shape.
 function publishedPostgresDetail() {
@@ -74,7 +74,7 @@ describe('phase9-11 published PostgreSQL review contract', () => {
   });
 
   it('hides unsupported actions and the unavailable label for an active PostgreSQL version', () => {
-    const panel = readFileSync('src/adaptive-prototype/MappingReviewPanel.tsx', 'utf-8');
+    const panel = readFileSync('src/adaptive/MappingReviewPanel.tsx', 'utf-8');
     assert.ok(panel.includes("{entry.active ? ' · 실행 중' : ''}"));
     assert.ok(panel.includes("{!entry.active && !entry.activatable ? ' · 현재 스키마에서 실행 불가' : ''}"));
     assert.match(panel, /\{entry\.activatable \? \([\s\S]*?회귀 확인[\s\S]*?\) : null\}/);

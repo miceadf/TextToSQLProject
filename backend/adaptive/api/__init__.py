@@ -1,4 +1,8 @@
-"""Adaptive API package (synthetic only, no legacy mount)."""
+"""Adaptive API package for DB administration, QueryIR chat, and clarification.
+
+app_factory assembles synthetic and private database paths; database_registry
+serves database choices and catalogs. App factory exports here remain lazy.
+"""
 
 from .clarification_http import (
     CLARIFICATION_HTTP_VERSION,
@@ -32,7 +36,7 @@ _LAZY_SYNTHETIC_NAMES = frozenset(
 
 def __getattr__(name: str):
     if name in _LAZY_SYNTHETIC_NAMES:
-        from . import synthetic_prototype as _prototype
+        from . import app_factory as _prototype
 
         return getattr(_prototype, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

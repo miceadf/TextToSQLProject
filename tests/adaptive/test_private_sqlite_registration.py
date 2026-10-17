@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from backend.adaptive.api.synthetic_registry import SyntheticDatabaseRegistry
+from backend.adaptive.api.database_registry import SyntheticDatabaseRegistry
 from backend.adaptive.fixtures.flat import build_flat_database
 from backend.adaptive.fixtures.legacy import build_legacy_database
 from backend.adaptive.fixtures.seed import DEFAULT_SEED

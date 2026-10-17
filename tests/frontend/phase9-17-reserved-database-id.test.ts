@@ -1,10 +1,10 @@
 import { it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { parseDatabaseRegistry, REGISTRY_VERSION, RESERVED_DATABASE_ID_MESSAGE } from '../../src/adaptive-prototype/databases.ts';
-import { listDatabases } from '../../src/adaptive-prototype/catalogClient.ts';
-import { registerPostgresSchema, toPostgresMessage } from '../../src/adaptive-prototype/postgresRegistration.ts';
-import { uploadSqliteDatabase, toUploadMessage } from '../../src/adaptive-prototype/sqliteUpload.ts';
+import { parseDatabaseRegistry, REGISTRY_VERSION, RESERVED_DATABASE_ID_MESSAGE } from '../../src/adaptive/databases.ts';
+import { listDatabases } from '../../src/adaptive/catalogClient.ts';
+import { registerPostgresSchema, toPostgresMessage } from '../../src/adaptive/postgresRegistration.ts';
+import { uploadSqliteDatabase, toUploadMessage } from '../../src/adaptive/sqliteUpload.ts';
 
 const good = { database_id: 'rehearsal-school', label: 'Rehearsal', schema: 'postgres' };
 const collision = { database_id: 'legacy', label: 'Legacy', schema: 'postgres' };

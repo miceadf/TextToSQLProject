@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseChatQueryResponse } from '../../src/adaptive-prototype/chatQuery.ts';
+import { parseChatQueryResponse } from '../../src/adaptive/chatQuery.ts';
 
 const base = {
   version: 'adaptive-chat-query-v1',

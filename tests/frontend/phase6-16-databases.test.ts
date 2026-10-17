@@ -13,10 +13,10 @@ import {
   resolveDatabaseSelection,
   shouldResetCourseUi,
   writeStoredDatabaseId,
-} from '../../src/adaptive-prototype/databases.ts';
-import { getCatalog, listDatabases } from '../../src/adaptive-prototype/catalogClient.ts';
-import type { CatalogFetchLike } from '../../src/adaptive-prototype/catalogClient.ts';
-import { startClarification } from '../../src/adaptive-prototype/client.ts';
+} from '../../src/adaptive/databases.ts';
+import { getCatalog, listDatabases } from '../../src/adaptive/catalogClient.ts';
+import type { CatalogFetchLike } from '../../src/adaptive/catalogClient.ts';
+import { startClarification } from '../../src/adaptive/client.ts';
 
 const FLAT_ID = 'synth-clarification-prototype';
 const LEGACY_ID = 'synth-clarification-legacy';

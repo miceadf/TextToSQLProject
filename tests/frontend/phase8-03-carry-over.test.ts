@@ -6,7 +6,7 @@ import {
   parseReviewDetail,
   type ReviewFetchInit,
   type ReviewFetchLike,
-} from '../../src/adaptive-prototype/mappingReview.ts';
+} from '../../src/adaptive/mappingReview.ts';
 
 function field(name: string, decision = 'PENDING') {
   return {

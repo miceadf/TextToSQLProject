@@ -22,7 +22,7 @@ from backend.adaptive.api.clarification_http import (
     START_PATH,
     SUBMIT_PATH,
 )
-from backend.adaptive.api.synthetic_prototype import (
+from backend.adaptive.api.app_factory import (
     SYNTHETIC_PROTOTYPE_DATABASE_ID,
     create_synthetic_clarification_prototype,
 )
@@ -442,7 +442,7 @@ def test_forged_constructed_extra_coercion_wrongtype_rejected() -> None:
 
 
 def test_bridge_rejects_non_ollama_model() -> None:
-    from backend.adaptive.api.synthetic_prototype import _FixedConstraintProvider
+    from backend.adaptive.api.app_factory import _FixedConstraintProvider
 
     for bad in (object(), {"generate_ir": lambda *a: {}}, _FixedConstraintProvider()):
         with pytest.raises(OllamaConstraintProviderError) as exc_info:
@@ -726,20 +726,20 @@ def test_default_factory_uses_fixed_provider_with_zero_network(
     monkeypatch.setattr(catalog_module, "PostgresAdapter", _explode)
     monkeypatch.setattr(harness_module, "PostgresReadOnlyExecutor", _explode)
     app = create_synthetic_clarification_prototype()
-    provider = app.state.synthetic_prototype_provider
+    provider = app.state.adaptive_app_provider
     assert type(provider).__name__ == "_FixedConstraintProvider"
     assert not isinstance(provider, OllamaConstraintProvider)
 
 
 def test_global_app_does_not_inject_ollama() -> None:
-    from backend.adaptive.api import synthetic_prototype as prototype_module
+    from backend.adaptive.api import app_factory as prototype_module
 
-    provider = prototype_module.app.state.synthetic_prototype_provider
+    provider = prototype_module.app.state.adaptive_app_provider
     assert type(provider).__name__ == "_FixedConstraintProvider"
 
 
 def test_factory_rejects_non_ollama_model() -> None:
-    from backend.adaptive.api.synthetic_prototype import _FixedConstraintProvider
+    from backend.adaptive.api.app_factory import _FixedConstraintProvider
 
     for bad in (object(), {"model": "x"}, _FixedConstraintProvider()):
         with pytest.raises(RuntimeError, match="^synthetic prototype unavailable$"):
@@ -757,7 +757,7 @@ def test_injected_factory_startup_start_submit_cancel_budget() -> None:
     transport = _smart_transport()
     model = _make_model(transport)
     app = create_synthetic_clarification_prototype(ollama_model=model)
-    assert isinstance(app.state.synthetic_prototype_provider, OllamaConstraintProvider)
+    assert isinstance(app.state.adaptive_app_provider, OllamaConstraintProvider)
     assert transport.calls == []
     client = TestClient(app, raise_server_exceptions=False)
     question = f"{QUESTION_BASE} 강의 목록 보여줘"
@@ -858,8 +858,8 @@ def test_injected_factory_responses_do_not_leak(
     assert FAKE_PATH not in blob
     assert QUESTION_BASE not in blob
     assert data["session_token"] not in submitted.text
-    state_blob = repr(app.state.synthetic_prototype_provider) + str(
-        app.state.synthetic_prototype_provider
+    state_blob = repr(app.state.adaptive_app_provider) + str(
+        app.state.adaptive_app_provider
     )
     for secret in (SECRET_MARKER, QUESTION_BASE, "localhost", "synthetic-p707-tag"):
         assert secret not in state_blob

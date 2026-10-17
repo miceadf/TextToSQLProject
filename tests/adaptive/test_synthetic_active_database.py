@@ -12,12 +12,12 @@ from backend.adaptive.api.clarification_http import (
     START_PATH,
     SUBMIT_PATH,
 )
-from backend.adaptive.api.synthetic_prototype import (
+from backend.adaptive.api.app_factory import (
     SYNTHETIC_LEGACY_DATABASE_ID,
     SYNTHETIC_PROTOTYPE_DATABASE_ID,
     create_synthetic_clarification_prototype,
 )
-from backend.adaptive.api.synthetic_registry import (
+from backend.adaptive.api.database_registry import (
     CANONICAL_SELECT,
     CATALOG_PATH,
     DATABASES_PATH,
@@ -47,9 +47,9 @@ def test_registry_lists_two_databases_strict():
         assert set(entry.keys()) == {"database_id", "label", "schema"}
     schemas = sorted(entry["schema"] for entry in data["databases"])
     assert schemas == ["flat", "legacy"]
-    snapshot = app.state.synthetic_prototype_registry.snapshot()
+    snapshot = app.state.adaptive_app_registry.snapshot()
     snapshot[0]["database_id"] = "tampered"
-    assert "tampered" not in app.state.synthetic_prototype_registry.database_ids()
+    assert "tampered" not in app.state.adaptive_app_registry.database_ids()
     assert client.get(DATABASES_PATH).json()["databases"] != snapshot
     assert "CourseOffering.year" not in CANONICAL_SELECT  # v3 catalog excludes year.
     assert not any(field.startswith("Offering.") for field in CANONICAL_SELECT)
@@ -98,7 +98,7 @@ def test_catalog_rejects_unknown_and_invalid_without_leak():
     assert "SELECT" not in blob
     assert "sqlite" not in blob.lower()
     assert "tmp" not in blob.lower()
-    assert app.state.synthetic_prototype_tmpdir not in blob
+    assert app.state.adaptive_app_tmpdir not in blob
 
     duplicate = client.get(
         f"{CATALOG_PATH}?database_id={SYNTHETIC_PROTOTYPE_DATABASE_ID}"
@@ -138,11 +138,11 @@ def test_clarification_branches_both_databases():
 
 def test_catalog_blocks_unpublished_mapping_and_unsafe_compiler(monkeypatch):
     from backend.adaptive.harness.contracts import CompiledQuery, MappingStatus
-    import backend.adaptive.api.synthetic_registry as synthetic_registry
+    import backend.adaptive.api.database_registry as database_registry
 
     client, app = _client()
-    original_builder = synthetic_registry.build_catalog_mapping
-    original_compile = app.state.synthetic_prototype_compiler.compile
+    original_builder = database_registry.build_catalog_mapping
+    original_compile = app.state.adaptive_app_compiler.compile
     built_mappings = []
     compile_calls = []
 
@@ -151,9 +151,9 @@ def test_catalog_blocks_unpublished_mapping_and_unsafe_compiler(monkeypatch):
         built_mappings.append(mapping)
         return mapping
 
-    monkeypatch.setattr(synthetic_registry, "build_catalog_mapping", unpublished_mapping)
+    monkeypatch.setattr(database_registry, "build_catalog_mapping", unpublished_mapping)
     monkeypatch.setattr(
-        app.state.synthetic_prototype_compiler,
+        app.state.adaptive_app_compiler,
         "compile",
         lambda *args: compile_calls.append(args),
     )
@@ -162,24 +162,24 @@ def test_catalog_blocks_unpublished_mapping_and_unsafe_compiler(monkeypatch):
     assert unpublished.json() == {"error": {"code": "SYNTHETIC_CATALOG_CONTEXT_UNAVAILABLE"}}
     assert built_mappings and built_mappings[0].status is MappingStatus.DRAFT
     assert compile_calls == []
-    monkeypatch.setattr(synthetic_registry, "build_catalog_mapping", original_builder)
+    monkeypatch.setattr(database_registry, "build_catalog_mapping", original_builder)
 
     def unsafe_compile(query_ir, mapping):
         assert mapping.status is MappingStatus.PUBLISHED
         return CompiledQuery(sql="DELETE FROM course_offerings", parameters=[], expected_columns=[])
 
-    monkeypatch.setattr(app.state.synthetic_prototype_compiler, "compile", unsafe_compile)
+    monkeypatch.setattr(app.state.adaptive_app_compiler, "compile", unsafe_compile)
     response = _catalog(client, SYNTHETIC_PROTOTYPE_DATABASE_ID)
     assert response.status_code == 404
     assert response.json() == {"error": {"code": "SYNTHETIC_CATALOG_CONTEXT_UNAVAILABLE"}}
     assert "DELETE" not in response.text
     assert "sqlite" not in response.text.lower()
-    monkeypatch.setattr(app.state.synthetic_prototype_compiler, "compile", original_compile)
+    monkeypatch.setattr(app.state.adaptive_app_compiler, "compile", original_compile)
 
 
 def test_schema_drift_fails_closed_for_catalog_and_clarification():
     client, app = _client()
-    tmpdir = Path(app.state.synthetic_prototype_tmpdir)
+    tmpdir = Path(app.state.adaptive_app_tmpdir)
     started = client.post(
         START_PATH,
         json={
@@ -227,7 +227,7 @@ def test_schema_drift_fails_closed_for_catalog_and_clarification():
 
 def test_cleanup_removes_both_temp_databases():
     app = create_synthetic_clarification_prototype()
-    tmpdir = Path(app.state.synthetic_prototype_tmpdir)
+    tmpdir = Path(app.state.adaptive_app_tmpdir)
     assert (tmpdir / "flat.sqlite3").is_file()
     assert (tmpdir / "legacy.sqlite3").is_file()
     with TestClient(app, raise_server_exceptions=False):

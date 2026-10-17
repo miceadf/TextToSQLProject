@@ -196,7 +196,7 @@ def test_main_never_prints_the_key(
 
     class App:
         class state:  # noqa: N801
-            synthetic_prototype_cleanup = None
+            adaptive_app_cleanup = None
 
     def fake_create(profiles: Any, model: Any, mapping_model: Any = None, show_sql: bool = False,
                     postgres_sources: Any = None) -> Any:
@@ -220,7 +220,7 @@ def test_main_never_prints_the_key(
 
 def test_the_prototype_accepts_an_openai_choice_and_keeps_clarification_local() -> None:
     from backend.adaptive.api.ollama_startup import build_startup_ollama_model, parse_ollama_startup_config
-    from backend.adaptive.api.synthetic_prototype import create_synthetic_clarification_prototype
+    from backend.adaptive.api.app_factory import create_synthetic_clarification_prototype
 
     local = build_startup_ollama_model(
         parse_ollama_startup_config("qwen2.5-coder:7b-instruct", None, "30"), transport=lambda *_args: {}
@@ -232,11 +232,11 @@ def test_the_prototype_accepts_an_openai_choice_and_keeps_clarification_local() 
     ]
     app = create_synthetic_clarification_prototype(chat_models=choices)
     try:
-        assert app.state.synthetic_prototype_provider._model is local  # noqa: SLF001
+        assert app.state.adaptive_app_provider._model is local  # noqa: SLF001
     finally:
-        app.state.synthetic_prototype_cleanup()
+        app.state.adaptive_app_cleanup()
     app = create_synthetic_clarification_prototype(chat_models=choices[:1])
     try:
-        assert app.state.synthetic_prototype_provider_kind == "deterministic"
+        assert app.state.adaptive_app_provider_kind == "deterministic"
     finally:
-        app.state.synthetic_prototype_cleanup()
+        app.state.adaptive_app_cleanup()

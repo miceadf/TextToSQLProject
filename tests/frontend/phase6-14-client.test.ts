@@ -1,8 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { PrototypeClientError, startClarification, submitClarification } from '../../src/adaptive-prototype/client.ts';
-import type { FetchInit, FetchResponseLike } from '../../src/adaptive-prototype/client.ts';
+import { PrototypeClientError, startClarification, submitClarification } from '../../src/adaptive/client.ts';
+import type { FetchInit, FetchResponseLike } from '../../src/adaptive/client.ts';
 
 const TOKEN = 't'.repeat(43);
 const OPT_A = 'a'.repeat(64);
@@ -159,10 +159,10 @@ describe('phase6-14 client', () => {
 
   it('uses no storage, cookie, or auth header in shipped source', () => {
     const files = [
-      'src/adaptive-prototype/client.ts',
-      'src/adaptive-prototype/contracts.ts',
-      'src/adaptive-prototype/state.ts',
-      'src/adaptive-prototype/AdaptivePrototypePage.tsx',
+      'src/adaptive/client.ts',
+      'src/adaptive/contracts.ts',
+      'src/adaptive/state.ts',
+      'src/adaptive/ClarificationDemoPage.tsx',
     ];
     for (const file of files) {
       const text = readFileSync(file, 'utf8');
@@ -172,7 +172,7 @@ describe('phase6-14 client', () => {
       assert.ok(!text.includes('Authorization'), file);
       assert.ok(!text.includes('dangerouslySetInnerHTML'), file);
     }
-    const page = readFileSync('src/adaptive-prototype/AdaptivePrototypePage.tsx', 'utf8');
+    const page = readFileSync('src/adaptive/ClarificationDemoPage.tsx', 'utf8');
     assert.ok(!page.includes('QueryIR'), 'page must not render QueryIR');
     const mainIndex = page.indexOf('<main>');
     assert.ok(mainIndex >= 0, 'page must render main content');

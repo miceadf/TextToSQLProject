@@ -584,7 +584,7 @@ def _load_manifest_strict(review_dir: Path) -> ActivationManifest:
 
 
 def _check_canonical_full_coverage(profile: PublishedMappingProfile) -> bool:
-    from ..api.synthetic_registry import CANONICAL_SELECT
+    from ..api.database_registry import CANONICAL_SELECT
 
     # Phase 8-18: every course-list field, plus any other ontology field.
     ontology = load_default_ontology()
@@ -595,7 +595,7 @@ def _check_canonical_full_coverage(profile: PublishedMappingProfile) -> bool:
 
 
 def _validate_canonical_executable(catalog: Any, profile: PublishedMappingProfile) -> None:
-    from ..api.synthetic_registry import CANONICAL_SELECT
+    from ..api.database_registry import CANONICAL_SELECT
     from ..compiler.harness import SchemaAdaptiveSQLiteCompiler
     from ..harness.contracts import QueryIR
     from ..mapping.bridge import to_harness_mapping
@@ -1501,7 +1501,7 @@ def incomplete_field_ids(*, repository_root: str | Path, database_id: str) -> li
         draft = _load_draft_strict(review_dir)
     except Exception:
         return []
-    from ..api.synthetic_registry import CANONICAL_SELECT
+    from ..api.database_registry import CANONICAL_SELECT
     from ..mapping import ReviewDecision
 
     # Phase 8-18: an unreviewed field, or a course-list field left unmapped;

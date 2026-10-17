@@ -31,7 +31,7 @@ from .ollama_startup import (
     build_startup_ollama_model,
     parse_ollama_startup_config,
 )
-from .synthetic_prototype import (
+from .app_factory import (
     SYNTHETIC_LEGACY_DATABASE_ID,
     SYNTHETIC_PROTOTYPE_DATABASE_ID,
     _CLI_CONFIG_FAILURE,
@@ -224,7 +224,7 @@ def run_prototype_smoke(config: Any) -> dict[str, Any]:
     model = build_startup_ollama_model(config, transport=counter)
     app = create_synthetic_clarification_prototype(ollama_model=model)
     try:
-        if app.state.synthetic_prototype_provider_kind != "ollama" or counter.calls != 0:
+        if app.state.adaptive_app_provider_kind != "ollama" or counter.calls != 0:
             raise RuntimeError(_SMOKE_ERROR["status"])
         forbidden = (
             config.model_tag,
@@ -237,7 +237,7 @@ def run_prototype_smoke(config: Any) -> dict[str, Any]:
         client = TestClient(app, raise_server_exceptions=False)
         cases = [_run_case(client, counter, case, forbidden) for case in _CASES]
     finally:
-        cleanup = getattr(app.state, "synthetic_prototype_cleanup", None)
+        cleanup = getattr(app.state, "adaptive_app_cleanup", None)
         if callable(cleanup):
             cleanup()
     submits = [case for case in cases if case["action"] == "submit"]
@@ -268,9 +268,9 @@ def check_prototype_smoke(config: Any) -> dict[str, Any]:
     model = build_startup_ollama_model(config, transport=counter)
     app = create_synthetic_clarification_prototype(ollama_model=model)
     try:
-        ready = app.state.synthetic_prototype_provider_kind == "ollama"
+        ready = app.state.adaptive_app_provider_kind == "ollama"
     finally:
-        cleanup = getattr(app.state, "synthetic_prototype_cleanup", None)
+        cleanup = getattr(app.state, "adaptive_app_cleanup", None)
         if callable(cleanup):
             cleanup()
     if not ready or counter.calls != 0:

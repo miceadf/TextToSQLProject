@@ -9,11 +9,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.adaptive.api.review_publish import REVIEW_PATH
-from backend.adaptive.api.synthetic_prototype import (
+from backend.adaptive.api.app_factory import (
     create_synthetic_clarification_prototype,
     set_private_repository_root_for_tests,
 )
-from backend.adaptive.api.synthetic_registry import CATALOG_PATH, DATABASES_PATH
+from backend.adaptive.api.database_registry import CATALOG_PATH, DATABASES_PATH
 from backend.adaptive.fixtures.flat import build_flat_database
 from backend.adaptive.fixtures.hybrid import build_hybrid_database
 from backend.adaptive.fixtures.seed import DEFAULT_SEED

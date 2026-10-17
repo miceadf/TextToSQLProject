@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { it } from 'node:test';
-import { reviewRefreshAction, reviewToolsRevision } from '../../src/adaptive-prototype/reviewToolsRefresh.ts';
-import type { ReviewDetail } from '../../src/adaptive-prototype/mappingReview.ts';
+import { reviewRefreshAction, reviewToolsRevision } from '../../src/adaptive/reviewToolsRefresh.ts';
+import type { ReviewDetail } from '../../src/adaptive/mappingReview.ts';
 
 it('reads once per changed revision, including initial load, without reading on unrelated renders', () => {
   let previous: string | undefined;
@@ -56,15 +56,15 @@ it('revision detects decisions, remaps, allowed tables and published/active vers
 
 it('both panels use the refresh guard, cancellable reads and notices; tool publishing refreshes mapping detail', () => {
   for (const name of ['ValueDictionaryPanel', 'ExtensionFieldPanel']) {
-    const source = readFileSync(`src/adaptive-prototype/${name}.tsx`, 'utf8');
+    const source = readFileSync(`src/adaptive/${name}.tsx`, 'utf8');
     assert.ok(source.includes('useReviewToolsRefresh(reviewRevision, dirty, busy, load)'));
     assert.ok(source.includes('if (signal.aborted) return;'));
     assert.ok(source.includes('검토 내용이 바뀌었습니다.'));
     assert.ok(source.includes('onClick={() => void refresh()}'));
   }
-  const parent = readFileSync('src/adaptive-prototype/PostgresRegistrationPanel.tsx', 'utf8');
+  const parent = readFileSync('src/adaptive/PostgresRegistrationPanel.tsx', 'utf8');
   assert.equal((parent.match(/reviewRevision=\{revision\} onPublished=\{onToolsPublished\}/g) ?? []).length, 2);
-  const review = readFileSync('src/adaptive-prototype/MappingReviewPanel.tsx', 'utf8');
+  const review = readFileSync('src/adaptive/MappingReviewPanel.tsx', 'utf8');
   assert.ok(review.includes('setToolsPublishEpoch((value) => value + 1)'));
   assert.ok(review.includes('isBusy(status) || toolsPublishEpoch === refreshedToolsPublish.current'));
   assert.ok(review.includes('void fetchReviewDetail(caller, databaseId, { signal: controller.signal }).then'));

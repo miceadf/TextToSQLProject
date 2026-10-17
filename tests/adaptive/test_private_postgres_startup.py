@@ -265,7 +265,7 @@ def test_redaction(repository: Path, monkeypatch, caplog) -> None:
 
 
 def test_cli_no_option_keeps_loopback_and_touches_nothing(monkeypatch, capsys) -> None:
-    import backend.adaptive.api.synthetic_prototype as proto
+    import backend.adaptive.api.app_factory as proto
 
     def explode(*_a: object, **_k: object):
         raise AssertionError("loader must not run")
@@ -287,7 +287,7 @@ def test_cli_no_option_keeps_loopback_and_touches_nothing(monkeypatch, capsys) -
 
     class _State:
         def __init__(self) -> None:
-            self.synthetic_prototype_cleanup = lambda: cleaned.append(True)
+            self.adaptive_app_cleanup = lambda: cleaned.append(True)
 
     class _App:
         def __init__(self) -> None:
@@ -312,7 +312,7 @@ def test_cli_no_option_keeps_loopback_and_touches_nothing(monkeypatch, capsys) -
 def test_cli_success_passes_profiles_and_failure_blocks_uvicorn(
     repository: Path, monkeypatch, capsys
 ) -> None:
-    import backend.adaptive.api.synthetic_prototype as proto
+    import backend.adaptive.api.app_factory as proto
 
     monkeypatch.setenv("SCHEMA_ADAPTIVE_POSTGRES_DSN_SYNTHETIC", SECRET_DSN)
     _write_profile(repository, "synthetic-postgres")
@@ -327,7 +327,7 @@ def test_cli_success_passes_profiles_and_failure_blocks_uvicorn(
 
     class _State:
         def __init__(self) -> None:
-            self.synthetic_prototype_cleanup = lambda: cleaned.append(True)
+            self.adaptive_app_cleanup = lambda: cleaned.append(True)
 
     cleaned: list = []
 

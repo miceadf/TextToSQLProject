@@ -1,9 +1,9 @@
 """Local ``npm run dev:all`` launcher for the adaptive prototype (Phase 7-14).
 
-The legacy backend already owns ``backend/.env`` (``DATABASE_URL``,
-``OLLAMA_BASE_URL``, ``OLLAMA_MODEL``). For the team demo the prototype
-reuses exactly those three values so the legacy chatbot and the QueryIR
-chatbot see the same database and model:
+The launcher reads known database, model, and display settings from
+``backend/.env``, including additional ``PG_SOURCE_<NAME>`` connections.
+The legacy database connection can be reused, while the QueryIR chatbot
+offers separate general, legacy comparison, and optional external models:
 
 - the legacy DSN is exported in-process as each private legacy profile's
   DSN variable (never printed, never written) only when that Git-ignored
@@ -264,7 +264,7 @@ def _create_app(
     show_sql: bool = False,
     postgres_sources: dict[str, Any] | None = None,
 ) -> Any:
-    from .synthetic_prototype import create_synthetic_clarification_prototype
+    from .app_factory import create_synthetic_clarification_prototype
 
     kwargs: dict[str, Any] = {}
     if postgres_sources is not None:
@@ -386,7 +386,7 @@ def main(argv: list[str] | None = None) -> int:
         print("adaptive dev launcher: prototype unavailable", flush=True)
         return 2
     finally:
-        cleanup = getattr(getattr(app, "state", None), "synthetic_prototype_cleanup", None)
+        cleanup = getattr(getattr(app, "state", None), "adaptive_app_cleanup", None)
         if callable(cleanup):
             cleanup()
     return 0

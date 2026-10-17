@@ -23,8 +23,8 @@ from backend.adaptive.api.postgres_startup_profile import (
     PostgresStartupProfileError,
     load_postgres_startup_profiles,
 )
-from backend.adaptive.api.synthetic_prototype import create_synthetic_clarification_prototype
-from backend.adaptive.api.synthetic_registry import CATALOG_PATH, DATABASES_PATH
+from backend.adaptive.api.app_factory import create_synthetic_clarification_prototype
+from backend.adaptive.api.database_registry import CATALOG_PATH, DATABASES_PATH
 from backend.adaptive.catalog.contracts import (
     ColumnCatalog,
     DatabaseCatalog,

@@ -15,12 +15,12 @@ from backend.adaptive.api.registration_upload import (
     SQLITE_UPLOAD_PATH,
     SQLITE_UPLOAD_VERSION,
 )
-from backend.adaptive.api.synthetic_prototype import (
+from backend.adaptive.api.app_factory import (
     SYNTHETIC_LEGACY_DATABASE_ID,
     SYNTHETIC_PROTOTYPE_DATABASE_ID,
     create_synthetic_clarification_prototype,
 )
-from backend.adaptive.api.synthetic_registry import (
+from backend.adaptive.api.database_registry import (
     CATALOG_PATH,
     DATABASES_PATH,
 )

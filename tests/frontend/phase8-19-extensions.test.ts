@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseExtensionDetail } from '../../src/adaptive-prototype/postgresRegistration.ts';
+import { parseExtensionDetail } from '../../src/adaptive/postgresRegistration.ts';
 
 const detail = {
   version: 'postgres-extensions-v1',

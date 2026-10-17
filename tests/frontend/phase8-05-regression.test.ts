@@ -10,7 +10,7 @@ import {
   verifyTestQuery,
   type TestQueryFetchLike,
   type TestQueryPostLike,
-} from '../../src/adaptive-prototype/testQueries.ts';
+} from '../../src/adaptive/testQueries.ts';
 
 function entry(queryId: string, overrides: Record<string, unknown> = {}) {
   return {

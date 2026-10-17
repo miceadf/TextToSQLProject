@@ -1,8 +1,8 @@
 import { it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { copyDictionaries, describeDictionaryCopy, fetchDictionarySources, parseDictionarySources } from '../../src/adaptive-prototype/dictionaryCopy.ts';
-import { PostgresRegistrationClientError, type PgFetchLike } from '../../src/adaptive-prototype/postgresRegistration.ts';
+import { copyDictionaries, describeDictionaryCopy, fetchDictionarySources, parseDictionarySources } from '../../src/adaptive/dictionaryCopy.ts';
+import { PostgresRegistrationClientError, type PgFetchLike } from '../../src/adaptive/postgresRegistration.ts';
 
 const version = 'postgres-dictionary-copy-v1';
 const sources = [{ database_id: 'legacy-view', label: 'Legacy', fields: { 'Department.name': 1 } },
@@ -48,7 +48,7 @@ it('rejects malformed counts, reason codes and mismatched databases', async () =
 });
 
 it('panel offers a source selector, requires reviewer and refreshes the dictionary after copying', () => {
-  const panel = readFileSync(new URL('../../src/adaptive-prototype/ValueDictionaryPanel.tsx', import.meta.url), 'utf8');
+  const panel = readFileSync(new URL('../../src/adaptive/ValueDictionaryPanel.tsx', import.meta.url), 'utf8');
   assert.match(panel, /다른 DB 사전 가져오기/);
   assert.match(panel, /sources\.map/);
   assert.match(panel, /sourceId === '' \|\| reviewer\.trim\(\) === ''/);

@@ -1,3 +1,4 @@
+// Clarification API contracts and strict response validation for the demo flow.
 export const START_PATH = '/api/adaptive/v1/clarifications/start';
 export const SUBMIT_PATH = '/api/adaptive/v1/clarifications/submit';
 export const HTTP_VERSION = 'clarification-http-v1';

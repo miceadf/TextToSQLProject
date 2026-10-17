@@ -10,7 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.adaptive.api.review_publish import COMPARE_PATH
-from backend.adaptive.api.synthetic_prototype import (
+from backend.adaptive.api.app_factory import (
     create_synthetic_clarification_prototype,
     set_private_repository_root_for_tests,
 )

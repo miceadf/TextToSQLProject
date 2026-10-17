@@ -1,3 +1,9 @@
+"""스키마 연결 제안·검토 초안·게시 profile의 입출력 계약.
+
+후보와 근거는 제안에, 사람의 결정은 초안에, 실행할 연결은 게시본에 담는다.
+각 기록의 ontology 버전을 보존하며 게시 가능 여부는 review 서비스가 판단한다.
+"""
+
 from __future__ import annotations
 
 from datetime import datetime

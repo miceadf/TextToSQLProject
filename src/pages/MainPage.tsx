@@ -1,4 +1,4 @@
-import { adminStyles, disabledTitle } from '../adaptive-prototype/adminStyles.ts';
+import { adminStyles, disabledTitle } from '../adaptive/adminStyles.ts';
 import { useEffect, useMemo, useRef, useState } from 'react'
 import ChatPopup from '../components/ChatPopup'
 import CourseTable from '../components/CourseTable'
@@ -8,8 +8,8 @@ import {
   CatalogClientError,
   getCatalog,
   listDatabases,
-} from '../adaptive-prototype/catalogClient.ts'
-import type { CatalogFetchLike } from '../adaptive-prototype/catalogClient.ts'
+} from '../adaptive/catalogClient.ts'
+import type { CatalogFetchLike } from '../adaptive/catalogClient.ts'
 import {
   CATALOG_GENERIC_MESSAGE,
   CATALOG_CONTRACT_MESSAGE,
@@ -27,7 +27,7 @@ import {
   shouldResetCourseUi,
   writeStoredDatabaseId,
   type RegistryDatabase,
-} from '../adaptive-prototype/databases.ts'
+} from '../adaptive/databases.ts'
 import {
   PROPOSER_LABELS,
   SQLITE_LABEL_INPUT_MESSAGE,
@@ -37,15 +37,15 @@ import {
   uploadSqliteDatabase,
   type SqliteUploadStatus,
   type SqliteUploadSuccess,
-} from '../adaptive-prototype/sqliteUpload.ts'
-import MappingReviewPanel from '../adaptive-prototype/MappingReviewPanel.tsx'
-import type { RegisteredPostgres } from '../adaptive-prototype/postgresRegistration.ts'
-import PostgresRegistrationPanel from '../adaptive-prototype/PostgresRegistrationPanel.tsx'
-import { chatTargetFor } from '../adaptive-prototype/chatQuery.ts'
-import SchemaComparePanel from '../adaptive-prototype/SchemaComparePanel.tsx'
+} from '../adaptive/sqliteUpload.ts'
+import MappingReviewPanel from '../adaptive/MappingReviewPanel.tsx'
+import type { RegisteredPostgres } from '../adaptive/postgresRegistration.ts'
+import PostgresRegistrationPanel from '../adaptive/PostgresRegistrationPanel.tsx'
+import { chatTargetFor } from '../adaptive/chatQuery.ts'
+import SchemaComparePanel from '../adaptive/SchemaComparePanel.tsx'
 import { coursesApi } from '../services/api'
 import type { Course } from '../types/course'
-import { isStaleResponse, nextOperation } from '../adaptive-prototype/state.ts'
+import { isStaleResponse, nextOperation } from '../adaptive/state.ts'
 import { cn } from '../utils/cn'
 import { courseColor } from '../utils/courseColors'
 import { apiCourseToCourse } from '../utils/courseMapper'

@@ -1,3 +1,4 @@
+// PostgreSQL registration API client and response validation for the admin screen.
 // Phase 8-15: register PostgreSQL schemas from server-owned connections.
 // The browser only sees connection IDs and labels; DSNs stay on the server.
 import { DATABASE_ID_INPUT_MESSAGE, isDatabaseId, isReservedDatabaseId, RESERVED_DATABASE_ID_MESSAGE } from './databases.ts';

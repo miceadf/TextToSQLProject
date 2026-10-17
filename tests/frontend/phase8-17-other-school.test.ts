@@ -5,12 +5,12 @@ import {
   publishReview,
   toReviewMessage,
   type ReviewFetchLike,
-} from '../../src/adaptive-prototype/mappingReview.ts';
+} from '../../src/adaptive/mappingReview.ts';
 import {
   PostgresRegistrationClientError,
   toPostgresMessage,
-} from '../../src/adaptive-prototype/postgresRegistration.ts';
-import { catalogToCourses, parseCatalogResponse } from '../../src/adaptive-prototype/databases.ts';
+} from '../../src/adaptive/postgresRegistration.ts';
+import { catalogToCourses, parseCatalogResponse } from '../../src/adaptive/databases.ts';
 
 function blocked(fields: string[]): ReviewFetchLike {
   return async () => ({

@@ -9,7 +9,7 @@ import {
   toActivationMessage,
   type ReviewFetchInit,
   type ReviewFetchLike,
-} from '../../src/adaptive-prototype/mappingReview.ts';
+} from '../../src/adaptive/mappingReview.ts';
 
 function version(n: number, overrides: Record<string, unknown> = {}) {
   return {

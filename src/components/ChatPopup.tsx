@@ -10,8 +10,8 @@ import {
   fetchChatModels,
   postChatQuery,
   QUERYIR_TIME_GUIDE,
-} from '../adaptive-prototype/chatQuery.ts'
-import type { ChatModelOption, ChatTarget } from '../adaptive-prototype/chatQuery.ts'
+} from '../adaptive/chatQuery.ts'
+import type { ChatModelOption, ChatTarget } from '../adaptive/chatQuery.ts'
 import { getAccessToken } from '../services/apiClient'
 import type { Course, CourseDetail } from '../types/course'
 import { cn } from '../utils/cn'

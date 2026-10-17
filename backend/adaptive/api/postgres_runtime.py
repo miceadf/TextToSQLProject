@@ -304,6 +304,7 @@ _TEXT_TYPE_PATTERN = re.compile(
     r"^(?:character varying|varchar|character|char|bpchar|text)(?:\(\d{1,5}\))?$"
 )
 # Phase 8-21: period numbers.
+# Restrict period-number time mappings to built-in integer column types.
 _INTEGER_TYPE_PATTERN = re.compile(r"^(?:integer|int|int2|int4|int8|smallint|bigint)$")
 # Values that identify a row in results (the chat's course key and codes)
 # must reach the user unchanged, so they cannot carry a value dictionary.

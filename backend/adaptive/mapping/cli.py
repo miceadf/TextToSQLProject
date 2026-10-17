@@ -1,3 +1,9 @@
+"""파일 기반 연결 제안→검토→게시 작업을 제공하는 관리자 CLI.
+
+명령 인자와 JSON catalog·제안·ontology를 받아 review 서비스와 저장소를 호출한다.
+검토 상태·게시 결과를 JSON으로 출력하며 모델을 호출해 제안을 생성하지는 않는다.
+"""
+
 from __future__ import annotations
 
 import argparse

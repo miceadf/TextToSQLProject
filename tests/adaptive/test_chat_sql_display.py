@@ -73,7 +73,7 @@ def test_answers_without_execution_carry_no_sql(output: Any) -> None:
 
 class _App:
     class state:  # noqa: N801 - mimics FastAPI app.state
-        synthetic_prototype_cleanup = None
+        adaptive_app_cleanup = None
 
 
 @pytest.mark.parametrize(("env", "expected"), [("", True), ("SHOW_SQL=1\n", True), ("SHOW_SQL=0\n", False)])
@@ -100,7 +100,7 @@ def test_launcher_shows_sql_unless_turned_off(
 
 
 def test_cli_option_turns_the_display_on(monkeypatch: pytest.MonkeyPatch) -> None:
-    from backend.adaptive.api import synthetic_prototype as proto
+    from backend.adaptive.api import app_factory as proto
 
     apps: list[Any] = []
 
@@ -111,7 +111,7 @@ def test_cli_option_turns_the_display_on(monkeypatch: pytest.MonkeyPatch) -> Non
 
     monkeypatch.setitem(sys.modules, "uvicorn", FakeUvicorn())
     assert proto.main([]) == 0 and proto.main(["--show-sql"]) == 0
-    assert [app.state.synthetic_prototype_chat_sql_shown for app in apps] == [False, True]
+    assert [app.state.adaptive_app_chat_sql_shown for app in apps] == [False, True]
 
 
 def test_backslashes_render_the_same_under_any_string_setting() -> None:

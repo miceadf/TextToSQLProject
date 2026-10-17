@@ -9,8 +9,8 @@ import {
   registerPostgresSchema,
   toPostgresMessage,
   type PgFetchLike,
-} from '../../src/adaptive-prototype/postgresRegistration.ts';
-import { ignoreReviewField } from '../../src/adaptive-prototype/mappingReview.ts';
+} from '../../src/adaptive/postgresRegistration.ts';
+import { ignoreReviewField } from '../../src/adaptive/mappingReview.ts';
 
 function summary(overrides: Record<string, unknown> = {}) {
   return {

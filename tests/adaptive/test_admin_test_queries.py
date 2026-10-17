@@ -17,7 +17,7 @@ from backend.adaptive.api.admin_test_queries import (
     _sort_key,
     _tagged,
 )
-from backend.adaptive.api.synthetic_prototype import (
+from backend.adaptive.api.app_factory import (
     create_synthetic_clarification_prototype,
     set_private_repository_root_for_tests,
 )

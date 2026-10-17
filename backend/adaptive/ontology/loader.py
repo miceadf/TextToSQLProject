@@ -1,3 +1,9 @@
+"""UTF-8 YAML ontology 파일을 읽고 검증된 DomainOntology를 반환한다.
+
+기본 파일에는 역사적 정의도 보존되며 버전별 활성 항목 선택은 계약 객체가 담당한다.
+현재 v3에서 사용 중단한 개설 연도 정의도 파일에서 삭제하지 않는다.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path

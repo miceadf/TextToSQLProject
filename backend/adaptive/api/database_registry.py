@@ -1,8 +1,8 @@
-"""Synthetic active-database registry and canonical course catalog (synthetic-only).
+"""Server-owned database registry and canonical course catalog.
 
-Phase 6-16 server-owned registry for the clarification prototype:
+Lists synthetic SQLite databases and published PostgreSQL databases:
 
-- exactly the server registers the synthetic databases (flat + legacy);
+- the server owns database registration and runtime contexts;
 - callers cannot inject file paths, mappings, SQL, or physical identifiers;
 - the catalog reads through the existing read-only executor plus the
   Published mapping / safe compiler path and converts rows to one
@@ -10,9 +10,9 @@ Phase 6-16 server-owned registry for the clarification prototype:
 - unknown databases, mapping/schema drift, and execution failures close
   with fixed redacted error codes only.
 
-No legacy import, no PostgreSQL, no Ollama, no .env, no external network,
-no stdout/logs. Nothing here reflects request text, paths, SQL, rows, or
-exception text.
+PostgreSQL catalogs use the published runtime context and read-only
+executor. Errors never reflect request text, paths, SQL, rows, or exception
+text in stdout/logs or error responses.
 """
 
 from __future__ import annotations

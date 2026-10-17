@@ -12,7 +12,7 @@ import {
   postChatQuery,
   type ChatGetLike,
   type ChatPostLike,
-} from '../../src/adaptive-prototype/chatQuery.ts';
+} from '../../src/adaptive/chatQuery.ts';
 
 const LISTING = {
   version: CHAT_MODELS_VERSION,

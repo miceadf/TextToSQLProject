@@ -13,11 +13,11 @@ from fastapi.testclient import TestClient
 from backend.adaptive.api import dev_launcher
 from backend.adaptive.api.chat_query import ChatQueryError, ChatQueryErrorCode, answer_chat_query
 from backend.adaptive.api.review_publish import REVIEW_PATH
-from backend.adaptive.api.synthetic_prototype import (
+from backend.adaptive.api.app_factory import (
     create_synthetic_clarification_prototype,
     set_private_repository_root_for_tests,
 )
-from backend.adaptive.api.synthetic_registry import DATABASES_PATH
+from backend.adaptive.api.database_registry import DATABASES_PATH
 from backend.adaptive.mapping.transforms import FieldTransform
 from backend.adaptive.ontology import DataType
 from backend.adaptive.registration import postgres_registrations as pg
@@ -568,7 +568,7 @@ def test_transforms_follow_type_and_stored_values(transform, declared, data_type
 
 class _App:
     class state:  # noqa: N801 - mimics FastAPI app.state
-        synthetic_prototype_cleanup = None
+        adaptive_app_cleanup = None
 
 
 def test_launcher_reloads_published_registrations(
@@ -648,7 +648,7 @@ def test_ignore_on_an_sqlite_review_blocks_its_publish(tmp_path: Path) -> None:
 
 def test_the_clarification_loader_shares_the_live_set(client_repo) -> None:
     _client, _repo_path, app, _executor = client_repo
-    assert app.state.synthetic_prototype_loader._pg_contexts is app.state.synthetic_postgres_contexts
+    assert app.state.adaptive_app_loader._pg_contexts is app.state.synthetic_postgres_contexts
 
 
 def test_live_publishing_respects_the_database_limit(client_repo) -> None:

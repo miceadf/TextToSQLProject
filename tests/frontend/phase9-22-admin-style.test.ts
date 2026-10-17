@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { it } from 'node:test';
 import ts from 'typescript';
-import { disabledTitle } from '../../src/adaptive-prototype/adminStyles.ts';
-import { focusReviewer, readReviewer, REVIEWER_STORAGE_KEY, writeReviewer } from '../../src/adaptive-prototype/reviewerMemory.ts';
+import { disabledTitle } from '../../src/adaptive/adminStyles.ts';
+import { focusReviewer, readReviewer, REVIEWER_STORAGE_KEY, writeReviewer } from '../../src/adaptive/reviewerMemory.ts';
 
 function withStorage(descriptor: PropertyDescriptor, run: () => void) {
   const original = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
@@ -67,7 +67,7 @@ it('shows only a current blocking reason and follows condition priority', () => 
 
 it('wires shared reviewer hints and scoped targets for all review tools', () => {
   for (const name of ['MappingReviewPanel', 'ValueDictionaryPanel', 'ExtensionFieldPanel', 'TestQueryPanel']) {
-    const source = readFileSync(`src/adaptive-prototype/${name}.tsx`, 'utf8');
+    const source = readFileSync(`src/adaptive/${name}.tsx`, 'utf8');
     assert.match(source, /reviewer\.trim\(\) === '' \? <ReviewerHint \/>/);
     assert.doesNotMatch(source, /먼저 검토자 이름을 넣어 주세요/);
     if (name !== 'TestQueryPanel') {
@@ -77,7 +77,7 @@ it('wires shared reviewer hints and scoped targets for all review tools', () => 
       assert.match(source, /data-reviewer-input value=\{reviewer\}/);
     }
   }
-  const hint = readFileSync('src/adaptive-prototype/ReviewerHint.tsx', 'utf8');
+  const hint = readFileSync('src/adaptive/ReviewerHint.tsx', 'utf8');
   assert.match(hint, /type="button"/);
   assert.match(hint, /closest\('\[data-reviewer-scope\]'\)/);
   assert.match(hint, /맨 위 ‘검토자’ 칸에 이름을 넣어 주세요/);
@@ -87,7 +87,7 @@ it('uses shared styles and explains every explicitly disabled admin button', () 
   const files = ['PostgresRegistrationPanel', 'MappingReviewPanel', 'MappingReviewRow', 'ValueDictionaryPanel',
     'CodeTableImport', 'ExtensionFieldPanel', 'TestQueryPanel', 'SchemaComparePanel'];
   for (const name of files) {
-    const source = readFileSync(`src/adaptive-prototype/${name}.tsx`, 'utf8');
+    const source = readFileSync(`src/adaptive/${name}.tsx`, 'utf8');
     const ast = ts.createSourceFile(name, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
     function visit(node: ts.Node) {
       if (ts.isJsxOpeningElement(node) && node.tagName.getText(ast) === 'button') {

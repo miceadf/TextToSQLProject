@@ -9,7 +9,7 @@ import pytest
 
 import backend.adaptive.api.ollama_prototype_smoke as smoke
 import backend.adaptive.api.ollama_startup as startup
-import backend.adaptive.api.synthetic_prototype as proto
+import backend.adaptive.api.app_factory as proto
 from tests.adaptive.test_ollama_constraint_provider import CountingTransport, _smart_transport
 
 
@@ -230,13 +230,13 @@ def test_check_mode_assembles_without_calls(monkeypatch: Any, capsys: Any) -> No
 
     def _factory(**kwargs: Any) -> Any:
         app = real_factory(**kwargs)
-        inner = app.state.synthetic_prototype_cleanup
+        inner = app.state.adaptive_app_cleanup
 
         def _cleanup() -> None:
             cleaned.append(True)
             inner()
 
-        app.state.synthetic_prototype_cleanup = _cleanup
+        app.state.adaptive_app_cleanup = _cleanup
         return app
 
     monkeypatch.setattr(smoke, "create_synthetic_clarification_prototype", _factory)
@@ -255,13 +255,13 @@ def test_cleanup_runs_when_smoke_raises(monkeypatch: Any, capsys: Any) -> None:
 
     def _factory(**kwargs: Any) -> Any:
         app = real_factory(**kwargs)
-        inner = app.state.synthetic_prototype_cleanup
+        inner = app.state.adaptive_app_cleanup
 
         def _cleanup() -> None:
             cleaned.append(True)
             inner()
 
-        app.state.synthetic_prototype_cleanup = _cleanup
+        app.state.adaptive_app_cleanup = _cleanup
         return app
 
     def _boom(*_a: Any, **_k: Any) -> Any:

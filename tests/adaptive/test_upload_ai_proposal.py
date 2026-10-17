@@ -21,12 +21,12 @@ from backend.adaptive.api.registration_upload import (
     register_sqlite_upload_routes,
 )
 from backend.adaptive.api.review_publish import REVIEW_PATH
-from backend.adaptive.api.synthetic_prototype import (
+from backend.adaptive.api.app_factory import (
     SYNTHETIC_PROTOTYPE_DATABASE_ID,
     create_synthetic_clarification_prototype,
     set_private_repository_root_for_tests,
 )
-from backend.adaptive.api.synthetic_registry import CANONICAL_SELECT, CATALOG_PATH
+from backend.adaptive.api.database_registry import CANONICAL_SELECT, CATALOG_PATH
 from backend.adaptive.catalog import SQLiteAdapter
 from backend.adaptive.evaluation import ai_mapping
 from backend.adaptive.evaluation.variant_specs import CANONICAL_FIELDS, variant
@@ -456,14 +456,14 @@ def test_cli_mapping_model_is_separate_from_chat(
 ) -> None:
     import sys
 
-    from backend.adaptive.api import synthetic_prototype as proto
+    from backend.adaptive.api import app_factory as proto
 
     fake = _FakeUvicorn()
     monkeypatch.setitem(sys.modules, "uvicorn", fake)
     assert proto.main(argv) == 0
     [app] = fake.apps
-    assert app.state.synthetic_prototype_mapping_proposer_kind == mapping_kind
-    assert app.state.synthetic_prototype_provider_kind == chat_kind
+    assert app.state.adaptive_app_mapping_proposer_kind == mapping_kind
+    assert app.state.adaptive_app_provider_kind == chat_kind
 
 
 @pytest.mark.parametrize(
@@ -477,7 +477,7 @@ def test_cli_mapping_model_is_separate_from_chat(
 def test_cli_rejects_invalid_mapping_settings(monkeypatch: pytest.MonkeyPatch, argv: list[str]) -> None:
     import sys
 
-    from backend.adaptive.api import synthetic_prototype as proto
+    from backend.adaptive.api import app_factory as proto
 
     fake = _FakeUvicorn()
     monkeypatch.setitem(sys.modules, "uvicorn", fake)

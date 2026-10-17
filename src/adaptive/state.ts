@@ -1,3 +1,4 @@
+// Clarification demo state transitions: start, choose, submit, cancel, and result.
 export type FlowStatus =
   | 'idle'
   | 'starting'

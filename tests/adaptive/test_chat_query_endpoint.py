@@ -14,7 +14,7 @@ from backend.adaptive.api.chat_query import (
     CHAT_QUERY_VERSION,
     register_chat_query_routes,
 )
-from backend.adaptive.api.synthetic_prototype import (
+from backend.adaptive.api.app_factory import (
     SYNTHETIC_PROTOTYPE_DATABASE_ID,
     create_synthetic_clarification_prototype,
 )

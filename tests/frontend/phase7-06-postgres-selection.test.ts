@@ -10,10 +10,10 @@ import {
   readStoredDatabaseId,
   resolveDatabaseSelection,
   writeStoredDatabaseId,
-} from '../../src/adaptive-prototype/databases.ts';
-import { getCatalog } from '../../src/adaptive-prototype/catalogClient.ts';
-import type { CatalogFetchLike } from '../../src/adaptive-prototype/catalogClient.ts';
-import { startClarification } from '../../src/adaptive-prototype/client.ts';
+} from '../../src/adaptive/databases.ts';
+import { getCatalog } from '../../src/adaptive/catalogClient.ts';
+import type { CatalogFetchLike } from '../../src/adaptive/catalogClient.ts';
+import { startClarification } from '../../src/adaptive/client.ts';
 
 const PG_ID = 'synth-pg-main';
 const FLAT_ID = 'synth-clarification-prototype';
@@ -221,7 +221,7 @@ describe('phase7-06 MainPage and prototype selection regression', () => {
   });
 
   it('prototype page revalidates the URL id against strict registry membership', () => {
-    const page = readFileSync('src/adaptive-prototype/AdaptivePrototypePage.tsx', 'utf-8');
+    const page = readFileSync('src/adaptive/ClarificationDemoPage.tsx', 'utf-8');
     assert.ok(page.includes('parsePrototypeDatabaseParam(window.location.search)'));
     assert.ok(page.includes('await listDatabases(registryFetch'));
     assert.ok(page.includes('registry.find((entry) => entry.database_id === wanted)'));

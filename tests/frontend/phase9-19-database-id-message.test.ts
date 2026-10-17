@@ -5,20 +5,20 @@ import {
   DATABASE_ID_INPUT_MESSAGE,
   registrationDatabaseIdMessage,
   RESERVED_DATABASE_ID_MESSAGE,
-} from '../../src/adaptive-prototype/databases.ts';
+} from '../../src/adaptive/databases.ts';
 import {
   PostgresRegistrationClientError,
   POSTGRES_REGISTER_VERSION,
   registerPostgresSchema,
   toPostgresMessage,
-} from '../../src/adaptive-prototype/postgresRegistration.ts';
+} from '../../src/adaptive/postgresRegistration.ts';
 import {
   SqliteUploadClientError,
   SQLITE_UPLOAD_VERSION,
   UPLOAD_CONTRACT_MESSAGE,
   uploadSqliteDatabase,
   toUploadMessage,
-} from '../../src/adaptive-prototype/sqliteUpload.ts';
+} from '../../src/adaptive/sqliteUpload.ts';
 
 const idMessage = 'ID는 영문 소문자·숫자·하이픈(-)만 쓸 수 있고, 첫 글자는 영문 소문자나 숫자여야 합니다(64자 이내). 예: legacy-pg';
 const file = new Blob(['fake sqlite']);
@@ -117,7 +117,7 @@ it('keeps malformed server responses and unreadable JSON as contract errors with
 it('both forms always show ID guidance, report invalid input inline, and disable registration', () => {
   assert.equal(DATABASE_ID_INPUT_MESSAGE, idMessage);
   assert.equal(registrationDatabaseIdMessage('legacy'), RESERVED_DATABASE_ID_MESSAGE);
-  const pg = readFileSync(new URL('../../src/adaptive-prototype/PostgresRegistrationPanel.tsx', import.meta.url), 'utf8');
+  const pg = readFileSync(new URL('../../src/adaptive/PostgresRegistrationPanel.tsx', import.meta.url), 'utf8');
   const main = readFileSync(new URL('../../src/pages/MainPage.tsx', import.meta.url), 'utf8');
   assert.match(pg, /aria-describedby="postgres-id-guidance"/);
   assert.match(pg, /\{DATABASE_ID_INPUT_MESSAGE\}/);

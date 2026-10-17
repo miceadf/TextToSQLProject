@@ -139,7 +139,7 @@ def test_the_prototype_takes_choices_and_serves_the_default_to_clarification() -
         build_startup_ollama_model,
         parse_ollama_startup_config,
     )
-    from backend.adaptive.api.synthetic_prototype import create_synthetic_clarification_prototype
+    from backend.adaptive.api.app_factory import create_synthetic_clarification_prototype
 
     def build(tag: str, request_format: str) -> Any:
         config = parse_ollama_startup_config(tag, None, "30", request_format)
@@ -153,10 +153,10 @@ def test_the_prototype_takes_choices_and_serves_the_default_to_clarification() -
         assert [item["id"] for item in client.get(CHAT_MODELS_PATH).json()["models"]] == [
             "general", "legacy-tuned"
         ]
-        assert app.state.synthetic_prototype_provider_kind == "ollama"
-        assert app.state.synthetic_prototype_provider._model is general  # noqa: SLF001
+        assert app.state.adaptive_app_provider_kind == "ollama"
+        assert app.state.adaptive_app_provider._model is general  # noqa: SLF001
     finally:
-        app.state.synthetic_prototype_cleanup()
+        app.state.adaptive_app_cleanup()
     with pytest.raises(RuntimeError):
         create_synthetic_clarification_prototype(ollama_model=general, chat_models=choices(general, tuned))
     with pytest.raises(RuntimeError):

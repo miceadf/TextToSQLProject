@@ -19,7 +19,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import backend.adaptive.api.ollama_startup as startup
-import backend.adaptive.api.synthetic_prototype as proto
+import backend.adaptive.api.app_factory as proto
 from backend.adaptive.api.clarification_http import SUBMIT_PATH
 from backend.adaptive.api.ollama_startup import (
     DEFAULT_OLLAMA_BASE_URL,
@@ -30,7 +30,7 @@ from backend.adaptive.api.ollama_startup import (
     build_startup_ollama_model,
     parse_ollama_startup_config,
 )
-from backend.adaptive.api.synthetic_prototype import (
+from backend.adaptive.api.app_factory import (
     SYNTHETIC_LEGACY_DATABASE_ID,
     SYNTHETIC_PROTOTYPE_DATABASE_ID,
     create_synthetic_clarification_prototype,
@@ -429,7 +429,7 @@ class _FakeApp:
         self.cleaned = cleaned
 
         class _State:
-            synthetic_prototype_cleanup = staticmethod(lambda: cleaned.append(True))
+            adaptive_app_cleanup = staticmethod(lambda: cleaned.append(True))
 
         self.state = _State()
 
@@ -562,8 +562,8 @@ def test_cli_real_factory_end_to_end_with_synthetic_transport(
     results: dict[str, Any] = {}
 
     def on_run(app: Any) -> None:
-        assert app.state.synthetic_prototype_provider_kind == "ollama"
-        assert isinstance(app.state.synthetic_prototype_provider, OllamaConstraintProvider)
+        assert app.state.adaptive_app_provider_kind == "ollama"
+        assert isinstance(app.state.adaptive_app_provider, OllamaConstraintProvider)
         assert transport.calls == []
         client = TestClient(app, raise_server_exceptions=False)
         data = _start(client, SYNTHETIC_LEGACY_DATABASE_ID, f"{QUESTION_BASE} 강의 목록 보여줘").json()
@@ -605,9 +605,9 @@ def test_cli_real_factory_end_to_end_with_synthetic_transport(
 
 def test_factory_provider_kind_default_and_global_app() -> None:
     app = create_synthetic_clarification_prototype()
-    assert app.state.synthetic_prototype_provider_kind == "deterministic"
-    assert type(app.state.synthetic_prototype_provider).__name__ == "_FixedConstraintProvider"
-    assert proto.app.state.synthetic_prototype_provider_kind == "deterministic"
+    assert app.state.adaptive_app_provider_kind == "deterministic"
+    assert type(app.state.adaptive_app_provider).__name__ == "_FixedConstraintProvider"
+    assert proto.app.state.adaptive_app_provider_kind == "deterministic"
 
 
 def test_startup_model_shares_provider_across_sqlite_and_postgres() -> None:
@@ -622,7 +622,7 @@ def test_startup_model_shares_provider_across_sqlite_and_postgres() -> None:
         postgres_executors={PG_DATABASE_ID: executor},
         ollama_model=model,
     )
-    assert app.state.synthetic_prototype_provider_kind == "ollama"
+    assert app.state.adaptive_app_provider_kind == "ollama"
     assert transport.calls == []
     client = TestClient(app, raise_server_exceptions=False)
     outputs = {}
@@ -714,7 +714,7 @@ def test_config_request_format_contract() -> None:
 
 def test_builder_applies_request_format_once() -> None:
     from backend.adaptive.harness import HarnessRequest
-    from backend.adaptive.api.synthetic_prototype import _build_mapping, _build_ontology
+    from backend.adaptive.api.app_factory import _build_mapping, _build_ontology
 
     request = HarnessRequest(request_id="r710", database_id=SYNTHETIC_PROTOTYPE_DATABASE_ID, question="합성 질문 P710")
     for fmt, raw in (("model-template", None), ("alpaca-raw-no-system-v1", True)):
@@ -786,7 +786,7 @@ def test_startup_builder_applies_format_exactly_once_via_model() -> None:
     model = build_startup_ollama_model(config, transport=transport)
     assert model.request_format == "alpaca-raw-no-system-v1"
     from backend.adaptive.harness import HarnessRequest
-    from backend.adaptive.api.synthetic_prototype import _build_mapping, _build_ontology
+    from backend.adaptive.api.app_factory import _build_mapping, _build_ontology
 
     model.generate_ir(
         HarnessRequest(request_id="r711", database_id=SYNTHETIC_PROTOTYPE_DATABASE_ID, question="합성 P711"),

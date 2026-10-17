@@ -7,7 +7,7 @@ import {
   parseHttpError,
   parseStartResponse,
   parseSubmitResponse,
-} from '../../src/adaptive-prototype/contracts.ts';
+} from '../../src/adaptive/contracts.ts';
 
 const TOKEN = 'a'.repeat(43);
 const OPT_A = 'a'.repeat(64);

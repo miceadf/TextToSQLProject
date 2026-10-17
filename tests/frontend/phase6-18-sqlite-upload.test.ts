@@ -14,8 +14,8 @@ import {
   toUploadMessage,
   uploadSqliteDatabase,
   type UploadFetchLike,
-} from '../../src/adaptive-prototype/sqliteUpload.ts';
-import { isStaleResponse, nextOperation } from '../../src/adaptive-prototype/state.ts';
+} from '../../src/adaptive/sqliteUpload.ts';
+import { isStaleResponse, nextOperation } from '../../src/adaptive/state.ts';
 
 function successPayload() {
   return {

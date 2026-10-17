@@ -9,8 +9,10 @@ unsupported are answered as UNSUPPORTED without execution, and so are
 questions naming a concept outside the common ontology that the database
 declares no extension field for (Phase 8-20).
 
-Responses carry canonical course-card keys and semantic labels only: no
-SQL, physical identifier, DSN, or exception text. Nothing is logged.
+Responses carry canonical course-card keys and semantic labels. Phase 8-14:
+the development SQL display option also includes the executed SQL with
+physical identifiers and values filled in for inspection. DSNs and raw
+exception text are not returned. Nothing is logged.
 """
 
 from __future__ import annotations
@@ -51,7 +53,7 @@ from .review_publish import _parse_strict_body, _read_limited_body
 from ..mapping.extensions import DATA_TYPES as EXTENSION_TYPES
 from ..mapping.extensions import dto_key as extension_dto_key
 from ..mapping.extensions import operators_for as extension_operators
-from .synthetic_registry import _REF_TO_DTO_KEY, CARD_FIELDS, is_valid_database_id
+from .database_registry import _REF_TO_DTO_KEY, CARD_FIELDS, is_valid_database_id
 from .chat_models import (
     CHAT_MODELS_PATH,
     CHAT_MODELS_VERSION,

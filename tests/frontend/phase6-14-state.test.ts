@@ -8,7 +8,7 @@ import {
   isStaleResponse,
   nextOperation,
   restartHint,
-} from '../../src/adaptive-prototype/state.ts';
+} from '../../src/adaptive/state.ts';
 
 describe('phase6-14 state helpers', () => {
   it('separates busy, startable, and pending-only actions', () => {

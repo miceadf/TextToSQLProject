@@ -19,11 +19,11 @@ import {
   remapReviewField,
   toReviewMessage,
   type ReviewFetchLike,
-} from '../../src/adaptive-prototype/mappingReview.ts';
+} from '../../src/adaptive/mappingReview.ts';
 import {
   parseDatabaseRegistry,
-} from '../../src/adaptive-prototype/databases.ts';
-import { isStaleResponse, nextOperation } from '../../src/adaptive-prototype/state.ts';
+} from '../../src/adaptive/databases.ts';
+import { isStaleResponse, nextOperation } from '../../src/adaptive/state.ts';
 
 function detailPayload() {
   return {
@@ -293,7 +293,7 @@ describe('phase6-19 registry private variant', () => {
 
 describe('phase6-19 review panel wiring', () => {
   it('starts review below upload summary without touching active selection', () => {
-    const panel = readFileSync('src/adaptive-prototype/MappingReviewPanel.tsx', 'utf-8');
+    const panel = readFileSync('src/adaptive/MappingReviewPanel.tsx', 'utf-8');
     assert.ok(panel.includes('mapping 검토 시작'));
     assert.ok(panel.includes('operationRef'));
     assert.ok(panel.includes('abortRef'));

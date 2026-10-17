@@ -1,3 +1,9 @@
+"""학교별 물리 schema와 독립된 공통 항목·자료형·연산자의 검증 계약.
+
+활성 항목은 since_version <= v이고 retired_in_version이 없거나 v보다 큰 항목이다.
+현재 v3는 개설 연도를 제외하며 v1·v2 기록은 해당 버전의 항목으로 읽는다.
+"""
+
 from __future__ import annotations
 
 from enum import Enum

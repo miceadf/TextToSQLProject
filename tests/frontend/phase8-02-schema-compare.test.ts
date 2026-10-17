@@ -7,7 +7,7 @@ import {
   parseSchemaComparison,
   toCompareMessage,
   type CompareFetchLike,
-} from '../../src/adaptive-prototype/schemaCompare.ts';
+} from '../../src/adaptive/schemaCompare.ts';
 
 const shape = { declared_type: 'TEXT', affinity: 'TEXT', nullable: false, primary_key_position: 0 };
 

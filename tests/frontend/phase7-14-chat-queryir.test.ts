@@ -11,8 +11,8 @@ import {
   parseChatQueryResponse,
   postChatQuery,
   type ChatPostLike,
-} from '../../src/adaptive-prototype/chatQuery.ts';
-import { LEGACY_SELECTION_ID } from '../../src/adaptive-prototype/databases.ts';
+} from '../../src/adaptive/chatQuery.ts';
+import { LEGACY_SELECTION_ID } from '../../src/adaptive/databases.ts';
 
 const DB = 'legacy-view';
 const COLUMNS = [

@@ -9,7 +9,7 @@ import pytest
 from backend.adaptive.api import legacy_view_profile as lvp
 from backend.adaptive.api.chat_query import answer_chat_query
 from backend.adaptive.api.postgres_runtime import PostgresRuntimeError, build_validated_contexts
-from backend.adaptive.api.synthetic_registry import _REF_TO_DTO_KEY, CANONICAL_SELECT, CARD_FIELDS
+from backend.adaptive.api.database_registry import _REF_TO_DTO_KEY, CANONICAL_SELECT, CARD_FIELDS
 from backend.adaptive.ontology import load_default_ontology
 from backend.adaptive.ontology.contracts import DomainOntology
 from backend.adaptive.api.postgres_runtime import PostgresRuntimeProfile

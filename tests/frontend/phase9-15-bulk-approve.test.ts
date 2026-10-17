@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { bulkApprovalConfirmation, runBulkApproval, selectBulkApproval } from '../../src/adaptive-prototype/bulkApprove.ts';
-import { getReviewErrorMessage, type ReviewDetail, type ReviewFetchLike, type ReviewField } from '../../src/adaptive-prototype/mappingReview.ts';
-import { reviewFieldName } from '../../src/adaptive-prototype/reviewFieldName.ts';
+import { bulkApprovalConfirmation, runBulkApproval, selectBulkApproval } from '../../src/adaptive/bulkApprove.ts';
+import { getReviewErrorMessage, type ReviewDetail, type ReviewFetchLike, type ReviewField } from '../../src/adaptive/mappingReview.ts';
+import { reviewFieldName } from '../../src/adaptive/reviewFieldName.ts';
 
 function field(name: string, decision = 'PENDING', index = 4): ReviewField {
   return {

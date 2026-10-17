@@ -98,7 +98,7 @@ def test_the_screen_knows_every_reason_code() -> None:
 
     from backend.adaptive.registration.postgres_registrations import BLOCK_REASONS
 
-    source = Path("src/adaptive-prototype/mappingReview.ts").read_text(encoding="utf-8")
+    source = Path("src/adaptive/mappingReview.ts").read_text(encoding="utf-8")
     block = source[source.index("PUBLISH_BLOCK_REASONS"):source.index("];", source.index("PUBLISH_BLOCK_REASONS"))]
     assert set(re.findall(r"'([A-Z_]+)'", block)) == set(BLOCK_REASONS)
     for reason in BLOCK_REASONS:

@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseRegistrations } from '../../src/adaptive-prototype/postgresRegistration.ts';
+import { parseRegistrations } from '../../src/adaptive/postgresRegistration.ts';
 
 const item = {
   database_id: 'campus-pg', label: 'Campus', source_id: 'default', schema: 'public',

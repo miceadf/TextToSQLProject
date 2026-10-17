@@ -1,3 +1,9 @@
+"""연결 제안을 검토 초안으로 바꾸고 사람의 승인·변경·제외 결정을 적용한다.
+
+초안·catalog·ontology를 대조해 게시 문제를 검사하고 PublishedMappingProfile을 만든다.
+기록 버전의 항목을 확인하되 현재 ontology에서 사용 중단된 항목은 게시 연결에서 제외한다.
+"""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone

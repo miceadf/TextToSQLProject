@@ -1,3 +1,4 @@
+// Admin mapping review API client and strict parsers for decisions and published versions.
 import { isDatabaseId } from './databases.ts';
 
 export const MAPPING_REVIEW_PATH = '/api/adaptive/v1/registrations/review';

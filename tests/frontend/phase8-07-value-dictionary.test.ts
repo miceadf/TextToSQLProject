@@ -7,7 +7,7 @@ import {
   setDictionaryEntry,
   suggestAliases,
   type PgFetchLike,
-} from '../../src/adaptive-prototype/postgresRegistration.ts';
+} from '../../src/adaptive/postgresRegistration.ts';
 
 const DB = 'campus-pg';
 

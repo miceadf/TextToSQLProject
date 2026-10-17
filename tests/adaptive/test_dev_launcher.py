@@ -160,7 +160,7 @@ def test_one_chat_model_failing_keeps_the_other(
 
 class _App:
     class state:  # noqa: N801 - mimics FastAPI app.state
-        synthetic_prototype_cleanup = None
+        adaptive_app_cleanup = None
 
 
 def test_main_degrades_legacy_view_and_never_prints_values(

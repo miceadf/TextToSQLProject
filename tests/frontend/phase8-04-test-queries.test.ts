@@ -10,7 +10,7 @@ import {
   runTestQuery,
   toTestQueryMessage,
   type TestQueryFetchLike,
-} from '../../src/adaptive-prototype/testQueries.ts';
+} from '../../src/adaptive/testQueries.ts';
 
 function result(overrides: Record<string, unknown> = {}) {
   return {

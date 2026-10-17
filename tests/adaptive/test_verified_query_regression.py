@@ -13,11 +13,11 @@ from backend.adaptive.api.admin_test_queries import (
     TEST_QUERIES,
     VERIFIED_QUERIES_PATH,
 )
-from backend.adaptive.api.synthetic_prototype import (
+from backend.adaptive.api.app_factory import (
     create_synthetic_clarification_prototype,
     set_private_repository_root_for_tests,
 )
-from backend.adaptive.api.synthetic_registry import CATALOG_PATH
+from backend.adaptive.api.database_registry import CATALOG_PATH
 from backend.adaptive.fixtures.flat import build_flat_database
 from backend.adaptive.fixtures.seed import DEFAULT_SEED
 from backend.adaptive.registration import reviews as review_storage

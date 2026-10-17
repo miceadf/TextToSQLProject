@@ -1,15 +1,11 @@
-"""Synthetic clarification ASGI prototype (synthetic-only, local loopback).
+"""Assemble the adaptive FastAPI app for the local development server.
 
-Assembles the Phase 6-12 ``create_clarification_http_app()`` factory with
-one fully synthetic dependency set so a teammate can reproduce
-start -> option select -> submit -> read-only result over local HTTP.
-
-Not a deployment service. No legacy mount, real data, model server,
-PostgreSQL, UI, external network dependency, or environment-file access
-happens here by default; the CLI serves only on local loopback. Explicit
-CLI options may add server-owned PostgreSQL profiles (Phase 7-05) or a
-loopback-only Ollama QueryIR provider (Phase 7-08); neither is contacted at
-startup.
+The default dependencies use synthetic SQLite databases. The app also
+assembles database registration, mapping review/publication, the course
+catalog, clarification, and QueryIR chat routes for published PostgreSQL
+databases. Explicit CLI options can add server-owned PostgreSQL profiles
+or a loopback-only Ollama QueryIR provider; neither is contacted at startup.
+The CLI serves only on local loopback.
 """
 
 from __future__ import annotations
@@ -50,7 +46,7 @@ from .chat_query import register_chat_query_routes
 from .clarification_http import create_clarification_http_app
 from .registration_upload import register_sqlite_upload_routes
 from .review_publish import register_mapping_review_routes
-from .synthetic_registry import (
+from .database_registry import (
     SyntheticDatabaseRegistry,
     register_synthetic_database_routes,
 )
@@ -482,7 +478,7 @@ def create_synthetic_clarification_prototype(
                 PostgresRuntimeProfile,
                 build_validated_contexts,
             )
-            from .synthetic_registry import MAX_DATABASES
+            from .database_registry import MAX_DATABASES
         except Exception:
             raise RuntimeError(_PROTOTYPE_CREATION_FAILURE) from None
         fixed_ids = frozenset({SYNTHETIC_PROTOTYPE_DATABASE_ID, SYNTHETIC_LEGACY_DATABASE_ID})
@@ -759,28 +755,28 @@ def create_synthetic_clarification_prototype(
         pass
 
     try:
-        app.state.synthetic_prototype_version = SYNTHETIC_CLARIFICATION_PROTOTYPE_VERSION
-        app.state.synthetic_prototype_database_id = SYNTHETIC_PROTOTYPE_DATABASE_ID
-        app.state.synthetic_prototype_legacy_database_id = SYNTHETIC_LEGACY_DATABASE_ID
-        app.state.synthetic_prototype_registry = registry
-        app.state.synthetic_prototype_schema_by_id = dict(schema_by_id)
-        app.state.synthetic_prototype_loader = loader
-        app.state.synthetic_prototype_provider = provider
-        app.state.synthetic_prototype_provider_kind = (
+        app.state.adaptive_app_version = SYNTHETIC_CLARIFICATION_PROTOTYPE_VERSION
+        app.state.adaptive_app_database_id = SYNTHETIC_PROTOTYPE_DATABASE_ID
+        app.state.adaptive_app_legacy_database_id = SYNTHETIC_LEGACY_DATABASE_ID
+        app.state.adaptive_app_registry = registry
+        app.state.adaptive_app_schema_by_id = dict(schema_by_id)
+        app.state.adaptive_app_loader = loader
+        app.state.adaptive_app_provider = provider
+        app.state.adaptive_app_provider_kind = (
             "deterministic" if ollama_model is None else "ollama"
         )
-        app.state.synthetic_prototype_executor = executor
-        app.state.synthetic_prototype_guarded_executor = guarded_executor
-        app.state.synthetic_prototype_schema_fingerprints = dict(expected_fingerprints)
-        app.state.synthetic_prototype_compiler = compiler
-        app.state.synthetic_prototype_policy = sql_policy
-        app.state.synthetic_prototype_coordinator = coordinator
-        app.state.synthetic_prototype_tmpdir = tmp.name
-        app.state.synthetic_prototype_cleanup = _cleanup
+        app.state.adaptive_app_executor = executor
+        app.state.adaptive_app_guarded_executor = guarded_executor
+        app.state.adaptive_app_schema_fingerprints = dict(expected_fingerprints)
+        app.state.adaptive_app_compiler = compiler
+        app.state.adaptive_app_policy = sql_policy
+        app.state.adaptive_app_coordinator = coordinator
+        app.state.adaptive_app_tmpdir = tmp.name
+        app.state.adaptive_app_cleanup = _cleanup
         app.state.synthetic_postgres_database_ids = tuple(sorted(pg_contexts))
         app.state.synthetic_postgres_contexts = pg_contexts
-        app.state.synthetic_prototype_chat_sql_shown = show_chat_sql is True
-        app.state.synthetic_prototype_mapping_proposer_kind = (
+        app.state.adaptive_app_chat_sql_shown = show_chat_sql is True
+        app.state.adaptive_app_mapping_proposer_kind = (
             "rules" if mapping_model is None else "ai"
         )
     except Exception:
@@ -813,7 +809,7 @@ class _StoreOnce(argparse.Action):
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = _StrictArgumentParser(
-        prog="backend.adaptive.api.synthetic_prototype",
+        prog="backend.adaptive.api.app_factory",
         description="Synthetic clarification prototype (local loopback only).",
         allow_abbrev=False,
     )
@@ -1027,7 +1023,7 @@ def main(argv: list[str] | None = None) -> int:
         print(_PROTOTYPE_CREATION_FAILURE, flush=True)
         return 2
     finally:
-        cleanup = getattr(local_app.state, "synthetic_prototype_cleanup", None)
+        cleanup = getattr(local_app.state, "adaptive_app_cleanup", None)
         if callable(cleanup):
             cleanup()
     return 0

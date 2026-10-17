@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { describeAnswer, describeUnmatched, parseChatQueryResponse } from '../../src/adaptive-prototype/chatQuery.ts';
+import { describeAnswer, describeUnmatched, parseChatQueryResponse } from '../../src/adaptive/chatQuery.ts';
 
 const DB = 'legacy-view';
 const base = { version: 'adaptive-chat-query-v1', database_id: DB };
