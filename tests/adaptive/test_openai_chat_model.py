@@ -18,6 +18,7 @@ from backend.adaptive.harness.openai_chat import (
     OpenAIQueryModel,
     _https_transport,
     valid_openai_settings,
+    validate_api_base_url,
 )
 from backend.adaptive.harness.recorded import RecordedFailureCode
 from backend.adaptive.harness.recording_orchestrator import RecordingProviderError
@@ -74,6 +75,37 @@ def test_one_request_with_the_prompt_schema_and_hints() -> None:
     assert response_format["json_schema"]["strict"] is False
     assert response_format["json_schema"]["schema"]["required"] == ["entity", "select", "filters", "limit"]
     assert "temperature" not in payload  # gpt-5 models take only the default
+
+
+@pytest.mark.parametrize("base,valid", [
+    ("https://api.example.com/v1", True), ("http://127.0.0.1:1234/v1", True),
+    ("http://localhost/v1", True), ("http://[::1]:1234/v1", True),
+    ("http://example.com/v1", False), ("https://user:pass@example.com/v1", False),
+    ("https://example.com/v1?x=1", False), ("https://example.com/v1#frag", False),
+])
+def test_custom_api_base_url_validation(base: str, valid: bool) -> None:
+    if valid:
+        assert validate_api_base_url(base) == base.rstrip("/") + "/chat/completions"
+    else:
+        with pytest.raises(ValueError): validate_api_base_url(base)
+
+
+def test_custom_endpoint_and_optional_authentication() -> None:
+    endpoint = "http://127.0.0.1:1234/v1/chat/completions"
+    transport = Transport(envelope(json.dumps({"entity": "Course", "select": [], "filters": [], "limit": 10})))
+    model = OpenAIQueryModel(None, "meta-llama/Llama-3.1-8B-Instruct", endpoint=endpoint, transport=transport)
+    case = _case(); model.generate_ir(case.request, case.ontology, case.mapping)
+    [(url, headers, payload, _timeout)] = transport.calls
+    assert url == endpoint and "Authorization" not in headers
+    assert payload["model"] == "meta-llama/Llama-3.1-8B-Instruct" and payload["response_format"]["type"] == "json_schema"
+    auth_transport = Transport(envelope(json.dumps({"entity": "Course", "select": [], "filters": [], "limit": 10})))
+    OpenAIQueryModel("custom-key-12345", "org/model", endpoint=endpoint, transport=auth_transport).generate_ir(case.request, case.ontology, case.mapping)
+    assert auth_transport.calls[0][1]["Authorization"] == "Bearer custom-key-12345"
+
+
+def test_custom_endpoint_transport_rejects_another_url() -> None:
+    with pytest.raises(RecordingProviderError):
+        _https_transport("https://evil.example/chat/completions", {}, {}, 1, allowed_url="https://safe.example/chat/completions")
 
 
 def test_text_that_is_not_json_is_passed_on_for_the_chat_to_refuse() -> None:
@@ -199,7 +231,7 @@ def test_main_never_prints_the_key(
             adaptive_app_cleanup = None
 
     def fake_create(profiles: Any, model: Any, mapping_model: Any = None, show_sql: bool = False,
-                    postgres_sources: Any = None) -> Any:
+                    postgres_sources: Any = None, **_custom_chat_models: Any) -> Any:
         seen.append(model)
         return App()
 

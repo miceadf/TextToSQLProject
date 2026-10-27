@@ -1,7 +1,7 @@
 import { it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { describeUnmatchedTerms, parseChatQueryResponse } from '../../src/adaptive/chatQuery.ts';
+import { answerWarning, describeUnmatchedTerms, parseChatQueryResponse } from '../../src/adaptive/chatQuery.ts';
 
 const base = { version: 'adaptive-chat-query-v1', database_id: 'legacy-view' };
 const succeeded = {
@@ -45,6 +45,9 @@ it('shows a brief dictionary notice above results and keeps the legacy path', ()
   assert.equal(describeUnmatchedTerms(['컴융']), '‘컴융’을(를) 이해하지 못해 조건에서 뺐습니다. 값 사전에 줄임말을 넣으면 알아들을 수 있습니다.');
   assert.match(describeUnmatchedTerms(['컴융', '소웨']), /‘컴융’, ‘소웨’/);
   const popup = readFileSync(new URL('../../src/components/ChatPopup.tsx', import.meta.url), 'utf8');
-  assert.match(popup, /describeUnmatchedTerms\(answer\.unmatchedTerms/);
+  assert.match(popup, /setLastWarning\(answerWarning\(answer\)\)/);
+  const answer = parseChatQueryResponse({ ...succeeded, unmatched_terms: ['컴융'] }, 'legacy-view');
+  assert.ok(answer?.status === 'SUCCEEDED');
+  assert.match(answerWarning(answer), /‘컴융’을\(를\) 이해하지 못해 조건에서 뺐습니다/);
   assert.ok(popup.indexOf('{lastWarning &&') < popup.indexOf('data-testid="chat-understood"'));
 });

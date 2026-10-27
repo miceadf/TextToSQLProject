@@ -9,6 +9,7 @@ from backend.adaptive.mapping.contracts import PublishedMappingProfile
 from backend.adaptive.mapping.transforms import FieldTransform
 from backend.adaptive.mapping.values import ValueDictionary
 from backend.adaptive.relations.contracts import JoinPlanningResult
+from backend.adaptive.compiler.contracts import MemberFilter
 
 
 class AstPolicyContext(BaseModel):
@@ -27,6 +28,9 @@ class AstPolicyContext(BaseModel):
     # Reviewed per-field value dictionaries (postgres runtime only); the
     # expected bound value is computed exactly as the compiler does.
     value_dictionaries: dict[str, ValueDictionary] = Field(default_factory=dict)
+    # Phase 9-36: enabled only by the internal catalog validation entry point.
+    member_filters: tuple[MemberFilter, ...] = ()
+    distinct: bool = False
 
     @computed_field
     @property

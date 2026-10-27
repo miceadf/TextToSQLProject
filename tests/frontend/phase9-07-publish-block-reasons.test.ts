@@ -78,3 +78,18 @@ describe('phase9-07 review fixes', () => {
     }
   });
 });
+
+
+describe('phase9-30 publish block reasons', () => {
+  it('parses and explains text-on-number and ambiguous-join blockers', () => {
+    const nextReasons = [
+      { field: 'Schedule.day', label: '강의 요일', reason: 'TEXT_ON_NUMBER' },
+      { field: 'Instructor.name', label: '교원명', reason: 'JOIN_AMBIGUOUS' },
+    ];
+    const parsed = parseReviewError({ error: { code: BLOCKED, fields: nextReasons.map((item) => item.field), reasons: nextReasons } });
+    assert.deepEqual(parsed?.reasons, nextReasons);
+    const message = toReviewMessage(new MappingReviewClientError('server', BLOCKED, nextReasons.map((item) => item.field), nextReasons));
+    assert.match(message, /- 강의 요일: 숫자 형식 칸에 글자 항목을 연결했습니다/);
+    assert.match(message, /- 교원명: 이 항목의 table로 가는 연결 경로가 둘 이상입니다/);
+  });
+});

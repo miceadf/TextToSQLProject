@@ -31,12 +31,13 @@ DEFAULT_CHAT_MODEL = "qwen2.5-coder:7b-instruct"
 
 MODEL_LABELS = {
     GENERAL_MODEL_ID: "일반 모델",
-    LEGACY_TUNED_MODEL_ID: "레거시 학습 모델(비교용)",
+    LEGACY_TUNED_MODEL_ID: "기존 모델",  # Phase 9-38: the team's fine-tuned legacy model, named plainly
     OPENAI_MODEL_ID: "ChatGPT(외부 API)",
     DEFAULT_MODEL_ID: "기본 모델",
 }
 
-MAX_CHOICES = 4
+MAX_CHOICES = 7
+MAX_CUSTOM_CHOICES = 4
 MODEL_ID_PATTERN = re.compile(r"[a-z][a-z0-9-]{0,31}")
 _TAG_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}")
 _MAX_LABEL = 40
@@ -49,10 +50,21 @@ __all__ = [
     "GENERAL_MODEL_ID",
     "LEGACY_TUNED_MODEL_ID",
     "MODEL_LABELS",
+    "MAX_CUSTOM_CHOICES",
     "OPENAI_MODEL_ID",
     "ChatModelChoice",
+    "normalize_ollama_tag",
     "validate_choices",
 ]
+
+
+# Phase 9-31: Ollama treats an omitted tag as ``latest`` for the last path segment.
+def normalize_ollama_tag(tag: str) -> str:
+    """Normalize an Ollama model name that omits its implicit latest tag."""
+    head, separator, name = tag.rpartition("/")
+    if ":" not in name:
+        name += ":latest"
+    return f"{head}{separator}{name}"
 
 
 @dataclass(frozen=True)

@@ -2,10 +2,11 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   chatErrorMessage,
   chatRowsToLegacyRows,
+  structuredTimeText,
+  TIME_TBA_TEXT,
+  answerWarning,
   describeAnswer,
   describeChatModel,
-  describeUnmatched,
-  describeUnmatchedTerms,
   describeUnderstood,
   fetchChatModels,
   postChatQuery,
@@ -226,13 +227,13 @@ function rowToCourse(row: QueryRow, index: number, extraLabels: Array<[string, s
     : `DB-${index + 1}`
   const name =
     readString(row, ['subject_name', 'course_name', 'name', 'title']) ||
-    `Course ${index + 1}`
+    `강좌 ${index + 1}`
   const professor =
     readString(row, ['professor', 'instructor', 'teacher', '교수']) || '-'
   const credits = readNumber(row, ['credit_hours', 'credits', 'credit', '학점']) ?? 0
   const timeText =
     readString(row, ['lecture_time', 'table_schedule', 'time_text', 'time', '시간']) ||
-    'Time TBA'
+    structuredTimeText(readString(row, ['day_of_week', 'day']), readString(row, ['start_time', 'start']), readString(row, ['end_time', 'end']))
   const slots = [
     ...readScheduleSlots(row),
     ...readFieldSlot(row),
@@ -325,7 +326,7 @@ function mergeCourses(existing: Course, next: Course): Course {
     .split(/\s*,\s*/)
     .filter(Boolean)
   for (const part of next.timeText.split(/\s*,\s*/).filter(Boolean)) {
-    if (part === 'Time TBA' || timeParts.includes(part)) continue
+    if (part === TIME_TBA_TEXT || timeParts.includes(part)) continue
     timeParts.push(part)
   }
   const sortedTimeParts = sortTimeParts(timeParts)
@@ -402,9 +403,10 @@ function chatTargetKey(target: ChatTarget) {
 }
 
 function chatTargetCaption(target: ChatTarget) {
-  if (target.kind === 'queryir') return `${target.label} · QueryIR 경로`
+  // Phase 9-38: 학생 화면에는 구현 경로를 노출하지 않는다.
+  if (target.kind === 'queryir') return `${target.label}`
   if (target.kind === 'unsupported') return `${target.label} · 챗봇 미지원`
-  return 'Legacy 기준선 · 기존 SQL 경로'
+  return '기본 DB · 기존 챗봇'
 }
 
 export default function ChatPopup({
@@ -419,6 +421,7 @@ export default function ChatPopup({
   onRemoveCourse,
   onReplaceCourse,
   onOpenExpandedTimetable,
+  modelRevision = 0,
 }: {
   open: boolean
   onClose: () => void
@@ -431,6 +434,7 @@ export default function ChatPopup({
   onRemoveCourse: (courseId: string) => void
   onReplaceCourse: (course: Course) => void
   onOpenExpandedTimetable: () => void
+  modelRevision?: number
 }) {
   const [mounted, setMounted] = useState(false)
   const [visible, setVisible] = useState(false)
@@ -527,6 +531,24 @@ export default function ChatPopup({
     return () => controller.abort()
   }, [mounted, isQueryIr, chatModels])
 
+  useEffect(() => {
+    if (!mounted || !isQueryIr || modelRevision === 0) return
+    const controller = new AbortController()
+    fetchChatModels((url, init) => fetch(url, init), { signal: controller.signal })
+      .then((listing) => {
+        setChatModels(listing.models)
+        setChatModel((current) => current !== null && listing.models.some((option) => option.id === current) ? current : listing.defaultId)
+      })
+      .catch(() => {
+        if (controller.signal.aborted) return
+        // Luna 9-31: a removed model must not stay selected; the server's default answers.
+        setChatModels([])
+        setChatModel(null)
+        setLastError('챗봇 모델 목록을 새로 고치지 못했습니다. 기본 모델로 답합니다.')
+      })
+    return () => controller.abort()
+  }, [mounted, isQueryIr, modelRevision])
+
   function changeChatModel(id: string) {
     const option = chatModels?.find((item) => item.id === id)
     if (option === undefined || id === chatModel) return
@@ -586,7 +608,7 @@ export default function ChatPopup({
 
     if (chatTarget.kind === 'unsupported') {
       setLastError(
-        `${chatTarget.label}은(는) AI Course Assistant를 지원하지 않습니다. 상단의 '합성 질의 열기'를 사용해 주세요.`,
+        `${chatTarget.label}은(는) AI 수강 도우미를 지원하지 않습니다. DB 변경에서 다른 DB를 골라 주세요.`,
       )
       return
     }
@@ -656,7 +678,7 @@ export default function ChatPopup({
       setDbCourses(nextDbCourses)
       const summary = payload.warning
         ? 'SQL 생성 완료 (DB 미연결로 결과 조회는 생략되었습니다).'
-        : `SQL 실행 완료: ${rowCount}건 결과를 받았습니다.`
+        : `조회 완료: ${rowCount}건 결과를 받았습니다.`
 
       setMessages((prev) => [
         ...prev,
@@ -717,12 +739,7 @@ export default function ChatPopup({
       setLastUnderstood(answer.status === 'SUCCEEDED' ? describeUnderstood(answer.filters) : '')
       setLastSql(answer.status === 'SUCCEEDED' ? (answer.sql ?? '') : '')
       if (answer.status !== 'SUCCEEDED') setLastWarning(describeAnswer(answer))
-      else if (answer.unmatchedTerms !== undefined) setLastWarning([
-        describeUnmatchedTerms(answer.unmatchedTerms ?? []),
-        describeUnmatched(answer.unmatched ?? []),
-      ].filter(Boolean).join(' '))
-      else if (answer.unmatched !== undefined) setLastWarning(describeUnmatched(answer.unmatched))
-      else setLastWarning('')
+      else setLastWarning(answerWarning(answer))
       setMessages((prev) => [...prev, { id: makeId('sys'), role: 'system', text: describeAnswer(answer) }])
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') return
@@ -745,7 +762,7 @@ export default function ChatPopup({
     <div className="fixed inset-0 z-50 flex items-end justify-end p-4 sm:p-6">
       <button
         type="button"
-        aria-label="Close assistant"
+        aria-label="도우미 닫기"
         onClick={onClose}
         className={cn(
           'absolute inset-0 bg-slate-900/30 backdrop-blur-[1px] transition-opacity duration-200',
@@ -760,15 +777,15 @@ export default function ChatPopup({
         )}
         role="dialog"
         aria-modal="true"
-        aria-label="AI Course Assistant"
+        aria-label="AI 수강 도우미"
       >
         <div className="shrink-0 flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3">
           <div>
             <div className="text-sm font-semibold text-slate-900">
-              AI Course Assistant
+              AI 수강 도우미
             </div>
             <div className="text-xs text-slate-500">
-              Course search · timetable preview
+              강좌 검색 · 시간표 미리보기
             </div>
             <div
               className={cn(
@@ -836,7 +853,7 @@ export default function ChatPopup({
               />
               수강 이력 존재 과목 제외
               {chatTarget.kind === 'queryir' ? (
-                <span className="font-normal text-slate-400">(QueryIR 경로에서는 미지원)</span>
+                <span className="font-normal text-slate-400">(이 DB에서는 미지원)</span>
               ) : null}
             </label>
             {isQueryIr && chatModels !== null && chatModels.length > 1 ? (
@@ -890,7 +907,7 @@ export default function ChatPopup({
               >
                 <span className="inline-flex items-center gap-2">
                   {loading ? <LoadingSpinner /> : null}
-                  {loading ? 'Cancel' : 'Send'}
+                  {loading ? '취소' : '보내기'}
                 </span>
               </button>
             </div>
@@ -946,7 +963,7 @@ export default function ChatPopup({
                 className="mt-2 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-xs text-violet-800"
                 data-testid="chat-understood"
               >
-                <span className="font-semibold">이해한 조건 (QueryIR)</span>: {lastUnderstood}
+                <span className="font-semibold">이해한 조건</span>: {lastUnderstood}
               </div>
             )}
             {lastSql && (
@@ -979,10 +996,10 @@ export default function ChatPopup({
             <div className="border-t border-slate-200 px-4 py-3">
               <div className="flex items-center justify-between">
                 <div className="text-xs font-semibold text-slate-700">
-                  Course results
+                  검색 결과
                 </div>
                 <div className="text-xs text-slate-500">
-                  {results.length} items
+                  {results.length}개
                 </div>
               </div>
               <div className="mt-2 max-h-72 min-h-36 space-y-2 overflow-y-auto pr-1">
@@ -1020,17 +1037,17 @@ export default function ChatPopup({
                         </div>
                         <div className="truncate text-xs text-slate-500">
                           {c.professor} · {c.timeText}
-                          {c.locationText ? ` · Location: ${c.locationText}` : ''}
+                          {c.locationText ? ` · 강의실: ${c.locationText}` : ''}
                         </div>
                         <div className="mt-1 flex flex-wrap gap-1">
                           {closed ? (
                             <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-700 ring-1 ring-slate-200">
-                              Capacity warning
+                              정원 주의
                             </span>
                           ) : null}
                           {unmetPrerequisite ? (
                             <span className="inline-flex rounded-full bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700 ring-1 ring-violet-200">
-                              Prerequisite warning
+                              선수과목 주의
                             </span>
                           ) : null}
                         </div>
@@ -1062,7 +1079,7 @@ export default function ChatPopup({
                               : 'bg-blue-50 text-blue-700 hover:bg-blue-100',
                         )}
                       >
-                        {already ? 'Remove' : hasConflict ? 'Replace' : 'Add'}
+                        {already ? '빼기' : hasConflict ? '바꾸기' : '담기'}
                       </button>
                     </div>
                   )
@@ -1074,10 +1091,10 @@ export default function ChatPopup({
           <div className="border-t border-slate-200 bg-white px-4 py-4">
             <div className="mb-2 flex items-center justify-between">
               <div className="text-xs font-semibold text-slate-700">
-                Mini timetable
+                미리 보는 시간표
               </div>
               <div className="text-xs text-slate-500">
-                {selectedCourses.length} selected
+                {selectedCourses.length}개 담음
               </div>
             </div>
             <Timetable

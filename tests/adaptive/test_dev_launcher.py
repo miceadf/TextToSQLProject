@@ -139,7 +139,8 @@ def test_one_chat_model_failing_keeps_the_other(
         return "tuned-model"
 
     def fake_create(
-        profiles: Any, model: Any, mapping_model: Any = None, show_sql: bool = False, postgres_sources: Any = None
+        profiles: Any, model: Any, mapping_model: Any = None, show_sql: bool = False, postgres_sources: Any = None,
+        **_custom_chat_models: Any,  # Phase 9-31: repository root and Ollama URL for user models
     ) -> Any:
         seen.append(model)
         return _App()
@@ -173,7 +174,8 @@ def test_main_degrades_legacy_view_and_never_prints_values(
     calls: list[tuple[bool, bool]] = []
 
     def fake_create(
-        profiles: Any, model: Any, mapping_model: Any = None, show_sql: bool = False, postgres_sources: Any = None
+        profiles: Any, model: Any, mapping_model: Any = None, show_sql: bool = False, postgres_sources: Any = None,
+        **_custom_chat_models: Any,  # Phase 9-31: repository root and Ollama URL for user models
     ) -> Any:
         calls.append((bool(profiles), model is not None))
         if profiles:
@@ -213,7 +215,8 @@ def test_ollama_failure_keeps_legacy_view(
         raise RuntimeError("transport")
 
     def fake_create(
-        profiles: Any, model: Any, mapping_model: Any = None, show_sql: bool = False, postgres_sources: Any = None
+        profiles: Any, model: Any, mapping_model: Any = None, show_sql: bool = False, postgres_sources: Any = None,
+        **_custom_chat_models: Any,  # Phase 9-31: repository root and Ollama URL for user models
     ) -> Any:
         calls.append((bool(profiles), model is not None))
         return _App()
@@ -243,7 +246,8 @@ def test_invalid_profile_keeps_ollama(
         raise RuntimeError("bad profile")
 
     def fake_create(
-        profiles: Any, model: Any, mapping_model: Any = None, show_sql: bool = False, postgres_sources: Any = None
+        profiles: Any, model: Any, mapping_model: Any = None, show_sql: bool = False, postgres_sources: Any = None,
+        **_custom_chat_models: Any,  # Phase 9-31: repository root and Ollama URL for user models
     ) -> Any:
         calls.append((bool(profiles), model is not None))
         return _App()
@@ -271,7 +275,8 @@ def test_drifted_base_profile_keeps_the_view_profile(
     calls: list[list[str]] = []
 
     def fake_create(
-        profiles: Any, model: Any, mapping_model: Any = None, show_sql: bool = False, postgres_sources: Any = None
+        profiles: Any, model: Any, mapping_model: Any = None, show_sql: bool = False, postgres_sources: Any = None,
+        **_custom_chat_models: Any,  # Phase 9-31: repository root and Ollama URL for user models
     ) -> Any:
         calls.append(list(profiles or []))
         if profiles and "legacy-base" in profiles:
@@ -311,7 +316,8 @@ def test_one_invalid_profile_keeps_the_other(
         return list(ids)
 
     def fake_create(
-        profiles: Any, model: Any, mapping_model: Any = None, show_sql: bool = False, postgres_sources: Any = None
+        profiles: Any, model: Any, mapping_model: Any = None, show_sql: bool = False, postgres_sources: Any = None,
+        **_custom_chat_models: Any,  # Phase 9-31: repository root and Ollama URL for user models
     ) -> Any:
         calls.append(list(profiles or []))
         return _App()
@@ -330,3 +336,22 @@ def test_one_invalid_profile_keeps_the_other(
 def test_main_rejects_out_of_range_port(capsys: pytest.CaptureFixture[str]) -> None:
     assert dev_launcher.main(["--port", "80"]) == 2
     assert "invalid port" in capsys.readouterr().out
+
+
+def test_main_does_not_probe_ollama_for_custom_models(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_env(tmp_path, "OLLAMA_MODEL=text2sql_qwen\nOLLAMA_BASE_URL=http://127.0.0.1:11434\n")
+    monkeypatch.setattr(dev_launcher, "_build_model", lambda _spec: "model")
+    monkeypatch.setattr(dev_launcher, "_create_app", lambda *_args, **_kwargs: _App())
+    from backend.adaptive.api import custom_chat_models
+
+    def fail_probe(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("launcher must not probe Ollama")
+
+    monkeypatch.setattr(custom_chat_models, "installed_tags", fail_probe)
+    monkeypatch.setattr(custom_chat_models, "load_live_custom", fail_probe)
+    import uvicorn
+
+    monkeypatch.setattr(uvicorn, "run", lambda app, **kwargs: None)
+    assert dev_launcher.main(["--repository-root", str(tmp_path)]) == 0

@@ -13,6 +13,7 @@ from backend.adaptive.api.chat_models import (
     CHAT_MODELS_PATH,
     CHAT_MODELS_VERSION,
     ChatModelChoice,
+    MAX_CHOICES,
     validate_choices,
 )
 from backend.adaptive.api.chat_query import CHAT_QUERY_PATH, register_chat_query_routes
@@ -126,7 +127,7 @@ def test_model_and_models_together_are_refused() -> None:
         [ChatModelChoice(id="general", label="x", tag="tag with space", model=FakeModel())],
         [ChatModelChoice(id="general", label="x", tag="t", model=object())],
         [ChatModelChoice(id="general", label="x", tag="t", model=FakeModel())] * 2,
-        [ChatModelChoice(id=f"m{index}", label="x", tag="t", model=FakeModel()) for index in range(5)],
+        [ChatModelChoice(id=f"m{index}", label="x", tag="t", model=FakeModel()) for index in range(MAX_CHOICES + 1)],
     ],
 )
 def test_invalid_choice_lists_are_refused(bad: Any) -> None:

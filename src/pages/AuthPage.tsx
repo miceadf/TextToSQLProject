@@ -50,7 +50,7 @@ export default function AuthPage({ onLogin, onBack }: AuthPageProps) {
         <div className="mb-5 flex items-center justify-between gap-4">
           <div>
             <div className="text-lg font-bold text-slate-900">
-              Course Registration
+              수강 신청
             </div>
             <div className="text-sm text-slate-500">학번으로 로그인</div>
           </div>

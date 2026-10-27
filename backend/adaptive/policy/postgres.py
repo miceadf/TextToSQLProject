@@ -12,6 +12,7 @@ from backend.adaptive.harness.errors import HarnessFailure
 from backend.adaptive.mapping.contracts import PublishedMappingProfile
 from backend.adaptive.mapping.transforms import FieldTransform
 from backend.adaptive.mapping.values import ValueDictionary
+from backend.adaptive.compiler.contracts import MemberFilter
 from backend.adaptive.relations.contracts import PhysicalRelationGraph
 from backend.adaptive.relations.errors import RelationGraphError
 from backend.adaptive.relations.planner import plan_join_path
@@ -99,6 +100,24 @@ class SchemaAdaptivePostgresPolicy:
                 value_dictionaries=dict(self._value_dictionaries),
             )
         )
+
+    def validate_catalog(
+        self, query: CompiledQuery, *, query_ir: QueryIR, mapping: MappingProfile,
+        member_filters: tuple[MemberFilter, ...], distinct: bool,
+    ) -> None:
+        """Phase 9-36: validate catalog-only predicates and projection mode."""
+        self._validate_runtime_mapping(mapping)
+        fields = [*query_ir.select, *(item.field for item in query_ir.filters), *(item.field for item in member_filters)]
+        try:
+            join_result = plan_join_path(self._graph, self._mapping, fields, anchor_table=self._anchor_table)
+        except RelationGraphError as exc:
+            self._fail(f"AST policy planning failed ({exc.issue.code.value}): {exc.issue.message}")
+        self._policy.validate(AstPolicyContext(
+            query=query, query_ir=query_ir, mapping=self._mapping, join_result=join_result,
+            dialect=self.DIALECT, field_transforms=dict(self._field_transforms),
+            anchor_table=self._anchor_table, value_dictionaries=dict(self._value_dictionaries),
+            member_filters=member_filters, distinct=distinct,
+        ))
 
     def _validate_runtime_mapping(self, mapping: MappingProfile) -> None:
         expected_fields = {

@@ -560,18 +560,22 @@ def test_routing_executor_normalizes_only_transformed_values() -> None:
     assert isinstance(rows[0]["Course.credits"], int)
 
 
-def test_partial_postgres_catalog_fails_closed_but_is_listed() -> None:
+def test_partial_postgres_catalog_lists_the_present_fields() -> None:
+    """Phase 9-34: with course code and name mapped, the list opens; missing fields are null."""
+    executor = FakeExecutor()
     app = create_synthetic_clarification_prototype(
         postgres_profiles=[make_profile()],
         postgres_adapters={DATABASE_ID: FakeAdapter()},
-        postgres_executors={DATABASE_ID: FakeExecutor()},
+        postgres_executors={DATABASE_ID: executor},
     )
     client = TestClient(app, raise_server_exceptions=False)
     listed = client.get(DATABASES_PATH).json()["databases"]
     assert {"database_id": DATABASE_ID, "label": lvp.LABEL, "schema": "postgres"} in listed
     response = client.get(CATALOG_PATH, params={"database_id": DATABASE_ID})
-    assert response.status_code == 409
-    assert response.json() == {"error": {"code": "SYNTHETIC_CATALOG_UNSUPPORTED"}}
+    assert response.status_code == 200
+    selected = set(executor.queries[-1].expected_columns)
+    assert {"Course.code", "Course.name"} <= selected
+    assert not selected & set(lvp.UNSUPPORTED_FIELDS)  # "이 DB에 없음" fields are not queried
     assert "s3cret" not in response.text
 
 

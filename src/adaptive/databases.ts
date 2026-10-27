@@ -26,13 +26,27 @@ const LABEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 _().-]{0,63}$/;
 const TIME_PATTERN = /^\d{2}:\d{2}$/;
 
 const MAX_DATABASES = 8;
-const MAX_ITEMS = 200;
+// Phase 9-36: PostgreSQL rows represent offering times; offering cap remains 200.
+const MAX_CATALOG_ITEMS = 1000;
 const MAX_KEYWORD = 100;
 
 export interface RegistryDatabase {
   database_id: string;
   label: string;
   schema: 'flat' | 'legacy' | 'private' | 'postgres';
+}
+
+// Phase 9-37: keep development-only databases off the main screen.
+const MAIN_SCREEN_HIDDEN_DATABASES = {
+  ids: ['legacy-base'],
+  schemas: ['flat', 'legacy'],
+} as const;
+
+export function mainScreenDatabases(entries: readonly RegistryDatabase[]): RegistryDatabase[] {
+  return entries.filter((entry) =>
+    !MAIN_SCREEN_HIDDEN_DATABASES.ids.includes(entry.database_id as 'legacy-base') &&
+    !MAIN_SCREEN_HIDDEN_DATABASES.schemas.includes(entry.schema as 'flat' | 'legacy'),
+  );
 }
 
 const PRIVATE_LABEL_MAX = 64;
@@ -49,19 +63,19 @@ function isValidPrivateLabel(value: unknown): value is string {
 export interface CanonicalCourse {
   course_code: string;
   course_name: string;
-  credits: number;
-  category: string;
-  department_code: string;
-  department_name: string;
-  instructor_name: string;
+  credits: number | null;
+  category: string | null;
+  department_code: string | null;
+  department_name: string | null;
+  instructor_name: string | null;
   year: number | null;
-  semester: string;
-  section: string;
-  capacity: number;
-  enrolled: number;
-  day: string;
-  start_time: string;
-  end_time: string;
+  semester: string | null;
+  section: string | null;
+  capacity: number | null;
+  enrolled: number | null;
+  day: string | null;
+  start_time: string | null;
+  end_time: string | null;
 }
 
 export interface CatalogResult {
@@ -179,29 +193,28 @@ function parseCanonicalItem(value: unknown): CanonicalCourse | null {
   }
   if (!isNonEmptyString(value['course_code'], 32)) return null;
   if (!isNonEmptyString(value['course_name'], 200)) return null;
-  if (typeof value['credits'] !== 'number' || !Number.isFinite(value['credits']) || value['credits'] <= 0 || value['credits'] > 10) {
+  if (value['credits'] !== null && (typeof value['credits'] !== 'number' || !Number.isFinite(value['credits']) || value['credits'] <= 0 || value['credits'] > 10)) {
     return null;
   }
-  if (!isNonEmptyString(value['category'], 32)) return null;
-  if (!isNonEmptyString(value['department_code'], 32)) return null;
-  if (!isNonEmptyString(value['department_name'], 200)) return null;
-  if (!isNonEmptyString(value['instructor_name'], 200)) return null;
+  if (value['category'] !== null && !isNonEmptyString(value['category'], 32)) return null;
+  if (value['department_code'] !== null && !isNonEmptyString(value['department_code'], 32)) return null;
+  if (value['department_name'] !== null && !isNonEmptyString(value['department_name'], 200)) return null;
+  if (value['instructor_name'] !== null && !isNonEmptyString(value['instructor_name'], 200)) return null;
   if (value['year'] !== null && (typeof value['year'] !== 'number' || !Number.isInteger(value['year']) || value['year'] < 2000 || value['year'] > 2100)) {
     return null;
   }
-  if (!isNonEmptyString(value['semester'], 16)) return null;
-  if (!isNonEmptyString(value['section'], 16)) return null;
-  if (typeof value['capacity'] !== 'number' || !Number.isInteger(value['capacity']) || value['capacity'] <= 0 || value['capacity'] > 10000) {
+  if (value['semester'] !== null && !isNonEmptyString(value['semester'], 16)) return null;
+  if (value['section'] !== null && !isNonEmptyString(value['section'], 16)) return null;
+  if (value['capacity'] !== null && (typeof value['capacity'] !== 'number' || !Number.isInteger(value['capacity']) || value['capacity'] <= 0 || value['capacity'] > 10000)) {
     return null;
   }
-  if (typeof value['enrolled'] !== 'number' || !Number.isInteger(value['enrolled']) || value['enrolled'] < 0 || value['enrolled'] > 10000) {
+  if (value['enrolled'] !== null && (typeof value['enrolled'] !== 'number' || !Number.isInteger(value['enrolled']) || value['enrolled'] < 0 || value['enrolled'] > 10000)) {
     return null;
   }
-  if (value['enrolled'] > value['capacity']) return null;
-  if (!isNonEmptyString(value['day'], 16)) return null;
-  if (typeof value['start_time'] !== 'string' || !TIME_PATTERN.test(value['start_time'])) return null;
-  if (typeof value['end_time'] !== 'string' || !TIME_PATTERN.test(value['end_time'])) return null;
-  if (value['start_time'] >= value['end_time']) return null;
+  if (value['day'] !== null && !isNonEmptyString(value['day'], 16)) return null;
+  if (value['start_time'] !== null && (typeof value['start_time'] !== 'string' || !TIME_PATTERN.test(value['start_time']))) return null;
+  if (value['end_time'] !== null && (typeof value['end_time'] !== 'string' || !TIME_PATTERN.test(value['end_time']))) return null;
+  if (value['start_time'] !== null && value['end_time'] !== null && value['start_time'] >= value['end_time']) return null;
   return {
     course_code: value['course_code'],
     course_name: value['course_name'],
@@ -227,7 +240,7 @@ export function parseCatalogResponse(value: unknown): CatalogResult | null {
   if (value['version'] !== CATALOG_VERSION) return null;
   if (!isDatabaseId(value['database_id'])) return null;
   if (!Array.isArray(value['items'])) return null;
-  if (value['items'].length > MAX_ITEMS) return null;
+  if (value['items'].length > MAX_CATALOG_ITEMS) return null;
   if (typeof value['total'] !== 'number' || !Number.isInteger(value['total'])) return null;
   const items: CanonicalCourse[] = [];
   for (const entry of value['items']) {
@@ -314,10 +327,16 @@ export function shouldResetCourseUi(prevId: string, nextId: string): boolean {
   return prevId !== nextId;
 }
 
+// Phase 9-34: keep backend identifiers and labels intact; translate display text.
+export function displayDatabaseLabel(databaseId: string, backendLabel: string): string {
+  if (databaseId === LEGACY_SELECTION_ID) return '기본 DB';
+  if (databaseId === 'legacy-view') return '기본 DB (적응형 챗봇)';
+  return backendLabel;
+}
+
 export function databaseLabel(databases: readonly RegistryDatabase[], databaseId: string): string {
-  if (databaseId === LEGACY_SELECTION_ID) return 'Legacy 기준선';
   const found = databases.find((entry) => entry.database_id === databaseId);
-  return found?.label ?? '알 수 없는 DB';
+  return displayDatabaseLabel(databaseId, found?.label ?? '알 수 없는 DB');
 }
 
 const KOREAN_WEEKDAYS: Record<string, Course['slots'][number]['day']> = {
@@ -347,25 +366,27 @@ function clockHour(text: string): number | null {
 }
 
 export function canonicalToCourse(item: CanonicalCourse): Course {
-  const id = `${item.year}-${item.semester}-${item.course_code}-${item.section}`;
-  const timeText = `${item.day} ${item.start_time}-${item.end_time}`;
-  const day = weekdayOf(item.day);
-  const startHour = clockHour(item.start_time);
-  const endHour = clockHour(item.end_time);
+  // Phase 9-34: year (retired in ontology v3) and other missing parts are left out, not shown as "null".
+  const id = [item.year, item.semester, item.course_code, item.section].filter((part) => part !== null).join('-');
+  const hasTime = item.day !== null && item.start_time !== null && item.end_time !== null;
+  const timeText = hasTime ? `${item.day} ${item.start_time}-${item.end_time}` : '-';
+  const day = hasTime ? weekdayOf(item.day!) : null;
+  const startHour = hasTime ? clockHour(item.start_time!) : null;
+  const endHour = hasTime ? clockHour(item.end_time!) : null;
   const slots: Course['slots'] =
     day !== null && startHour !== null && endHour !== null && endHour > startHour
       ? [{ day, startHour, endHour }]
       : [];
-  const closed = item.capacity > 0 && item.enrolled >= item.capacity;
+  const closed = item.capacity !== null && item.enrolled !== null && item.capacity > 0 && item.enrolled >= item.capacity;
   return {
     id,
-    name: item.course_name,
-    departmentName: item.department_name,
-    professor: item.instructor_name,
-    credits: item.credits,
+    name: item.course_name ?? '-',
+    departmentName: item.department_name ?? '-',
+    professor: item.instructor_name ?? '-',
+    credits: item.credits ?? 0,
     status: closed ? 'Closed' : 'Open',
-    capacity: item.capacity,
-    enrolled: item.enrolled,
+    capacity: item.capacity ?? undefined,
+    enrolled: item.enrolled ?? undefined,
     timeText,
     locationText: undefined,
     slots,
@@ -416,7 +437,7 @@ export function parsePrototypeDatabaseParam(search: string): string | null {
 export const CATALOG_TRANSPORT_MESSAGE = '연결에 실패했습니다. 다시 시도해 주세요.';
 export const CATALOG_CONTRACT_MESSAGE = '응답 형식이 올바르지 않습니다. 다시 시도해 주세요.';
 export const CATALOG_GENERIC_MESSAGE = '처리 중 오류가 발생했습니다. 다시 시도해 주세요.';
-export const CATALOG_UNAVAILABLE_MESSAGE = '합성 기준 정보를 사용할 수 없습니다. 다시 시도해 주세요.';
+export const CATALOG_UNAVAILABLE_MESSAGE = 'DB 정보를 사용할 수 없습니다. 다시 시도해 주세요.';
 // Phase 7-14: a partially mapped PostgreSQL DB is queried through the chatbot only.
 export const CATALOG_VIA_CHAT_MESSAGE =
-  '이 DB는 강좌 목록 대신 오른쪽 아래 AI Course Assistant로 질문해 조회합니다(QueryIR 경로).';
+  '이 DB는 강좌 목록 대신 오른쪽 아래 AI 수강 도우미로 질문해 조회합니다.';

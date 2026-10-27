@@ -71,6 +71,8 @@ _NUMERIC_TYPE = re.compile(
     r"^(?:smallint|integer|int|int2|int4|int8|bigint|numeric|decimal|real|double precision|float4|float8)"
     r"(?:\s*\([0-9,\s]*\))?$"
 )
+# Phase 9-30: text fields a numeric column may still hold (codes and sections).
+_NUMERIC_IDENTITY_FIELDS = frozenset({"Course.code", "CourseOffering.section", "Department.code"})
 _CLOCK_TEXT = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
 _SYSTEM_SCHEMAS = ("pg_catalog", "information_schema", "pg_toast")
 
@@ -706,6 +708,8 @@ BLOCK_REASONS = (
     "TIME_FORMAT",  # raw text that is not zero-padded HH:MM (Phase 9-05)
     "NUMBER_FORMAT",  # a number field on a non-numeric column (Phase 9-06)
     "BLANK_VALUES",  # empty text under a text-to-number/time transform (Phase 9-06)
+    "TEXT_ON_NUMBER",  # text compared with a numeric column fails (Phase 9-30)
+    "JOIN_AMBIGUOUS",  # multiple anchored join paths block publish (Phase 9-30)
     "DICTIONARY_STALE",  # a dictionary entry the column no longer holds (checked before planning)
 )
 
@@ -842,6 +846,17 @@ def plan_publish(
             and unreadable_time(mapped[name])
         ):
             block(name, "TIME_FORMAT")
+        # Phase 9-30: chat compares text as text ("토요일" or LIKE for
+        # contains), which fails on numeric columns; dictionaries cannot serve them.
+        # Numeric codes and sections stay allowed (Luna 8-23, Luna 9-30): "1041" = 1041 works.
+        elif (
+            kind(name) is DataType.STRING
+            and name not in _NUMERIC_IDENTITY_FIELDS
+            and _NUMERIC_TYPE.fullmatch(column_type(name))
+            and name not in transforms
+            and name not in dictionaries
+        ):
+            block(name, "TEXT_ON_NUMBER")
         # Phase 9-06: a number field on a text column without a validated
         # text-to-number transform fails in SQL ("3-2-2" or even "3" = 3). A
         # value dictionary never serves a number field (the runtime refuses it).
@@ -973,7 +988,10 @@ def publish_review(
         return None, blocking
     try:
         context = validate(runtime_profile(plan, loaded.manifest, source))
-    except Exception:
+    except Exception as exc:
+        fields = getattr(exc, "fields", None)
+        if isinstance(fields, tuple) and fields and all(isinstance(name, str) for name in fields):
+            return None, [BlockedField(name, "JOIN_AMBIGUOUS") for name in fields]
         raise _fail("PUBLISH_BLOCKED") from None
     profile_bytes, mapping_bytes = profile_documents(plan, loaded.manifest)
     _root, profile_dir = _private_dir(repository_root, PROFILE_ROOT, database_id)

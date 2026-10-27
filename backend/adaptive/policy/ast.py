@@ -24,6 +24,7 @@ from .contracts import AstPolicyContext
 
 _ALLOWED_NODE_TYPES = (
     exp.Select,
+    exp.Distinct,
     exp.Alias,
     exp.Column,
     exp.Identifier,
@@ -95,6 +96,9 @@ class AstReadOnlyPolicy:
                 HarnessErrorCode.UNSAFE_SQL_NODE,
                 "the root SQL node must be SELECT",
             )
+
+        if (root.args.get("distinct") is not None) != context.distinct:
+            self._fail(HarnessErrorCode.UNSAFE_SQL_NODE, "DISTINCT does not match policy context")
 
         # Declared transform expressions are opaque to the node allowlist;
         # projection and WHERE validation require each one to equal the
@@ -391,7 +395,7 @@ class AstReadOnlyPolicy:
         legacy_compatible: bool,
     ) -> None:
         where = root.args.get("where")
-        if not context.query_ir.filters:
+        if not context.query_ir.filters and not context.member_filters:
             if where is not None:
                 self._fail(
                     HarnessErrorCode.UNSAFE_SQL_NODE,
@@ -405,7 +409,7 @@ class AstReadOnlyPolicy:
             )
 
         predicates = self._flatten_and(where.this)
-        if len(predicates) != len(context.query_ir.filters):
+        if len(predicates) != len(context.query_ir.filters) + len(context.member_filters):
             self._fail(
                 HarnessErrorCode.UNSAFE_SQL_NODE,
                 "WHERE predicate count does not match QueryIR filters",
@@ -497,6 +501,20 @@ class AstReadOnlyPolicy:
                     "filter values must use anonymous placeholders",
                 )
 
+        for predicate, member_filter in zip(
+            predicates[len(context.query_ir.filters):], context.member_filters
+        ):
+            mapping = context.mapping.fields.get(member_filter.field)
+            if mapping is None:
+                self._fail(HarnessErrorCode.UNAUTHORIZED_COLUMN, f"member filter field '{member_filter.field}' has no published mapping")
+            if not isinstance(predicate, exp.In):
+                self._fail(HarnessErrorCode.UNSAFE_SQL_NODE, f"member filter for '{member_filter.field}' must use IN")
+            self._check_in_list(predicate, len(member_filter.values), member_filter.field)
+            self._validate_exact_column(
+                predicate.this, mapping.table, mapping.column, alias_by_table,
+                legacy_compatible=legacy_compatible, code=HarnessErrorCode.UNAUTHORIZED_COLUMN,
+            )
+
     def _split_labelled(
         self, predicate: exp.Expression, count: int, field: str
     ) -> tuple[exp.Expression, exp.In]:
@@ -575,6 +593,7 @@ class AstReadOnlyPolicy:
                     item.field, item.operator, item.value, value_dictionaries=context.value_dictionaries
                 )
             )
+        expected_count += sum(len(item.values) for item in context.member_filters)
         if (
             len(placeholders) != expected_count
             or len(context.query.parameters) != expected_count
@@ -618,6 +637,16 @@ class AstReadOnlyPolicy:
                     value_dictionaries=context.value_dictionaries,
                 )
             )
+        for item in context.member_filters:
+            try:
+                expected_parameters.extend(
+                    bind_filter_value(
+                        item.field, value, field_transforms=context.field_transforms,
+                        value_dictionaries=context.value_dictionaries,
+                    ) for value in item.values
+                )
+            except ValueError:
+                self._fail(HarnessErrorCode.INVALID_PLACEHOLDER, f"values for field '{item.field}' are not representable")
         expected_parameters.append(context.query_ir.limit)
         actual_signature = [
             (type(value), value) for value in context.query.parameters

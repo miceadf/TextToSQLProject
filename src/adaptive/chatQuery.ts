@@ -1,5 +1,5 @@
 import { LEGACY_SELECTION_ID, isDatabaseId } from './databases.ts';
-import type { RegistryDatabase } from './databases.ts';
+import { displayDatabaseLabel, type RegistryDatabase } from './databases.ts';
 
 // Phase 7-13 QueryIR chat endpoint (served by the adaptive prototype).
 export const CHAT_QUERY_PATH = '/api/adaptive/v1/chat/query';
@@ -8,9 +8,13 @@ export const MAX_CHAT_QUESTION_LENGTH = 500;
 // Phase 9-08: the chat models the server offers; the request names one by id.
 export const CHAT_MODELS_PATH = '/api/adaptive/v1/chat/models';
 export const CHAT_MODELS_VERSION = 'adaptive-chat-models-v1';
+// Phase 9-39: shared display/sentinel text for courses whose meeting time is unknown.
+export const TIME_TBA_TEXT = '시간 미정';
+// Phase 9-39: notice shown when QueryIR succeeds without understanding any filters.
+export const EMPTY_FILTER_NOTICE = '질문에서 조건을 찾지 못해 전체 강좌를 보여 줍니다. 학과·과목명·요일 같은 조건을 넣어 다시 물어보세요.';
 const MODEL_ID = /^[a-z][a-z0-9-]{0,31}$/;
 const MODEL_TAG = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/;
-const MAX_MODELS = 4;
+const MAX_MODELS = 7;
 // Phase 8-25: the QueryIR chat reads time words with closed rules (a bare
 // 1-7시 is the afternoon), so its guide line differs from the legacy one.
 export const QUERYIR_TIME_GUIDE =
@@ -98,8 +102,8 @@ export function chatTargetFor(activeDbId: string, registry: readonly RegistryDat
   const entry = registry.find((item) => item.database_id === activeDbId);
   if (entry === undefined) return { kind: 'unsupported', label: activeDbId };
   // Only server-owned PostgreSQL profiles have the QueryIR chat route.
-  if (entry.schema === 'postgres') return { kind: 'queryir', databaseId: entry.database_id, label: entry.label };
-  return { kind: 'unsupported', label: entry.label };
+  if (entry.schema === 'postgres') return { kind: 'queryir', databaseId: entry.database_id, label: displayDatabaseLabel(entry.database_id, entry.label) };
+  return { kind: 'unsupported', label: displayDatabaseLabel(entry.database_id, entry.label) };
 }
 
 export class ChatQueryClientError extends Error {
@@ -429,6 +433,16 @@ export function chatRowsToLegacyRows(rows: readonly Record<string, ChatCell>[]):
   });
 }
 
+/** Phase 9-35: build the card label for a structured meeting time. */
+export function structuredTimeText(day: unknown, start: unknown, end: unknown): string {
+  // The legacy chatbot sends PostgreSQL times with seconds ("10:00:00"); show HH:MM.
+  const clock = (value: unknown) =>
+    typeof value === 'string' && /^\d{2}:\d{2}(?::\d{2})?$/.test(value) ? value.slice(0, 5) : null;
+  const from = clock(start);
+  const to = clock(end);
+  return typeof day === 'string' && day.length > 0 && from !== null && to !== null ? `${day} ${from}-${to}` : TIME_TBA_TEXT;
+}
+
 const OPERATOR_TEXT: Record<string, string> = {
   equals: '=',
   not_equals: '≠',
@@ -462,10 +476,21 @@ export function describeUnmatchedTerms(terms: readonly string[]): string {
   return `${terms.map((term) => `‘${term}’`).join(', ')}을(를) 이해하지 못해 조건에서 뺐습니다. 값 사전에 줄임말을 넣으면 알아들을 수 있습니다.`;
 }
 
+// Phase 9-39: combine student-facing QueryIR notices so unmatched-word warnings remain visible.
+export function answerWarning(answer: ChatQueryAnswer): string {
+  if (answer.status !== 'SUCCEEDED') return '';
+  return [
+    answer.filters.length === 0 ? EMPTY_FILTER_NOTICE : '',
+    describeUnmatchedTerms(answer.unmatchedTerms ?? []),
+    describeUnmatched(answer.unmatched ?? []),
+  ].filter(Boolean).join(' ');
+}
+
 export function describeAnswer(answer: ChatQueryAnswer): string {
   if (answer.status === 'SUCCEEDED') {
     const capped = answer.rowCount >= answer.limit ? ` (최대 ${answer.limit}건까지 표시)` : '';
-    const text = `QueryIR 실행 완료: ${answer.rowCount}건${capped}. 이해한 조건: ${describeUnderstood(answer.filters)}`;
+    // Phase 9-38: 학생 화면에는 구현 경로를 노출하지 않는다.
+    const text = `조회 완료: ${answer.rowCount}건${capped}. 이해한 조건: ${describeUnderstood(answer.filters)}`;
     const reason = describeUnmatched(answer.unmatched ?? []);
     return reason === '' ? text : `${text}. ${reason}`;
   }
@@ -478,16 +503,16 @@ export function describeAnswer(answer: ChatQueryAnswer): string {
 
 export function chatErrorMessage(error: unknown): string {
   if (error instanceof ChatQueryClientError) {
-    if (error.kind === 'transport') return 'QueryIR 서버에 연결하지 못했습니다. npm run dev:all로 실행했는지 확인해 주세요.';
-    if (error.kind === 'contract') return 'QueryIR 응답 형식이 올바르지 않습니다.';
+    if (error.kind === 'transport') return '수강 도우미 서버에 연결하지 못했습니다. 개발 서버가 실행 중인지 확인해 주세요.';
+    if (error.kind === 'contract') return '수강 도우미 응답 형식이 올바르지 않습니다.';
     if (error.serverCode === 'CHAT_MODEL_UNAVAILABLE') {
       return error.failureCode === 'TIMEOUT'
         ? '모델 응답 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.'
         : // Phase 9-09: the model may be the ChatGPT API as well as Ollama.
-          'QueryIR 모델을 사용할 수 없습니다. Ollama가 켜져 있는지, ChatGPT라면 API 키와 사용 한도를 확인해 주세요.';
+          '수강 도우미 모델을 사용할 수 없습니다. Ollama가 켜져 있는지, ChatGPT라면 API 키와 사용 한도를 확인해 주세요.';
     }
     if (error.serverCode === 'CHAT_CONTEXT_UNAVAILABLE') return '선택한 DB를 지금 사용할 수 없습니다.';
     if (error.serverCode === 'CHAT_INVALID_REQUEST') return '질문 형식이 올바르지 않습니다(최대 500자).';
   }
-  return 'QueryIR 질의 처리 중 오류가 발생했습니다.';
+  return '수강 도우미 처리 중 오류가 발생했습니다.';
 }

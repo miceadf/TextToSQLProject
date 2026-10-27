@@ -85,7 +85,8 @@ def test_launcher_shows_sql_unless_turned_off(
     seen: list[bool] = []
 
     def fake_create(
-        profiles: Any, model: Any, mapping_model: Any = None, show_sql: bool = False, postgres_sources: Any = None
+        profiles: Any, model: Any, mapping_model: Any = None, show_sql: bool = False, postgres_sources: Any = None,
+        **_custom_chat_models: Any,  # Phase 9-31: repository root and Ollama URL for user models
     ) -> Any:
         seen.append(show_sql)
         return _App()

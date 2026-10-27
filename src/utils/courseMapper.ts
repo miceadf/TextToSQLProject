@@ -1,5 +1,6 @@
 import type { CourseItemApi, WeekdayApi } from '../types/api'
 import type { Course, Weekday } from '../types/course'
+import { TIME_TBA_TEXT } from '../adaptive/chatQuery'
 import {
   normalizeCourseDay,
   parseCourseClockHour,
@@ -50,7 +51,7 @@ export function apiCourseToCourse(course: CourseItemApi): Course {
     course.schedule
       .map((slot) => `${slot.day} ${slot.start}-${slot.end}`)
       .join(', ') ||
-    'Time TBA'
+    TIME_TBA_TEXT
   const parsedSlots = slots.length > 0 ? slots : parseCourseSlotsFromText(timeText)
 
   return {

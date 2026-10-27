@@ -211,9 +211,12 @@ describe('phase7-06 MainPage and prototype selection regression', () => {
     assert.ok(main.includes('abortRef.current?.abort()'));
     assert.ok(main.includes('writeStoredDatabaseId(window.sessionStorage, resolved, known)'));
     assert.ok(main.includes('readStoredDatabaseId(window.sessionStorage, known)'));
+    // Phase 9-37: the main screen filters development-only registry entries at bootstrap.
+    assert.ok(main.includes('mainScreenDatabases(await listDatabases(adaptiveFetch'));
     assert.ok(!main.includes('synth-pg-main'));
     assert.ok(!main.includes('useState<RegistryDatabase[]>([{'));
-    assert.ok(main.includes('/adaptive-prototype?database='));
+    // Phase 9-34: the main page no longer links to the clarification prototype.
+    assert.ok(!main.includes('/adaptive-prototype?database='));
     assert.ok(main.includes('getCatalog(adaptiveFetch, activeDbId'));
     assert.ok(!main.includes('DSN'));
     assert.ok(!main.includes('dsn'));

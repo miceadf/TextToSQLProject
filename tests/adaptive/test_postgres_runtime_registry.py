@@ -200,6 +200,7 @@ def make_profile(
     fingerprint: str = FINGERPRINT,
     fields: dict[str, tuple[str, str]] | None = None,
     ontology_version: int = 1,
+    unsupported: tuple[str, ...] = (),
 ) -> PostgresRuntimeProfile:
     published = PublishedMappingProfile(
         database_id=database_id,
@@ -220,7 +221,14 @@ def make_profile(
         label="Synthetic PostgreSQL",
         connection_config=PostgresConnectionConfig(SECRET_DSN, schema="private_schema"),
         published_mapping=published,
+        unsupported_fields=unsupported,  # Phase 9-34: fields left out must be declared
     )
+
+
+def partial_profile(*missing: str) -> PostgresRuntimeProfile:
+    """Phase 9-34: a published profile whose ``missing`` fields are "이 DB에 없음"."""
+    fields = {key: value for key, value in FIELD_MAP.items() if key not in missing}
+    return make_profile(fields=fields, unsupported=tuple(missing))
 
 
 class FakeAdapter:
@@ -255,7 +263,11 @@ class FakeExecutor:
         if self.error is not None:
             raise self.error
         columns = list(compiled.expected_columns)
-        return columns, [{column: SEMANTIC_ROW[column] for column in columns}]
+        row = {column: SEMANTIC_ROW[column] for column in columns}
+        # Phase 9-36: step one returns offerings; step two returns schedule rows.
+        if "Schedule.day" in columns or "Schedule.start_time" in columns or "Schedule.end_time" in columns:
+            return columns, [row]
+        return columns, [row]
 
 
 def make_app() -> tuple[Any, FakeAdapter, FakeExecutor]:
@@ -283,6 +295,194 @@ def test_default_app_has_zero_postgres_profiles_and_connections(monkeypatch) -> 
     assert response.status_code == 200
     assert app.state.synthetic_postgres_database_ids == ()
     assert all(entry["schema"] != "postgres" for entry in response.json()["databases"])
+
+
+def test_postgres_catalog_returns_null_for_unsupported_optional_fields() -> None:
+    app = create_synthetic_clarification_prototype(
+        postgres_profiles=[partial_profile("Instructor.name", "Schedule.day")],
+        postgres_adapters={DATABASE_ID: FakeAdapter(make_catalog())},
+        postgres_executors={DATABASE_ID: FakeExecutor()},
+    )
+    response = TestClient(app, raise_server_exceptions=False).get(
+        CATALOG_PATH, params={"database_id": DATABASE_ID}
+    )
+    assert response.status_code == 200
+    item = response.json()["items"][0]
+    assert item["instructor_name"] is None
+    assert item["day"] is None
+    assert item["course_code"] == "CSE101"
+    assert item["course_name"]
+    assert item["credits"] == 3
+
+
+def test_postgres_catalog_without_day_keeps_one_row_per_repeated_meeting() -> None:
+    """Phase 9-36: schedule expansion remains deduped when day is unsupported."""
+
+    class TwiceExecutor(FakeExecutor):
+        def execute(self, database_id: str, compiled: CompiledQuery) -> tuple[list[str], list[dict[str, Any]]]:
+            columns, rows = super().execute(database_id, compiled)
+            return columns, rows if "Schedule.start_time" in columns else rows * 2
+
+    app = create_synthetic_clarification_prototype(
+        postgres_profiles=[partial_profile("Schedule.day")],
+        postgres_adapters={DATABASE_ID: FakeAdapter(make_catalog())},
+        postgres_executors={DATABASE_ID: TwiceExecutor()},
+    )
+    response = TestClient(app, raise_server_exceptions=False).get(CATALOG_PATH, params={"database_id": DATABASE_ID})
+    assert response.status_code == 200
+    assert response.json()["total"] == 1 and len(response.json()["items"]) == 1
+
+
+class TwoStepCatalogExecutor(FakeExecutor):
+    """Phase 9-36: answer offering and membership-filtered time projections."""
+
+    def __init__(self, offerings: list[dict[str, Any]], times: dict[tuple[str, str, str], list[tuple[str, str, str]]], *, truncate_full_chunks: bool = False) -> None:
+        super().__init__()
+        self.offerings = offerings
+        self.times = times
+        self.truncate_full_chunks = truncate_full_chunks
+        self.chunk_sizes: list[int] = []
+
+    def execute(self, database_id: str, compiled: CompiledQuery) -> tuple[list[str], list[dict[str, Any]]]:
+        assert database_id == DATABASE_ID
+        self.calls += 1
+        columns = list(compiled.expected_columns)
+        if not any(column.startswith("Schedule.") for column in columns):
+            return columns, [{column: offering[column] for column in columns} for offering in self.offerings]
+        codes = list(compiled.parameters[:-1])
+        self.chunk_sizes.append(len(codes))
+        rows = []
+        for offering in self.offerings:
+            if offering["Course.code"] not in codes:
+                continue
+            key = (offering["Course.code"], offering["CourseOffering.section"], offering["CourseOffering.semester"])
+            for day, start, end in self.times.get(key, []):
+                values = {**offering, "Schedule.day": day, "Schedule.start_time": start, "Schedule.end_time": end}
+                rows.append({column: values[column] for column in columns})
+        if self.truncate_full_chunks and len(rows) >= 200:
+            return columns, rows[:200]
+        return columns, rows
+
+
+def _catalog_offering(code: str, section: str = "01") -> dict[str, Any]:
+    return {**SEMANTIC_ROW, "Course.code": code, "CourseOffering.section": section}
+
+
+def _run_catalog_executor(executor: FakeExecutor, profile: PostgresRuntimeProfile | None = None):
+    app = create_synthetic_clarification_prototype(
+        postgres_profiles=[profile or make_profile()],
+        postgres_adapters={DATABASE_ID: FakeAdapter(make_catalog())},
+        postgres_executors={DATABASE_ID: executor},
+    )
+    return TestClient(app, raise_server_exceptions=False).get(CATALOG_PATH, params={"database_id": DATABASE_ID})
+
+
+def test_postgres_catalog_phase936_offerings_are_not_lost_to_timetable_row_limit() -> None:
+    offerings = [_catalog_offering(f"C{index:03}") for index in range(80)]
+    times = {(row["Course.code"], "01", row["CourseOffering.semester"]): [("MON", f"{9 + n:02}:00", f"{10 + n:02}:00") for n in range(1 + index % 5)] for index, row in enumerate(offerings)}
+    executor = TwoStepCatalogExecutor(offerings, times)
+    response = _run_catalog_executor(executor)
+    assert response.status_code == 200
+    items = response.json()["items"]
+    assert len({item["course_code"] for item in items}) == 80
+    assert len(items) == sum(1 + index % 5 for index in range(80))
+
+
+def test_postgres_catalog_phase936_attaches_times_by_section_and_semester() -> None:
+    offerings = [_catalog_offering("CSE101", "01"), _catalog_offering("CSE101", "02")]
+    times = {
+        ("CSE101", "01", "1학기"): [("MON", "09:00", "10:00")],
+        ("CSE101", "02", "1학기"): [("WED", "13:00", "14:00")],
+    }
+    response = _run_catalog_executor(TwoStepCatalogExecutor(offerings, times))
+    assert response.status_code == 200
+    assert {(item["section"], item["day"], item["start_time"]) for item in response.json()["items"]} == {
+        ("01", "MON", "09:00"), ("02", "WED", "13:00")
+    }
+
+
+def test_postgres_catalog_phase936_halves_truncated_membership_chunks() -> None:
+    offerings = [_catalog_offering(f"C{index:03}") for index in range(50)]
+    times = {(row["Course.code"], "01", row["CourseOffering.semester"]): [("MON", f"{9 + n:02}:00", f"{10 + n:02}:00") for n in range(4)] for row in offerings}
+    executor = TwoStepCatalogExecutor(offerings, times, truncate_full_chunks=True)
+    response = _run_catalog_executor(executor)
+    assert response.status_code == 200
+    assert 50 in executor.chunk_sizes and 25 in executor.chunk_sizes
+    assert {item["course_code"] for item in response.json()["items"]} == {row["Course.code"] for row in offerings}
+
+
+def test_postgres_catalog_phase936_schedule_unsupported_runs_one_query() -> None:
+    executor = TwoStepCatalogExecutor([_catalog_offering("CSE101")], {})
+    response = _run_catalog_executor(executor, partial_profile("Schedule.day", "Schedule.start_time", "Schedule.end_time"))
+    assert response.status_code == 200
+    assert executor.calls == 1
+    assert response.json()["items"][0]["day"] is None
+
+
+def test_postgres_catalog_phase936_fails_closed_at_query_bound() -> None:
+    class AlwaysFullExecutor(TwoStepCatalogExecutor):
+        def execute(self, database_id: str, compiled: CompiledQuery) -> tuple[list[str], list[dict[str, Any]]]:
+            self.calls += 1
+            columns = list(compiled.expected_columns)
+            if not any(column.startswith("Schedule.") for column in columns):
+                return columns, [{column: value[column] for column in columns} for value in self.offerings]
+            row = {column: self.offerings[0].get(column, "MON" if column == "Schedule.day" else "09:00" if column == "Schedule.start_time" else "10:00") for column in columns}
+            return columns, [dict(row) for _ in range(200)]
+
+    offerings = [_catalog_offering(f"C{index:03}") for index in range(200)]
+    response = _run_catalog_executor(AlwaysFullExecutor(offerings, {}))
+    assert response.status_code == 404
+    assert response.json() == {"error": {"code": "SYNTHETIC_CATALOG_CONTEXT_UNAVAILABLE"}}
+
+
+def test_postgres_catalog_nulls_invalid_optional_values_and_skips_missing_name() -> None:
+    class CraftedExecutor(FakeExecutor):
+        def execute(self, database_id: str, compiled: CompiledQuery) -> tuple[list[str], list[dict[str, Any]]]:
+            columns = list(compiled.expected_columns)
+            base = {key: SEMANTIC_ROW[key] for key in columns}
+            def row(**changes: Any) -> dict[str, Any]:
+                return {**base, **changes}
+            if "Schedule.start_time" in columns:
+                return columns, [row(**{"Schedule.start_time": "15:00", "Schedule.end_time": "14:00"})]
+            return columns, [
+                row(**{"CourseOffering.capacity": 0}),
+                row(**{"CourseOffering.enrolled": SEMANTIC_ROW["CourseOffering.capacity"] + 1}),  # over-enrolled
+                row(**{"Instructor.name": None}),
+                row(**{"Course.credits": 0}),
+                row(**{"Course.name": None}),
+                row(),
+            ]
+
+    app = create_synthetic_clarification_prototype(
+        postgres_profiles=[partial_profile()],
+        postgres_adapters={DATABASE_ID: FakeAdapter(make_catalog())},
+        postgres_executors={DATABASE_ID: CraftedExecutor()},
+    )
+    response = TestClient(app, raise_server_exceptions=False).get(CATALOG_PATH, params={"database_id": DATABASE_ID})
+    assert response.status_code == 200
+    items = response.json()["items"]
+    assert len(items) == 5  # invalid optional values normalize to distinct offerings
+    assert items[0]["capacity"] is None
+    capacity = SEMANTIC_ROW["CourseOffering.capacity"]
+    assert items[1]["enrolled"] == capacity + 1 and items[1]["capacity"] == capacity
+    assert items[2]["instructor_name"] is None
+    assert all(item["start_time"] is None and item["end_time"] is None for item in items)
+    assert any(item["credits"] is None for item in items)
+    assert all(item["course_name"] is not None for item in items)
+    assert items[-1]["course_name"] == SEMANTIC_ROW["Course.name"]
+
+
+def test_postgres_catalog_still_requires_course_name() -> None:
+    app = create_synthetic_clarification_prototype(
+        postgres_profiles=[partial_profile("Course.name")],
+        postgres_adapters={DATABASE_ID: FakeAdapter(make_catalog())},
+        postgres_executors={DATABASE_ID: FakeExecutor()},
+    )
+    response = TestClient(app, raise_server_exceptions=False).get(
+        CATALOG_PATH, params={"database_id": DATABASE_ID}
+    )
+    assert response.status_code == 409  # the existing UNSUPPORTED status (database_registry._status_for)
+    assert response.json() == {"error": {"code": "SYNTHETIC_CATALOG_UNSUPPORTED"}}
 
 
 def test_postgres_registry_catalog_and_clarification_routing() -> None:
@@ -316,7 +516,7 @@ def test_postgres_registry_catalog_and_clarification_routing() -> None:
     )
     assert submitted.status_code == 200
     assert submitted.json()["execution"]["status"] == "SUCCEEDED"
-    assert executor.calls == 2
+    assert executor.calls == 3  # Phase 9-36: the catalog runs offerings + one time chunk, then clarification
     assert adapter.calls >= 5
 
 
@@ -471,3 +671,45 @@ def test_router_compiler_and_policy_wrap_untrusted_error_text() -> None:
     assert validated.value.code is HarnessErrorCode.UNSAFE_SQL
     assert "s3cret-pw" not in str(validated.value)
     assert "physical_table" not in str(validated.value)
+
+
+def test_ambiguous_join_plan_names_only_blame_fields(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from backend.adaptive.api import postgres_runtime as runtime
+    from backend.adaptive.relations.contracts import JoinPlanStatus
+
+    profile = make_profile(fields={
+        "CourseOffering.section": ("open_class", "section"),
+        "Course.name": ("subject", "name"),
+        "Instructor.name": ("professor", "name"),
+    }).published_mapping
+    graph = SimpleNamespace()
+    calls = 0
+
+    def planner(_graph, _published, _fields, *, anchor_table):
+        nonlocal calls
+        calls += 1
+        # Call 4 is the (open_class, professor) subset, not the subject subset.
+        status = JoinPlanStatus.AMBIGUOUS if calls == 4 else JoinPlanStatus.RESOLVED
+        return SimpleNamespace(status=status)
+
+    monkeypatch.setattr("backend.adaptive.relations.planner.plan_join_path", planner)
+    with pytest.raises(runtime.JoinPathError) as caught:
+        runtime._check_anchored_plans(graph, profile, "open_class")
+    assert caught.value.fields == ("Instructor.name",)
+    assert "professor" not in str(caught.value)
+
+
+def test_anchored_join_plan_without_cycle_passes(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from backend.adaptive.api import postgres_runtime as runtime
+    from backend.adaptive.relations.contracts import JoinPlanStatus
+
+    profile = make_profile(fields={"CourseOffering.section": ("open_class", "section")}).published_mapping
+    monkeypatch.setattr(
+        "backend.adaptive.relations.planner.plan_join_path",
+        lambda *_args, **_kwargs: SimpleNamespace(status=JoinPlanStatus.RESOLVED),
+    )
+    runtime._check_anchored_plans(SimpleNamespace(), profile, "open_class")

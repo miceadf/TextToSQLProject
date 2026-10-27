@@ -20,12 +20,15 @@ from __future__ import annotations
 import copy
 import json
 import re
+from decimal import Decimal
 from enum import Enum
 from typing import Any, Callable
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from ..compiler.contracts import MemberFilter
 
 
 SYNTHETIC_REGISTRY_VERSION = "synthetic-database-registry-v1"
@@ -36,6 +39,7 @@ CATALOG_PATH = "/api/adaptive/v1/courses"
 
 MAX_DATABASES = 8
 MAX_ITEMS = 200
+MAX_CATALOG_ITEMS = 1000
 MAX_KEYWORD_LENGTH = 100
 MAX_LABEL_LENGTH = 64
 
@@ -174,25 +178,27 @@ class CanonicalCourse(BaseModel):
 
     course_code: str = Field(min_length=1, max_length=32)
     course_name: str = Field(min_length=1, max_length=200)
-    credits: float = Field(gt=0, le=10)
-    category: str = Field(min_length=1, max_length=32)
-    department_code: str = Field(min_length=1, max_length=32)
-    department_name: str = Field(min_length=1, max_length=200)
-    instructor_name: str = Field(min_length=1, max_length=200)
+    credits: float | None = Field(default=None, gt=0, le=10)
+    category: str | None = Field(default=None, min_length=1, max_length=32)
+    department_code: str | None = Field(default=None, min_length=1, max_length=32)
+    department_name: str | None = Field(default=None, min_length=1, max_length=200)
+    instructor_name: str | None = Field(default=None, min_length=1, max_length=200)
     # Preserve the catalog DTO key for older clients; no current year query.
     year: int | None = Field(default=None, ge=2000, le=2100)
-    semester: str = Field(min_length=1, max_length=16)
-    section: str = Field(min_length=1, max_length=16)
-    capacity: int = Field(gt=0, le=10000)
-    enrolled: int = Field(ge=0, le=10000)
-    day: str = Field(min_length=1, max_length=16)
-    start_time: str = Field(pattern=r"^\d{2}:\d{2}$")
-    end_time: str = Field(pattern=r"^\d{2}:\d{2}$")
+    semester: str | None = Field(default=None, min_length=1, max_length=16)
+    section: str | None = Field(default=None, min_length=1, max_length=16)
+    capacity: int | None = Field(default=None, gt=0, le=10000)
+    enrolled: int | None = Field(default=None, ge=0, le=10000)
+    day: str | None = Field(default=None, min_length=1, max_length=16)
+    start_time: str | None = Field(default=None, pattern=r"^\d{2}:\d{2}$")
+    end_time: str | None = Field(default=None, pattern=r"^\d{2}:\d{2}$")
 
     @model_validator(mode="after")
     def validate_limits_and_time(self) -> "CanonicalCourse":
-        if self.enrolled > self.capacity:
+        if self.enrolled is not None and self.capacity is not None and self.enrolled > self.capacity:
             raise ValueError("enrolled exceeds capacity")
+        if self.start_time is None or self.end_time is None:
+            return self
         try:
             start_hour, start_minute = (int(part) for part in self.start_time.split(":"))
             end_hour, end_minute = (int(part) for part in self.end_time.split(":"))
@@ -301,10 +307,15 @@ def build_catalog_mapping(database_id: str, schema: str) -> Any:
     )
 
 
-def coerce_canonical_row(row: dict[str, Any]) -> dict[str, Any] | None:
+def coerce_canonical_row(
+    row: dict[str, Any], unsupported_fields: set[str] | None = None
+) -> dict[str, Any] | None:
     """Convert one executor row (semantic-ref keys) to a canonical DTO dict."""
     try:
         if not isinstance(row, dict) or set(row.keys()) != set(CANONICAL_SELECT):
+            return None
+        allowed_nulls = {_OFFERING_YEAR_REF, *(unsupported_fields or set())}
+        if any(row[ref] is None and ref not in allowed_nulls for ref in CANONICAL_SELECT):
             return None
         converted: dict[str, Any] = {}
         for ref in CANONICAL_SELECT:
@@ -312,6 +323,57 @@ def coerce_canonical_row(row: dict[str, Any]) -> dict[str, Any] | None:
             converted[key] = row[ref]
         validated = CanonicalCourse.model_validate(converted)
         return validated.model_dump(mode="json")
+    except Exception:
+        return None
+
+
+def coerce_postgres_catalog_row(
+    row: dict[str, Any], unsupported_fields: set[str] | None = None
+) -> dict[str, Any] | None:
+    """Phase 9-35: retain valid identity fields and null invalid optional values."""
+    try:
+        if not isinstance(row, dict) or set(row.keys()) != set(CANONICAL_SELECT):
+            return None
+        converted = {_REF_TO_DTO_KEY[ref]: row[ref] for ref in CANONICAL_SELECT}
+        code, name = converted["course_code"], converted["course_name"]
+        if not isinstance(code, str) or not 1 <= len(code) <= 32:
+            return None
+        if not isinstance(name, str) or not 1 <= len(name) <= 200:
+            return None
+        limits = {"credits": (False, lambda n: 0 < n <= 10), "capacity": (True, lambda n: 0 < n <= 10000), "enrolled": (True, lambda n: 0 <= n <= 10000)}
+        for key, (whole, valid) in limits.items():
+            value = converted[key]
+            if isinstance(value, Decimal):  # NUMERIC columns arrive as Decimal
+                value = int(value) if value == value.to_integral_value() else float(value)
+                converted[key] = value
+            if value is not None and (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or (whole and not float(value).is_integer())
+                or not valid(value)
+            ):
+                converted[key] = None
+            elif whole and value is not None:
+                converted[key] = int(value)
+        for key, max_len in (("category", 32), ("department_code", 32), ("department_name", 200), ("instructor_name", 200), ("semester", 16), ("section", 16), ("day", 16)):
+            value = converted[key]
+            if value is not None and (not isinstance(value, str) or not 1 <= len(value) <= max_len):
+                converted[key] = None
+        for key in ("start_time", "end_time"):
+            value = converted[key]
+            if value is not None and (not isinstance(value, str) or not re.fullmatch(r"\d{2}:\d{2}", value) or int(value[:2]) > 23 or int(value[3:]) > 59):
+                converted[key] = None
+        if converted["start_time"] is not None and converted["end_time"] is not None and converted["start_time"] >= converted["end_time"]:
+            converted["start_time"] = converted["end_time"] = None
+        # Year is retired (ontology v3) and not in the projection; the DTO keeps it null.
+        converted["year"] = None
+        # The shared DTO validator enforces enrolled <= capacity for legacy
+        # callers; this PostgreSQL view deliberately permits over-enrolment.
+        capacity, enrolled = converted["capacity"], converted["enrolled"]
+        validated_input = {**converted, "capacity": None}
+        dto = CanonicalCourse.model_validate(validated_input).model_dump(mode="json")
+        dto["capacity"], dto["enrolled"] = capacity, enrolled
+        return dto
     except Exception:
         return None
 
@@ -524,7 +586,9 @@ def register_synthetic_database_routes(
                 try:
                     # Phase 8-18: only the course-list fields decide; a newer
                     # ontology field may be absent without hiding the list.
-                    partial = bool(set(postgres_context.unsupported_fields()) & set(CANONICAL_SELECT))
+                    # Phase 9-34: only code/name are required to keep a usable catalog.
+                    unsupported_fields = set(postgres_context.unsupported_fields())
+                    partial = bool(unsupported_fields & {_COURSE_CODE_REF, _COURSE_NAME_REF})
                 except Exception:
                     return _error_response(SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value)
                 if partial:
@@ -544,13 +608,18 @@ def register_synthetic_database_routes(
                     if (
                         pg_mapping.database_id != database_id
                         or pg_mapping.status is not _PgMappingStatus.PUBLISHED
-                        or not set(CANONICAL_SELECT) <= set(pg_mapping.fields)
+                        or not {_COURSE_CODE_REF, _COURSE_NAME_REF} <= set(pg_mapping.fields)
                     ):
                         return _error_response(SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value)
+                    pg_offering_fields = [
+                        ref for ref in CANONICAL_SELECT
+                        if ref not in unsupported_fields
+                        and ref not in {_SCHEDULE_DAY_REF, _SCHEDULE_START_REF, _SCHEDULE_END_REF}
+                    ]
                     pg_query_ir = _PgQueryIR.model_validate(
                         {
                             "entity": "CourseOffering",
-                            "select": list(CANONICAL_SELECT),
+                            "select": pg_offering_fields,
                             "filters": [],
                             "limit": MAX_ITEMS,
                         }
@@ -558,9 +627,10 @@ def register_synthetic_database_routes(
                 except Exception:
                     return _error_response(SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value)
                 try:
-                    pg_compiled = compiler.compile(pg_query_ir, pg_mapping)
-                    sql_policy.validate(
-                        pg_compiled, query_ir=pg_query_ir, mapping=pg_mapping
+                    pg_compiled = compiler.compile_catalog(pg_query_ir, pg_mapping, member_filters=(), distinct=True)
+                    sql_policy.validate_catalog(
+                        pg_compiled, query_ir=pg_query_ir, mapping=pg_mapping,
+                        member_filters=(), distinct=True
                     )
                 except Exception:
                     return _error_response(SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value)
@@ -571,19 +641,73 @@ def register_synthetic_database_routes(
                 try:
                     if not isinstance(pg_columns, list) or not isinstance(pg_rows, list):
                         return _error_response(SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value)
-                    if set(pg_columns) != set(CANONICAL_SELECT) or len(pg_columns) != len(set(pg_columns)):
+                    expected_columns = pg_offering_fields
+                    if set(pg_columns) != set(expected_columns) or len(pg_columns) != len(set(pg_columns)):
                         return _error_response(SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value)
                     if len(pg_rows) > MAX_ITEMS:
                         return _error_response(SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value)
+                    if any(not isinstance(row, dict) or set(row) != set(pg_columns) for row in pg_rows):
+                        return _error_response(SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value)
+                    # Phase 9-36: the first query caps distinct offerings, then
+                    # bounded schedule queries expand those offerings into times.
+                    offering_rows = pg_rows
+                    schedule_fields = [ref for ref in (_SCHEDULE_DAY_REF, _SCHEDULE_START_REF, _SCHEDULE_END_REF) if ref not in unsupported_fields]
+                    time_rows_by_key: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
+                    if schedule_fields and offering_rows:
+                        codes = list(dict.fromkeys(row[_COURSE_CODE_REF] for row in offering_rows))
+                        time_select = [
+                            ref for ref in (_COURSE_CODE_REF, _OFFERING_SECTION_REF, _OFFERING_SEMESTER_REF, *schedule_fields)
+                            if ref in pg_mapping.fields
+                        ]
+                        identity = [ref for ref in (_COURSE_CODE_REF, _OFFERING_SECTION_REF, _OFFERING_SEMESTER_REF) if ref in pg_mapping.fields]
+                        # Include the already completed offering query in the bound.
+                        queries = 1
+                        # Phase 9-36: retry a possibly truncated chunk at half size.
+                        def fetch_time_chunk(chunk: list[Any]) -> bool:
+                            nonlocal queries
+                            if queries >= 40:
+                                return False
+                            queries += 1
+                            time_ir = _PgQueryIR.model_validate({"entity": "CourseOffering", "select": time_select, "filters": [], "limit": MAX_ITEMS})
+                            member_filters = (MemberFilter(field=_COURSE_CODE_REF, values=tuple(chunk)),)
+                            try:
+                                compiled = compiler.compile_catalog(time_ir, pg_mapping, member_filters=member_filters, distinct=True)
+                                sql_policy.validate_catalog(compiled, query_ir=time_ir, mapping=pg_mapping, member_filters=member_filters, distinct=True)
+                                columns, rows = executor.execute(database_id, compiled)
+                            except Exception:
+                                return False
+                            if not isinstance(columns, list) or set(columns) != set(time_select) or len(columns) != len(set(columns)) or not isinstance(rows, list) or len(rows) > MAX_ITEMS:
+                                return False
+                            if any(not isinstance(row, dict) or set(row) != set(columns) for row in rows):
+                                return False
+                            if len(rows) == MAX_ITEMS and len(chunk) > 1:
+                                midpoint = len(chunk) // 2
+                                return fetch_time_chunk(chunk[:midpoint]) and fetch_time_chunk(chunk[midpoint:])
+                            for row in rows:
+                                key = tuple(row[field] for field in identity)
+                                time_rows_by_key.setdefault(key, []).append(row)
+                            return True
+                        for offset in range(0, len(codes), 50):
+                            if not fetch_time_chunk(codes[offset:offset + 50]):
+                                return _error_response(SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value)
                     pg_items: list[dict[str, Any]] = []
-                    for pg_row in pg_rows:
-                        if not isinstance(pg_row, dict) or set(pg_row.keys()) != set(pg_columns):
-                            return _error_response(SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value)
-                        pg_normalized = {str(key): pg_row[key] for key in pg_columns}
-                        pg_dto = coerce_canonical_row(pg_normalized)
-                        if pg_dto is None:
-                            return _error_response(SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value)
-                        pg_items.append(pg_dto)
+                    for offering in offering_rows:
+                        key = tuple(offering[field] for field in [ref for ref in (_COURSE_CODE_REF, _OFFERING_SECTION_REF, _OFFERING_SEMESTER_REF) if ref in pg_mapping.fields])
+                        matched = time_rows_by_key.get(key, []) if schedule_fields else [{}]
+                        if not matched:
+                            matched = [{}]
+                        for time_row in matched:
+                            pg_normalized = {ref: offering.get(ref) for ref in CANONICAL_SELECT}
+                            pg_normalized.update({ref: time_row[ref] for ref in schedule_fields if ref in time_row})
+                            # Unsupported values remain null for the tolerant converter.
+                            pg_normalized.update({ref: None for ref in unsupported_fields if ref in pg_normalized})
+                            pg_dto = coerce_postgres_catalog_row(pg_normalized, unsupported_fields)
+                            if pg_dto is None:
+                                continue
+                            if pg_dto not in pg_items:
+                                pg_items.append(pg_dto)
+                            if len(pg_items) > MAX_CATALOG_ITEMS:
+                                return _error_response(SyntheticCatalogErrorCode.CONTEXT_UNAVAILABLE.value)
                     pg_items = sorted(
                         pg_items,
                         key=lambda item: (

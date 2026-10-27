@@ -29,7 +29,7 @@ from backend.adaptive.relations.contracts import JoinPlan, JoinPlanStatus, Physi
 from backend.adaptive.relations.errors import RelationGraphError
 from backend.adaptive.relations.planner import plan_join_path
 
-from .contracts import JoinCompilationRequest, TableAlias
+from .contracts import JoinCompilationRequest, MemberFilter, TableAlias
 
 POSTGRES_PLACEHOLDER = "%s"
 
@@ -71,6 +71,7 @@ class JoinCapablePostgresCompiler:
         referenced_fields = [
             *request.query_ir.select,
             *(item.field for item in request.query_ir.filters),
+            *(item.field for item in request.member_filters),
         ]
         mappings = request.mapping.fields
         missing_fields = sorted(set(referenced_fields) - mappings.keys())
@@ -124,7 +125,7 @@ class JoinCapablePostgresCompiler:
 
         anchor_alias = alias_by_table[plan.anchor_table]
         sql = (
-            f"SELECT {', '.join(projections)} "
+            f"SELECT {'DISTINCT ' if request.distinct else ''}{', '.join(projections)} "
             f"FROM {quote_identifier(plan.anchor_table)} AS {quote_identifier(anchor_alias)}"
         )
         sql += self._compile_joins(
@@ -199,6 +200,19 @@ class JoinCapablePostgresCompiler:
                 value = postgres_contains_pattern(value)
             parameters.append(value)
             parameters.extend(labelled)
+
+        # Phase 9-36: catalog membership predicates follow ordinary filters.
+        for item in request.member_filters:
+            column = value_sql(item.field)
+            placeholders = ", ".join(POSTGRES_PLACEHOLDER for _ in item.values)
+            predicates.append(f"{column} IN ({placeholders})")
+            try:
+                parameters.extend(bind_filter_value(
+                    item.field, value, field_transforms=transforms,
+                    value_dictionaries=request.value_dictionaries,
+                ) for value in item.values)
+            except ValueError:
+                self._fail(HarnessErrorCode.INVALID_VALUE_TYPE, f"values for field '{item.field}' are not representable")
 
         if predicates:
             sql += " WHERE " + " AND ".join(predicates)
@@ -359,6 +373,24 @@ class SchemaAdaptivePostgresCompiler:
                 value_dictionaries=dict(self._value_dictionaries),
             )
         )
+
+    def compile_catalog(self, query_ir: QueryIR, mapping: MappingProfile, *, member_filters: tuple[MemberFilter, ...] = (), distinct: bool = False) -> CompiledQuery:
+        """Phase 9-36: compile the registry's private catalog request."""
+        self._validate_runtime_mapping(mapping)
+        try:
+            member_filters = tuple(item if isinstance(item, MemberFilter) else MemberFilter.model_validate(item) for item in member_filters)
+        except Exception:
+            raise HarnessFailure(HarnessErrorCode.INVALID_VALUE_TYPE, "catalog member filters are invalid", stage=HarnessStage.SQL_COMPILED) from None
+        if not isinstance(distinct, bool):
+            raise HarnessFailure(HarnessErrorCode.INVALID_VALUE_TYPE, "catalog distinct option is invalid", stage=HarnessStage.SQL_COMPILED)
+        if any(item.field not in self._mapping.fields for item in member_filters):
+            raise HarnessFailure(HarnessErrorCode.MAPPING_MISSING, "catalog member filter field is not published", stage=HarnessStage.SQL_COMPILED)
+        fields = [*query_ir.select, *(f.field for f in query_ir.filters), *(f.field for f in member_filters)]
+        try:
+            joined = plan_join_path(self._graph, self._mapping, fields, anchor_table=self._anchor_table)
+        except RelationGraphError as exc:
+            raise HarnessFailure(HarnessErrorCode.INVALID_JOIN_PLAN, f"JOIN planning failed ({exc.issue.code.value}): {exc.issue.message}", stage=HarnessStage.SQL_COMPILED) from exc
+        return self._compiler.compile(JoinCompilationRequest(query_ir=query_ir, mapping=self._mapping, join_result=joined, field_transforms=dict(self._field_transforms), anchor_table=self._anchor_table, value_dictionaries=dict(self._value_dictionaries), member_filters=member_filters, distinct=distinct))
 
     def _validate_runtime_mapping(self, mapping: MappingProfile) -> None:
         expected_fields = {

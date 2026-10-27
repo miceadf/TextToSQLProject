@@ -72,6 +72,6 @@ describe('phase8-20 empty-result diagnosis', () => {
 
   it('ChatPopup shows the diagnosis as a warning', () => {
     const popup = readFileSync(new URL('../../src/components/ChatPopup.tsx', import.meta.url), 'utf8');
-    assert.match(popup, /setLastWarning\(describeUnmatched\(answer\.unmatched\)\)/);
+    assert.match(popup, /setLastWarning\(answerWarning\(answer\)\)/);
   });
 });

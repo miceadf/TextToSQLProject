@@ -402,7 +402,10 @@ def create_synthetic_clarification_prototype(
     show_chat_sql: bool = False,
     postgres_sources: dict[str, Any] | None = None,
     postgres_registration_options: dict[str, Any] | None = None,
-    chat_models: list[Any] | None = None,
+    chat_models: Any = None,
+    chat_model_repository_root: str | Path | None = None,
+    chat_model_base_url: str | None = None,
+    chat_model_timeout: str = "30",
 ) -> FastAPI:
     """Assemble the synthetic clarification prototype app.
 
@@ -429,8 +432,10 @@ def create_synthetic_clarification_prototype(
     tmp: Any = None
     try:
         chat_choices: tuple[Any, ...] | None = None
+        live_chat_models: Any | None = None
         if chat_models is not None:
             from .chat_models import validate_choices
+            from .live_chat_models import LiveChatModels
 
             if ollama_model is not None:
                 raise RuntimeError(_PROTOTYPE_CREATION_FAILURE)
@@ -438,7 +443,12 @@ def create_synthetic_clarification_prototype(
                 from ..harness.ollama import OllamaQueryModel
                 from ..harness.openai_chat import OpenAIQueryModel
 
-                chat_choices = validate_choices(chat_models)
+                if isinstance(chat_models, LiveChatModels):
+                    live_chat_models = chat_models
+                    chat_choices = validate_choices(chat_models.snapshot())
+                else:
+                    live_chat_models = None
+                    chat_choices = validate_choices(chat_models)
             except Exception:
                 raise RuntimeError(_PROTOTYPE_CREATION_FAILURE) from None
             if any(
@@ -446,6 +456,19 @@ def create_synthetic_clarification_prototype(
                 for choice in chat_choices
             ):
                 raise RuntimeError(_PROTOTYPE_CREATION_FAILURE)
+            if chat_model_repository_root is not None and chat_model_base_url is not None:
+                if live_chat_models is None:
+                    live_chat_models = LiveChatModels(chat_choices)
+                from .custom_chat_models import load_live_custom
+
+                try:
+                    custom_chat_model_status = load_live_custom(
+                        chat_model_repository_root, live_chat_models, chat_model_base_url, chat_model_timeout
+                    )
+                except Exception:
+                    custom_chat_model_status = {"chat_model.custom": "disabled (STARTUP_FAILED)"}
+            else:
+                custom_chat_model_status = {}
             # Phase 9-09: the clarification flow stays on a local model; it
             # takes the first Ollama choice, or none.
             ollama_model = next(
@@ -699,17 +722,32 @@ def create_synthetic_clarification_prototype(
         except Exception:
             raise RuntimeError(_PROTOTYPE_CREATION_FAILURE) from None
         try:
+            app.state.custom_chat_model_status = custom_chat_model_status if chat_models is not None else {}
             # Phase 7-13: one-shot QueryIR chat over PostgreSQL profiles only;
             # without an Ollama model the route answers 503.
             register_chat_query_routes(
                 app,
                 pg_contexts=pg_contexts,
                 model=ollama_model if chat_choices is None else None,
-                models=chat_choices,
+                models=live_chat_models if chat_choices is not None and live_chat_models is not None else chat_choices,
                 value_reader=value_reader,
                 value_indexes=value_indexes,
                 show_sql=show_chat_sql is True,
             )
+            if chat_choices and live_chat_models is not None and chat_model_repository_root is not None and chat_model_base_url is not None:
+                from .custom_chat_models import register_custom_chat_model_routes
+
+                register_custom_chat_model_routes(
+                    app,
+                    repository_root=chat_model_repository_root,
+                    registry=live_chat_models,
+                    base_url=chat_model_base_url,
+                    timeout=chat_model_timeout,
+                )
+            else:
+                from .custom_chat_models import register_custom_chat_models_unavailable
+
+                register_custom_chat_models_unavailable(app)
         except Exception:
             raise RuntimeError(_PROTOTYPE_CREATION_FAILURE) from None
     except Exception:

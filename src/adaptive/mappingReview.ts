@@ -451,6 +451,7 @@ const MAX_BLOCK_REASONS = 64;
 export const PUBLISH_BLOCK_REASONS: readonly string[] = [
   'PENDING', 'COLUMN_MISSING', 'COLUMN_SHARED', 'NOTHING_MAPPED', 'DICTIONARY_UNUSED',
   'PERIOD_TABLE_NEEDED', 'TIME_FORMAT', 'NUMBER_FORMAT', 'BLANK_VALUES', 'DICTIONARY_STALE',
+  'TEXT_ON_NUMBER', 'JOIN_AMBIGUOUS',
 ];
 
 function parseBlockReason(value: unknown, fields: readonly string[]): PublishBlockReason | null {
@@ -821,6 +822,10 @@ export function describeBlockReason(item: PublishBlockReason): string {
       return "숫자 칸이 아닙니다(예: 3-2-2 같은 글자). 숫자 형식 칸에 연결하거나 '이 DB에 없음'으로 두세요.";
     case 'BLANK_VALUES':
       return "빈 값이 섞여 있어 비교할 수 없습니다. '이 DB에 없음'으로 두세요.";
+    case 'TEXT_ON_NUMBER':
+      return "숫자 형식 칸에 글자 항목을 연결했습니다(예: 요일이 1~7 숫자). 글자 칸에 연결하거나 '이 DB에 없음'으로 두세요.";
+    case 'JOIN_AMBIGUOUS':
+      return "이 항목의 table로 가는 연결 경로가 둘 이상입니다(예: 교수의 소속 학과와 과목의 학과). 이 항목을 '이 DB에 없음'으로 두세요.";
     default:
       return '이 항목 때문에 게시할 수 없습니다.';
   }

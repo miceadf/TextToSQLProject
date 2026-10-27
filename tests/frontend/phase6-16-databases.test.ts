@@ -2,8 +2,10 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   LEGACY_SELECTION_ID,
+  mainScreenDatabases,
   STORAGE_KEY,
   canonicalToCourse,
+  catalogToCourses,
   databaseLabel,
   isDatabaseId,
   parseCatalogResponse,
@@ -59,6 +61,21 @@ function catalogPayload() {
 }
 
 describe('phase6-16 databases parser', () => {
+  it('Phase 9-37: hides development databases from main-screen selection', () => {
+    const entries = [
+      { database_id: FLAT_ID, label: 'Synthetic flat (2026 seed)', schema: 'flat' as const },
+      { database_id: LEGACY_ID, label: 'Synthetic legacy (2026 seed)', schema: 'legacy' as const },
+      { database_id: 'legacy-base', label: 'Legacy DB tables (QueryIR)', schema: 'private' as const },
+      { database_id: 'legacy-view', label: 'Legacy DB (QueryIR)', schema: 'postgres' as const },
+      { database_id: 'campus-pg', label: 'Campus PostgreSQL', schema: 'postgres' as const },
+      { database_id: 'uploaded-sqlite', label: 'Uploaded SQLite', schema: 'private' as const },
+    ];
+    const visible = mainScreenDatabases(entries);
+    assert.deepEqual(visible.map((entry) => entry.database_id), ['legacy-view', 'campus-pg', 'uploaded-sqlite']);
+    const storage = new Map([[STORAGE_KEY, FLAT_ID]]);
+    assert.equal(readStoredDatabaseId({ getItem: (key) => storage.get(key) ?? null, setItem: () => {} }, visible.map((entry) => entry.database_id)), LEGACY_SELECTION_ID);
+  });
+
   it('accepts strict top-level registry and skips invalid entries', () => {
     assert.equal(parseDatabaseRegistry(registryPayload())?.length, 2);
     assert.equal(parseDatabaseRegistry({ version: 'synthetic-database-registry-v1', databases: [], extra: 1 }), null);
@@ -97,6 +114,33 @@ describe('phase6-16 databases parser', () => {
     assert.equal(parseCatalogResponse({ ...catalogPayload(), injected: 'secret' }), null);
     const bad = catalogPayload() as unknown as { items: Array<Record<string, unknown>>; total: number; version: string; database_id: string };
     assert.equal(parseCatalogResponse({ ...bad, items: [{ ...bad.items[0], enrolled: 99999 }] }), null);
+    assert.equal(parseCatalogResponse({ ...catalogPayload(), items: [{ ...catalogPayload().items[0], enrolled: 41 }] })?.total, 1);
+  });
+
+  it('Phase 9-36: accepts the expanded response cap and rejects above it', () => {
+    const item = catalogPayload().items[0]!;
+    const items = Array.from({ length: 1000 }, (_, index) => ({
+      ...item,
+      course_code: `C${String(index).padStart(5, '0')}`,
+    }));
+    assert.equal(parseCatalogResponse({ ...catalogPayload(), items, total: items.length })?.total, 1000);
+    assert.equal(parseCatalogResponse({ ...catalogPayload(), items: [...items, { ...item, course_code: 'OVER' }], total: 1001 }), null);
+  });
+
+  it('accepts null only for optional fields and omits courses without time from timetable slots', () => {
+    const base = catalogPayload().items[0]!;
+    const optionalNulls = { ...base, instructor_name: null, day: null, start_time: null, end_time: null, credits: null, capacity: null, enrolled: null };
+    const parsed = parseCatalogResponse({ ...catalogPayload(), items: [optionalNulls] });
+    assert.ok(parsed);
+    const course = catalogToCourses(parsed.items)[0]!;
+    assert.equal(course.professor, '-');
+    assert.equal(course.timeText, '-');
+    assert.equal(course.credits, 0);
+    assert.equal(course.capacity, undefined);
+    assert.equal(course.enrolled, undefined);
+    assert.deepEqual(course.slots, []);
+    assert.equal(parseCatalogResponse({ ...catalogPayload(), items: [{ ...base, course_code: null }] }), null);
+    assert.equal(parseCatalogResponse({ ...catalogPayload(), items: [{ ...base, course_name: null }] }), null);
   });
 
   it('accepts the retired year as null while preserving the catalog contract', () => {
@@ -148,7 +192,8 @@ describe('phase6-16 databases parser', () => {
     assert.equal(readStoredDatabaseId(storage, [FLAT_ID]), LEGACY_SELECTION_ID);
     assert.equal(shouldResetCourseUi(FLAT_ID, LEGACY_ID), true);
     assert.equal(shouldResetCourseUi(FLAT_ID, FLAT_ID), false);
-    assert.equal(databaseLabel(registryPayload().databases, LEGACY_SELECTION_ID), 'Legacy 기준선');
+    assert.equal(databaseLabel(registryPayload().databases, LEGACY_SELECTION_ID), '\uae30\ubcf8 DB');
+    assert.equal(databaseLabel([{ database_id: 'legacy-view', label: 'Legacy DB (QueryIR)', schema: 'postgres' }], 'legacy-view'), '\uae30\ubcf8 DB (\uc801\uc751\ud615 \ucc57\ubd07)');
     assert.equal(parsePrototypeDatabaseParam(`?database=${FLAT_ID}`), FLAT_ID);
     assert.equal(parsePrototypeDatabaseParam('?database=BAD!!'), null);
     assert.equal(parsePrototypeDatabaseParam(`?database=${FLAT_ID}&database=${LEGACY_ID}`), null);

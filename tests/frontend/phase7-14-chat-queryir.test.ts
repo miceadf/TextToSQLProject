@@ -6,6 +6,9 @@ import {
   ChatQueryClientError,
   chatErrorMessage,
   chatRowsToLegacyRows,
+  structuredTimeText,
+  TIME_TBA_TEXT,
+  answerWarning,
   chatTargetFor,
   describeAnswer,
   parseChatQueryResponse,
@@ -24,6 +27,38 @@ const ROW = {
   department_name: '컴퓨터학과', instructor_name: '홍길동', section: '01', capacity: 40,
   enrolled: 12, day: '월', start_time: '13:00', end_time: '14:15',
 };
+
+it('formats structured time labels and uses the shared Korean TBA sentinel', () => {
+  assert.equal(structuredTimeText('월', '10:30', '12:00'), '월 10:30-12:00');
+  assert.equal(structuredTimeText('월', null, '12:00'), TIME_TBA_TEXT);
+  assert.equal(TIME_TBA_TEXT, '시간 미정');
+  assert.equal(structuredTimeText('월', '10:00:00', '12:00:00'), '월 10:00-12:00');  // legacy chatbot rows
+  const labels = [structuredTimeText('월', '10:30', '12:00'), structuredTimeText('수', '10:30', '12:00')];
+  assert.equal(labels.join(', '), '월 10:30-12:00, 수 10:30-12:00');
+  // Luna 9-35: the chat cards must actually use the helper (rowToCourse is not exported).
+  const popup = readFileSync('src/components/ChatPopup.tsx', 'utf-8');
+  assert.ok(popup.includes('structuredTimeText('));
+  assert.ok(popup.includes('part === TIME_TBA_TEXT'));
+  // Luna 9-35: the legacy caption separator survived an encoding slip as "?".
+  assert.ok(popup.includes("'기본 DB · 기존 챗봇'"));
+});
+
+it('warns when no filters were understood and preserves unmatched-word notices', () => {
+  const noConditions = parseChatQueryResponse(succeeded({ understood: { filters: [] } }), DB);
+  assert.ok(noConditions);
+  assert.equal(answerWarning(noConditions), '질문에서 조건을 찾지 못해 전체 강좌를 보여 줍니다. 학과·과목명·요일 같은 조건을 넣어 다시 물어보세요.');
+
+  const both = parseChatQueryResponse(succeeded({ understood: { filters: [] }, unmatched_terms: ['컴공'] }), DB);
+  assert.ok(both);
+  assert.match(answerWarning(both), /질문에서 조건을 찾지 못해 전체 강좌를 보여 줍니다/);
+  assert.match(answerWarning(both), /‘컴공’.*이해하지 못해 조건에서 뺐습니다/);
+});
+
+it('renders each selectable database row as a label', () => {
+  const main = readFileSync('src/pages/MainPage.tsx', 'utf-8');
+  assert.match(main, /registry\.map\(\(entry\) => \(\s*<label[\s\S]*?<input\s+type="radio"[\s\S]*?databaseLabel\(registry, entry\.database_id\)/);
+  assert.match(main, /<label className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm">\s*<input\s+type="radio"[\s\S]*?기본 DB/);
+});
 
 function succeeded(overrides: Record<string, unknown> = {}) {
   return {
@@ -47,7 +82,8 @@ const REGISTRY = [
 describe('phase7-14 chat target', () => {
   it('routes legacy, postgres, and other databases', () => {
     assert.deepEqual(chatTargetFor(LEGACY_SELECTION_ID, REGISTRY), { kind: 'legacy' });
-    assert.deepEqual(chatTargetFor(DB, REGISTRY), { kind: 'queryir', databaseId: DB, label: 'Legacy DB (QueryIR)' });
+    // Phase 9-34: the legacy view is shown as the 기본 DB (its server label stays ASCII).
+    assert.deepEqual(chatTargetFor(DB, REGISTRY), { kind: 'queryir', databaseId: DB, label: '기본 DB (적응형 챗봇)' });
     assert.equal(chatTargetFor('synth-clarification-prototype', REGISTRY).kind, 'unsupported');
     assert.equal(chatTargetFor('unknown-db', REGISTRY).kind, 'unsupported');
   });
@@ -148,7 +184,7 @@ describe('phase7-14 client', () => {
       throw new TypeError('fetch failed');
     };
     await assert.rejects(postChatQuery(transport, DB, '질문'), (error: unknown) => {
-      assert.match(chatErrorMessage(error), /dev:all/);
+      assert.match(chatErrorMessage(error), /개발 서버가 실행 중인지 확인해 주세요/);
       return true;
     });
   });
@@ -171,7 +207,7 @@ describe('phase7-14 rendering helpers', () => {
   it('describes answers without SQL', () => {
     const ok = parseChatQueryResponse(succeeded(), DB);
     assert.ok(ok);
-    assert.match(describeAnswer(ok), /QueryIR 실행 완료: 1건\. 이해한 조건: 학점 = 3/);
+    assert.match(describeAnswer(ok), /조회 완료: 1건\. 이해한 조건: 학점 = 3/);
     const capped = parseChatQueryResponse(
       succeeded({ rows: Array(50).fill(ROW), row_count: 50 }),
       DB,

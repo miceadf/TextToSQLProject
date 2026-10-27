@@ -782,7 +782,7 @@ def register_chat_query_routes(
     value_reader: Any | None = None,
     value_indexes: ChatValueIndexes | None = None,
     show_sql: bool = False,
-    models: tuple[ChatModelChoice, ...] | list[ChatModelChoice] | None = None,
+    models: Any = None,
 ) -> None:
     """``models`` (Phase 9-08) lists the choices, default first; without it
     ``model`` alone is the only choice."""
@@ -790,13 +790,8 @@ def register_chat_query_routes(
         raise ValueError("pg_contexts must be a dict")
     if models is not None and model is not None:
         raise ValueError("pass model or models, not both")
-    choices = _single_choice(model) if models is None else validate_choices(models)
-    by_id = {choice.id: choice for choice in choices}
-    listing = {
-        "version": CHAT_MODELS_VERSION,
-        "default": choices[0].id if choices else None,
-        "models": [choice.listing() for choice in choices],
-    }
+    live_models = models if callable(getattr(models, "snapshot", None)) else None
+    choices = _single_choice(model) if models is None else validate_choices(models.snapshot() if live_models else models)
     from .postgres_runtime import shared_or_copy
 
     contexts = shared_or_copy(pg_contexts)
@@ -807,6 +802,12 @@ def register_chat_query_routes(
 
     @app.get(CHAT_MODELS_PATH)
     async def chat_models() -> JSONResponse:
+        current = validate_choices(live_models.snapshot()) if live_models is not None else choices
+        listing = {
+            "version": CHAT_MODELS_VERSION,
+            "default": current[0].id if current else None,
+            "models": [choice.listing() for choice in current],
+        }
         return JSONResponse(status_code=200, content=listing)
 
     @app.post(CHAT_QUERY_PATH)
@@ -816,8 +817,10 @@ def register_chat_query_routes(
             database_id, question, model_id = _parse_request(
                 None if raw is None else _parse_strict_body(raw)
             )
+            current = validate_choices(live_models.snapshot()) if live_models is not None else choices
+            by_id = {choice.id: choice for choice in current}
             if model_id is None:
-                chosen = choices[0].model if choices else None
+                chosen = current[0].model if current else None
             elif model_id in by_id:
                 chosen = by_id[model_id].model
             else:

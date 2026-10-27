@@ -263,6 +263,8 @@ def _create_app(
     mapping_model: Any | None = None,
     show_sql: bool = False,
     postgres_sources: dict[str, Any] | None = None,
+    repository_root: Path | None = None,
+    chat_model_base_url: str | None = None,
 ) -> Any:
     from .app_factory import create_synthetic_clarification_prototype
 
@@ -275,6 +277,10 @@ def _create_app(
         kwargs["postgres_profiles"] = profiles
     if model is not None:
         kwargs["chat_models"] = model
+    if repository_root is not None and chat_model_base_url is not None:
+        kwargs["chat_model_repository_root"] = repository_root
+        kwargs["chat_model_base_url"] = chat_model_base_url
+        kwargs["chat_model_timeout"] = OLLAMA_TIMEOUT
     if mapping_model is not None:
         kwargs["mapping_model"] = mapping_model
     return create_synthetic_clarification_prototype(**kwargs)
@@ -332,8 +338,13 @@ def main(argv: list[str] | None = None) -> int:
         else:
             loaded.append((database_id, profile))
     model: list[Any] | None = None
+    custom_base_url: str | None = None
     if ollama is not None:
         model = _build_choices(ollama, status)
+    if model:
+        from .ollama_startup import DEFAULT_OLLAMA_BASE_URL
+
+        custom_base_url = (env_values.get("OLLAMA_BASE_URL") or DEFAULT_OLLAMA_BASE_URL).rstrip("/")
     mapping_settings, status["mapping_ai"] = plan_mapping_model(env_values)
     show_sql = env_values.get("SHOW_SQL", "1").strip() != "0"
     status["chat_sql"] = "shown" if show_sql else "hidden"
@@ -348,9 +359,15 @@ def main(argv: list[str] | None = None) -> int:
         try:
             if show_sql:
                 return _create_app(
-                    profiles, with_model, mapping_model, True, postgres_sources=postgres_sources
+                    profiles, with_model, mapping_model, True, postgres_sources=postgres_sources,
+                    repository_root=repository_root if custom_base_url is not None else None,
+                    chat_model_base_url=custom_base_url,
                 )
-            return _create_app(profiles, with_model, mapping_model, postgres_sources=postgres_sources)
+            return _create_app(
+                profiles, with_model, mapping_model, postgres_sources=postgres_sources,
+                repository_root=repository_root if custom_base_url is not None else None,
+                chat_model_base_url=custom_base_url,
+            )
         except Exception:
             return None
 
@@ -377,6 +394,9 @@ def main(argv: list[str] | None = None) -> int:
     if app is None:
         print("adaptive dev launcher: prototype unavailable", flush=True)
         return 2
+    custom_status = getattr(getattr(app, "state", None), "custom_chat_model_status", {})
+    if isinstance(custom_status, dict):
+        status.update(custom_status)
     _print_status(status)
     try:
         import uvicorn

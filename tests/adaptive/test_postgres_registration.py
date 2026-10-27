@@ -586,7 +586,8 @@ def test_launcher_reloads_published_registrations(
         requested.append(list(ids))
         return list(ids)
 
-    def fake_create(profiles: Any, model: Any, mapping_model: Any = None, show_sql: bool = False, postgres_sources: Any = None) -> Any:
+    def fake_create(profiles: Any, model: Any, mapping_model: Any = None, show_sql: bool = False, postgres_sources: Any = None,
+                    **_custom_chat_models: Any) -> Any:  # Phase 9-31: repository root and Ollama URL for user models
         seen_sources.append(postgres_sources)
         return _App()
 

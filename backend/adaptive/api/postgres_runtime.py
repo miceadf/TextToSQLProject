@@ -48,6 +48,7 @@ __all__ = [
     "POSTGRES_SCHEMA_VALUE",
     "PostgresRuntimeProfile",
     "PostgresRuntimeError",
+    "JoinPathError",
     "ValidatedPostgresContext",
     "DatabaseRoutingCompiler",
     "DatabaseRoutingPolicy",
@@ -62,6 +63,14 @@ class PostgresRuntimeError(Exception):
 
     def __init__(self) -> None:
         super().__init__(_FIXED_RUNTIME_ERROR)
+
+
+class JoinPathError(PostgresRuntimeError):
+    """Ambiguous anchored join plan, attributed only to semantic fields."""
+
+    def __init__(self, fields: tuple[str, ...]) -> None:
+        super().__init__()
+        self.fields = fields
 
 
 def _valid_database_id(value: Any) -> bool:
@@ -329,6 +338,7 @@ def _check_anchored_plans(graph: Any, published: PublishedMappingProfile, anchor
     if anchor not in fields_by_table or len(fields_by_table) > _MAX_ANCHORED_TABLES:
         raise PostgresRuntimeError()
     tables = sorted(fields_by_table)
+    failing_subsets: list[tuple[str, ...]] = []
     for size in range(1, len(tables) + 1):
         for subset in combinations(tables, size):
             result = plan_join_path(
@@ -338,7 +348,18 @@ def _check_anchored_plans(graph: Any, published: PublishedMappingProfile, anchor
                 anchor_table=anchor,
             )
             if result.status is not JoinPlanStatus.RESOLVED:
-                raise PostgresRuntimeError()
+                failing_subsets.append(subset)
+    if failing_subsets:
+        blamed_tables = set(failing_subsets[0])
+        for subset in failing_subsets[1:]:
+            blamed_tables.intersection_update(subset)
+        blamed_tables.discard(anchor)
+        if not blamed_tables:
+            blamed_tables = {table for subset in failing_subsets for table in subset} - {anchor}
+        blamed_fields = tuple(sorted(
+            semantic for semantic, target in published.fields.items() if target.table in blamed_tables
+        ))
+        raise JoinPathError(blamed_fields)
 
 
 class ValidatedPostgresContext:
@@ -428,8 +449,14 @@ class ValidatedPostgresContext:
     def compiler(self) -> Any:
         return self._compiler
 
+    def compile_catalog(self, query_ir: Any, mapping: Any, *, member_filters: Any, distinct: bool) -> Any:
+        return self._compiler.compile_catalog(query_ir, mapping, member_filters=member_filters, distinct=distinct)
+
     def policy(self) -> Any:
         return self._policy
+
+    def validate_catalog(self, query: Any, *, query_ir: Any, mapping: Any, member_filters: Any, distinct: bool) -> None:
+        self._policy.validate_catalog(query, query_ir=query_ir, mapping=mapping, member_filters=member_filters, distinct=distinct)
 
     def graph(self) -> Any:
         return self._graph
@@ -859,6 +886,16 @@ class DatabaseRoutingCompiler:
                 stage=HarnessStage.SQL_COMPILED,
             ) from None
 
+    def compile_catalog(self, query_ir: Any, mapping: Any, *, member_filters: Any, distinct: bool) -> Any:
+        database_id = getattr(mapping, "database_id", None)
+        context = self._pg_contexts.get(database_id) if isinstance(database_id, str) else None
+        if context is None:
+            raise HarnessFailure(HarnessErrorCode.SQL_COMPILE_ERROR, _FIXED_COMPILE_MESSAGE, stage=HarnessStage.SQL_COMPILED)
+        try:
+            return context.compile_catalog(query_ir, mapping, member_filters=member_filters, distinct=distinct)
+        except Exception:
+            raise HarnessFailure(HarnessErrorCode.SQL_COMPILE_ERROR, _FIXED_COMPILE_MESSAGE, stage=HarnessStage.SQL_COMPILED) from None
+
     def __repr__(self) -> str:
         return "DatabaseRoutingCompiler()"
 
@@ -900,6 +937,16 @@ class DatabaseRoutingPolicy:
                 _FIXED_POLICY_MESSAGE,
                 stage=HarnessStage.SQL_VALIDATED,
             ) from None
+
+    def validate_catalog(self, query: Any, *, query_ir: Any, mapping: Any, member_filters: Any, distinct: bool) -> None:
+        database_id = getattr(mapping, "database_id", None)
+        context = self._pg_contexts.get(database_id) if isinstance(database_id, str) else None
+        if context is None:
+            raise HarnessFailure(HarnessErrorCode.UNSAFE_SQL, _FIXED_POLICY_MESSAGE, stage=HarnessStage.SQL_VALIDATED)
+        try:
+            context.validate_catalog(query, query_ir=query_ir, mapping=mapping, member_filters=member_filters, distinct=distinct)
+        except Exception:
+            raise HarnessFailure(HarnessErrorCode.UNSAFE_SQL, _FIXED_POLICY_MESSAGE, stage=HarnessStage.SQL_VALIDATED) from None
 
     def __repr__(self) -> str:
         return "DatabaseRoutingPolicy()"

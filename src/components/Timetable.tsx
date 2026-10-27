@@ -4,6 +4,8 @@ import { cn } from '../utils/cn'
 import { courseColor } from '../utils/courseColors'
 
 const days: Weekday[] = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+// Phase 9-39: show Korean weekday labels while retaining the course model's internal keys.
+const dayLabels: Record<Weekday, string> = { Mon: '월', Tue: '화', Wed: '수', Thu: '목', Fri: '금', Sat: '토' }
 
 function formatHour(value: number) {
   const hour = Math.floor(value)
@@ -40,11 +42,11 @@ export default function Timetable({
         role: 'button' as const,
         tabIndex: 0,
         'aria-label':
-          variant === 'mini' ? 'Open expanded timetable' : 'Timetable',
+          variant === 'mini' ? '시간표 크게 보기' : '시간표',
       }
     : {
         role: 'region' as const,
-        'aria-label': 'Timetable',
+        'aria-label': '시간표',
       }
 
   return (
@@ -65,12 +67,12 @@ export default function Timetable({
       >
         <div className="flex items-center justify-between">
           <div className={cn('font-semibold text-slate-900', variant === 'mini' ? 'text-sm' : 'text-base')}>
-            Timetable
+            시간표
           </div>
           {variant === 'mini' ? (
-            <div className="text-xs text-slate-500">Click to expand</div>
+            <div className="text-xs text-slate-500">눌러서 크게 보기</div>
           ) : (
-            <div className="text-sm text-slate-500">{courses.length} selected</div>
+            <div className="text-sm text-slate-500">{courses.length}개 담음</div>
           )}
         </div>
 
@@ -92,7 +94,7 @@ export default function Timetable({
               {days.map((d) => (
                 <div key={d} className="min-w-0">
                   <div className="mb-1.5 text-center font-semibold text-slate-600">
-                    {d}
+                    {dayLabels[d]}
                   </div>
                   <div
                     className="relative overflow-hidden rounded-lg border border-slate-200 bg-slate-50"
@@ -157,7 +159,7 @@ export default function Timetable({
                               overlayHasConflict ? 'left-3 right-1' : 'left-1 right-1',
                             )}
                             style={{ top, height }}
-                            title={`${overlayCourse.name} preview (${formatHour(s.startHour)}-${formatHour(s.endHour)})`}
+                            title={`${overlayCourse.name} 미리보기 (${formatHour(s.startHour)}-${formatHour(s.endHour)})`}
                           >
                             <div className={cn('truncate font-semibold', variant === 'mini' ? 'text-[10px]' : 'text-xs')}>
                               {overlayCourse.name}
@@ -178,7 +180,7 @@ export default function Timetable({
 
           {courses.length === 0 ? (
             <div className="mt-3 rounded-lg border border-dashed border-slate-200 bg-white px-3 py-2 text-slate-500">
-              Add courses from the assistant to visualize your schedule.
+              강좌를 담으면 시간표에 표시됩니다.
             </div>
           ) : null}
         </div>

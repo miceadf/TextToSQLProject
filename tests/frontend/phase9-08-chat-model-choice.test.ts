@@ -54,7 +54,8 @@ describe('Phase 9-08 chat model listing', () => {
       withModels([{ id: 'general', label: 'x', tag: 'a b' }]),
       withModels([{ id: 'general', label: 'x', tag: null, url: 'http://127.0.0.1:11434' }]),
       withModels([LISTING.models[0], LISTING.models[0]]),
-      withModels(Array.from({ length: 5 }, (_unused, index) => ({ id: `m${index}`, label: 'x', tag: null })), {
+      // Phase 9-31: up to 7 choices (3 built-in + 4 added); 8 is off the contract.
+      withModels(Array.from({ length: 8 }, (_unused, index) => ({ id: `m${index}`, label: 'x', tag: null })), {
         default: 'm0',
       }),
     ];
