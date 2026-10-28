@@ -86,13 +86,13 @@ npm run dev:all
 
 ```powershell
 .venv\Scripts\python.exe -m pytest tests -q
-node --test tests/frontend/*.test.ts
+npm run test:frontend
 npx tsc -b
 npm run build
 ```
 
 전체 Python 테스트는 약 40분 걸릴 수 있다. 임시 폴더 권한 오류 시 새 경로를 지정해 실행한다: `.venv\Scripts\python.exe -m pytest tests -q --basetemp=.venv/pytest-onboarding-temp`.
-`npm run test:adaptive-prototype`은 초기 clarification frontend 테스트 3개 파일만 실행한다. 전체 frontend 테스트를 대신하지 않는다.
+`npm run test:frontend`는 `node --test tests/frontend/*.test.ts`와 같다. frontend 테스트는 vitest가 아니라 Node 테스트 실행기로 돌린다.
 
 ## 코드 둘러보기
 
