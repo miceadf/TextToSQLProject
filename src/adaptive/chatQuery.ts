@@ -486,11 +486,16 @@ export function answerWarning(answer: ChatQueryAnswer): string {
   ].filter(Boolean).join(' ');
 }
 
-export function describeAnswer(answer: ChatQueryAnswer): string {
+export function describeAnswer(answer: ChatQueryAnswer, options: { courseCount?: number } = {}): string {
   if (answer.status === 'SUCCEEDED') {
-    const capped = answer.rowCount >= answer.limit ? ` (최대 ${answer.limit}건까지 표시)` : '';
+    const capped = answer.rowCount >= answer.limit
+      ? ` (최대 ${answer.limit}행까지만 조회되어 일부 강좌가 빠졌을 수 있습니다)`
+      : '';
     // Phase 9-38: 학생 화면에는 구현 경로를 노출하지 않는다.
-    const text = `조회 완료: ${answer.rowCount}건${capped}. 이해한 조건: ${describeUnderstood(answer.filters)}`;
+    const count = options.courseCount === undefined
+      ? `${answer.rowCount}행`
+      : `강좌 ${options.courseCount}개`;
+    const text = `조회 완료: ${count}${capped}. 이해한 조건: ${describeUnderstood(answer.filters)}`;
     const reason = describeUnmatched(answer.unmatched ?? []);
     return reason === '' ? text : `${text}. ${reason}`;
   }

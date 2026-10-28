@@ -670,7 +670,6 @@ export default function ChatPopup({
       setLastSql(payload.sql ?? '')
       setLastWarning(payload.warning ?? '')
 
-      const rowCount = Array.isArray(payload.data) ? payload.data.length : 0
       const nextDbCourses =
         !payload.warning && Array.isArray(payload.data)
           ? rowsToCourses(payload.data)
@@ -678,7 +677,7 @@ export default function ChatPopup({
       setDbCourses(nextDbCourses)
       const summary = payload.warning
         ? 'SQL 생성 완료 (DB 미연결로 결과 조회는 생략되었습니다).'
-        : `조회 완료: ${rowCount}건 결과를 받았습니다.`
+        : `조회 완료: 강좌 ${nextDbCourses?.length ?? 0}개를 찾았습니다.`
 
       setMessages((prev) => [
         ...prev,
@@ -728,19 +727,18 @@ export default function ChatPopup({
       )
       // The user may have switched databases while the model was answering.
       if (controller.signal.aborted || targetKeyRef.current !== requestKey) return
-      setDbCourses(
-        answer.status === 'SUCCEEDED'
-          ? rowsToCourses(
-              chatRowsToLegacyRows(answer.rows),
-              (answer.extensions ?? []).map((item): [string, string] => [item.key, item.label]),
-            )
-          : null,
-      )
+      const nextDbCourses = answer.status === 'SUCCEEDED'
+        ? rowsToCourses(
+            chatRowsToLegacyRows(answer.rows),
+            (answer.extensions ?? []).map((item): [string, string] => [item.key, item.label]),
+          )
+        : null
+      setDbCourses(nextDbCourses)
       setLastUnderstood(answer.status === 'SUCCEEDED' ? describeUnderstood(answer.filters) : '')
       setLastSql(answer.status === 'SUCCEEDED' ? (answer.sql ?? '') : '')
       if (answer.status !== 'SUCCEEDED') setLastWarning(describeAnswer(answer))
       else setLastWarning(answerWarning(answer))
-      setMessages((prev) => [...prev, { id: makeId('sys'), role: 'system', text: describeAnswer(answer) }])
+      setMessages((prev) => [...prev, { id: makeId('sys'), role: 'system', text: describeAnswer(answer, { courseCount: nextDbCourses?.length ?? 0 }) }])
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') return
       if (controller.signal.aborted || targetKeyRef.current !== requestKey) return
@@ -1110,4 +1108,3 @@ export default function ChatPopup({
     </div>
   )
 }
-

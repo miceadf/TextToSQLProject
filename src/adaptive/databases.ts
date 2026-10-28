@@ -27,6 +27,8 @@ const TIME_PATTERN = /^\d{2}:\d{2}$/;
 
 const MAX_DATABASES = 8;
 // Phase 9-36: PostgreSQL rows represent offering times; offering cap remains 200.
+// Mirrors backend/adaptive/api/database_registry.py MAX_ITEMS (offerings).
+export const CATALOG_OFFERING_LIMIT = 200;
 const MAX_CATALOG_ITEMS = 1000;
 const MAX_KEYWORD = 100;
 

@@ -51,7 +51,7 @@ describe('phase8-20 empty-result diagnosis', () => {
     const parsed = parseChatQueryResponse({ ...empty, unmatched }, DB);
     assert.ok(parsed && parsed.status === 'SUCCEEDED');
     assert.deepEqual(parsed.unmatched, unmatched);
-    assert.match(describeAnswer(parsed), /0건.*분반에서 '교111' 값을 찾지 못했습니다/);
+    assert.match(describeAnswer(parsed), /0행.*분반에서 '교111' 값을 찾지 못했습니다/);
     assert.equal(describeUnmatched([]), '');
   });
 

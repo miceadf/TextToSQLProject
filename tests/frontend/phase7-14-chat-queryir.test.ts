@@ -207,13 +207,25 @@ describe('phase7-14 rendering helpers', () => {
   it('describes answers without SQL', () => {
     const ok = parseChatQueryResponse(succeeded(), DB);
     assert.ok(ok);
-    assert.match(describeAnswer(ok), /조회 완료: 1건\. 이해한 조건: 학점 = 3/);
+    assert.match(describeAnswer(ok), /조회 완료: 1행\. 이해한 조건: 학점 = 3/);
     const capped = parseChatQueryResponse(
       succeeded({ rows: Array(50).fill(ROW), row_count: 50 }),
       DB,
     );
     assert.ok(capped);
-    assert.match(describeAnswer(capped), /최대 50건/);
+    assert.match(describeAnswer(capped), /최대 50행까지만 조회되어 일부 강좌가 빠졌을 수 있습니다/);
+    assert.match(describeAnswer(capped, { courseCount: 15 }), /조회 완료: 강좌 15개/);
+    const merged = parseChatQueryResponse(
+      succeeded({ rows: Array(17).fill(ROW), row_count: 17, limit: 100 }), DB,
+    );
+    assert.ok(merged);
+    assert.match(describeAnswer(merged, { courseCount: 15 }), /조회 완료: 강좌 15개/);
+    const belowLimit = parseChatQueryResponse(
+      succeeded({ rows: Array(49).fill(ROW), row_count: 49 }), DB,
+    );
+    assert.ok(belowLimit);
+    assert.doesNotMatch(describeAnswer(belowLimit), /일부 강좌가 빠졌을 수 있습니다/);
+    assert.match(describeAnswer(capped), /일부 강좌가 빠졌을 수 있습니다/);
     assert.match(
       describeAnswer({ status: 'UNSUPPORTED', unsupported: [{ field: 'CourseOffering.semester', label: '학기' }] }),
       /학기 정보가 없어/,

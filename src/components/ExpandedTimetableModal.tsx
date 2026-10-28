@@ -14,10 +14,13 @@ export default function ExpandedTimetableModal({
   useEffect(() => {
     if (!open) return
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape') {
+        e.stopImmediatePropagation()
+        onClose()
+      }
     }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => window.removeEventListener('keydown', onKeyDown, true)
   }, [open, onClose])
 
   if (!open) return null
@@ -31,8 +34,8 @@ export default function ExpandedTimetableModal({
         className="absolute inset-0 bg-slate-900/40 backdrop-blur-[1px]"
       />
 
-      <div className="relative w-full max-w-5xl overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
-        <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+      <div className="relative flex max-h-[calc(100vh-2rem)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+        <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-5 py-4">
           <div>
             <div className="text-base font-semibold text-slate-900">
               시간표
@@ -51,7 +54,7 @@ export default function ExpandedTimetableModal({
           </button>
         </div>
 
-        <div className="p-5">
+        <div className="min-h-0 overflow-y-auto p-5">
           <Timetable courses={courses} variant="full" />
         </div>
       </div>

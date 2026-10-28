@@ -137,6 +137,7 @@ export default function MainPage({
   onLogout,
 }: MainPageProps) {
   const [allCourses, setAllCourses] = useState<Course[]>([])
+  const [courseTotalCount, setCourseTotalCount] = useState<number | undefined>(undefined)
   const [popupOpen, setPopupOpen] = useState(false)
   const [expandedOpen, setExpandedOpen] = useState(false)
   const [selectedCourses, setSelectedCourses] = useState<Course[]>([])
@@ -271,6 +272,7 @@ export default function MainPage({
           setExpandedOpen(false)
           setPopupOpen(false)
           setAllCourses([])
+          setCourseTotalCount(undefined)
           setCatalogLoading(true)
           setCatalogError(null)
         }
@@ -299,6 +301,7 @@ export default function MainPage({
           setExpandedOpen(false)
           setPopupOpen(false)
           setAllCourses([])
+          setCourseTotalCount(undefined)
           setCatalogLoading(true)
           setCatalogError(null)
         }
@@ -342,6 +345,7 @@ export default function MainPage({
       setExpandedOpen(false)
       setPopupOpen(false)
       setAllCourses([])
+      setCourseTotalCount(undefined)
       setCatalogLoading(true)
     }
     activeDbIdRef.current = resolved
@@ -379,6 +383,7 @@ export default function MainPage({
       setCatalogError(null)
       try {
         let courses: Course[]
+        let totalCount: number | undefined
         if (activeDbId === LEGACY_SELECTION_ID) {
           const result = await coursesApi.getCourses({
             year: new Date().getFullYear(),
@@ -388,6 +393,7 @@ export default function MainPage({
             pageSize: 200,
           })
           courses = result.items.map(apiCourseToCourse)
+          totalCount = result.total
         } else {
           const adaptiveFetch: CatalogFetchLike = (url, init) =>
             fetch(url, { method: init.method, headers: init.headers, signal: init.signal ?? controller.signal })
@@ -399,11 +405,13 @@ export default function MainPage({
         }
         if (disposed || !mountedRef.current || isStaleResponse(operationRef.current, operation)) return
         setAllCourses(courses)
+        setCourseTotalCount(totalCount)
         setCatalogError(null)
       } catch (error) {
         if (disposed || !mountedRef.current || isStaleResponse(operationRef.current, operation)) return
         if (controller.signal.aborted) return
         setAllCourses([])
+        setCourseTotalCount(undefined)
         setCatalogError(activeDbId === LEGACY_SELECTION_ID ? CATALOG_GENERIC_MESSAGE : toCatalogMessage(error))
       } finally {
         if (!disposed && mountedRef.current && !isStaleResponse(operationRef.current, operation)) {
@@ -901,6 +909,7 @@ export default function MainPage({
         <section className="min-w-0">
           <CourseTable
             courses={allCourses}
+            totalCount={activeDbId === LEGACY_SELECTION_ID ? courseTotalCount : undefined}
             selectedIds={selectedIds}
             selectedCourses={selectedCourses}
             completedCourseCodes={completedCourseCodes}

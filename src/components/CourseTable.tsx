@@ -2,6 +2,7 @@ import type { Course } from '../types/course'
 import { cn } from '../utils/cn'
 import { hasUnmetPrerequisite } from '../utils/prerequisites'
 import { getConflictingCourseIds } from '../utils/schedule'
+import { courseTableHeader } from './courseTableHeader'
 
 const statusStyles: Record<Course['status'], string> = {
   Open: 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200',
@@ -26,6 +27,7 @@ function departmentColor({
 
 export default function CourseTable({
   courses,
+  totalCount,
   selectedIds,
   selectedCourses,
   completedCourseCodes,
@@ -35,6 +37,7 @@ export default function CourseTable({
   onReplaceCourse,
 }: {
   courses: Course[]
+  totalCount?: number
   selectedIds: Set<string>
   selectedCourses: Course[]
   completedCourseCodes: Set<string> | null
@@ -43,6 +46,7 @@ export default function CourseTable({
   onHoverCourse: (course: Course | null) => void
   onReplaceCourse: (course: Course) => void
 }) {
+  const header = courseTableHeader(courses.length, totalCount)
   return (
     <div className="flex max-h-[calc(100vh-8.5rem)] min-h-[28rem] flex-col rounded-2xl border border-slate-200 bg-white shadow-sm">
       <div className="shrink-0 flex items-center justify-between border-b border-slate-200 px-5 py-4">
@@ -51,8 +55,9 @@ export default function CourseTable({
             강좌 목록
           </div>
           <div className="text-xs text-slate-500">
-            {courses.length}개 강좌
+            {header.count}
           </div>
+          {header.hint ? <div className="mt-1 text-xs text-slate-500">{header.hint}</div> : null}
         </div>
         <div className="text-xs text-slate-500">
           선택: <span className="font-semibold">{selectedIds.size}</span>
